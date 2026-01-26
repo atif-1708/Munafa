@@ -267,10 +267,9 @@ export const calculateProductPerformance = (
 
   return Object.values(perf)
     .map(p => {
-      // Net Profit = Revenue - Realized COGS - Shipping - Ads
-      // Note: We typically subtract ALL shipping costs (even for In Transit) to be conservative on cash flow,
-      // but standard accrual accounting might differ. Here we follow cash/loss basis logic.
-      p.net_profit = p.gross_revenue - p.cogs_total - p.shipping_cost_allocation - p.ad_spend_allocation;
+      // Net Profit = Revenue - Realized COGS - Cash Stuck in Stock - Shipping - Ads
+      // This provides a "Real Cash Flow" view, deducting the cost of inventory stuck in the network.
+      p.net_profit = p.gross_revenue - p.cogs_total - p.cash_in_stock - p.shipping_cost_allocation - p.ad_spend_allocation;
       
       const total_dispatched = p.units_sold + p.units_returned + p.units_in_transit;
       // RTO Rate is usually calculated on closed orders (Sold + Returned)

@@ -176,7 +176,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                         <span className="text-sm font-medium text-indigo-800">Cash in Stock (In Transit/RTO)</span>
                                         <span className="text-[10px] text-indigo-500">Asset Value currently in network</span>
                                     </div>
-                                    <span className="font-bold text-indigo-700">{formatCurrency(selectedItem.cash_in_stock)}</span>
+                                    <span className="font-bold text-indigo-700">-{formatCurrency(selectedItem.cash_in_stock)}</span>
                                 </div>
                                 <div className="border-t border-slate-200 pt-3 flex justify-between items-center px-3">
                                     <span className="font-bold text-slate-900">Net Profit</span>
@@ -190,76 +190,63 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                         {/* Order Statistics (Replaced Recent Orders) */}
                         <div>
                             <h4 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
-                                <ShoppingBag size={18} className="text-slate-500" /> Order Statistics
+                                <ShoppingBag size={18} className="text-slate-500" /> Order Lifecycle
                             </h4>
-                            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden p-6 space-y-6">
-                                
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-3">
-                                        <div className="p-2 bg-slate-100 text-slate-600 rounded-lg">
-                                            <Package size={20} />
-                                        </div>
-                                        <div>
-                                            <p className="text-sm font-medium text-slate-500">Total Dispatched</p>
-                                            <p className="text-lg font-bold text-slate-900">{selectedItem.units_sold + selectedItem.units_returned + selectedItem.units_in_transit}</p>
-                                        </div>
-                                    </div>
-                                    <div className="text-right">
-                                         <p className="text-xs text-slate-400">Total Units</p>
-                                    </div>
-                                </div>
-
-                                <div className="h-px bg-slate-100"></div>
-
-                                <div className="space-y-4">
-                                    {/* Delivered */}
+                            <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-6">
+                                 <div className="flex items-center justify-between">
                                     <div>
+                                        <p className="text-sm text-slate-500">Total Dispatched</p>
+                                        <p className="text-2xl font-bold text-slate-900">
+                                            {selectedItem.units_sold + selectedItem.units_returned + selectedItem.units_in_transit}
+                                        </p>
+                                    </div>
+                                    <div className="h-10 w-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-500">
+                                        <Package size={20} />
+                                    </div>
+                                 </div>
+                                 
+                                 <div className="h-px bg-slate-100"></div>
+
+                                 <div className="space-y-4">
+                                     {/* Delivered */}
+                                     <div>
                                         <div className="flex justify-between text-sm mb-1">
                                             <span className="flex items-center gap-2 text-slate-600">
-                                                <CheckCircle2 size={14} className="text-green-500" /> Delivered
+                                                <CheckCircle2 size={14} className="text-green-600" /> Delivered
                                             </span>
                                             <span className="font-medium">{selectedItem.units_sold}</span>
                                         </div>
-                                        <div className="w-full bg-slate-100 h-2 rounded-full">
-                                            <div 
-                                                className="bg-green-500 h-2 rounded-full" 
-                                                style={{width: `${((selectedItem.units_sold / (selectedItem.units_sold + selectedItem.units_returned + selectedItem.units_in_transit || 1)) * 100)}%`}}
-                                            ></div>
+                                        <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                            <div className="bg-green-500 h-2" style={{width: `${(selectedItem.units_sold / (selectedItem.units_sold + selectedItem.units_returned + selectedItem.units_in_transit || 1)) * 100}%`}}></div>
                                         </div>
-                                    </div>
+                                     </div>
 
-                                    {/* In Transit */}
-                                    <div>
+                                     {/* In Transit */}
+                                     <div>
                                         <div className="flex justify-between text-sm mb-1">
                                             <span className="flex items-center gap-2 text-slate-600">
-                                                <Clock size={14} className="text-blue-500" /> In Transit
+                                                <Clock size={14} className="text-blue-600" /> In Transit
                                             </span>
                                             <span className="font-medium">{selectedItem.units_in_transit}</span>
                                         </div>
-                                        <div className="w-full bg-slate-100 h-2 rounded-full">
-                                            <div 
-                                                className="bg-blue-500 h-2 rounded-full" 
-                                                style={{width: `${((selectedItem.units_in_transit / (selectedItem.units_sold + selectedItem.units_returned + selectedItem.units_in_transit || 1)) * 100)}%`}}
-                                            ></div>
+                                        <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                            <div className="bg-blue-500 h-2" style={{width: `${(selectedItem.units_in_transit / (selectedItem.units_sold + selectedItem.units_returned + selectedItem.units_in_transit || 1)) * 100}%`}}></div>
                                         </div>
-                                    </div>
+                                     </div>
 
-                                    {/* Returned */}
-                                    <div>
+                                     {/* Returned */}
+                                     <div>
                                         <div className="flex justify-between text-sm mb-1">
                                             <span className="flex items-center gap-2 text-slate-600">
-                                                <RotateCcw size={14} className="text-red-500" /> Returned (RTO)
+                                                <RotateCcw size={14} className="text-red-600" /> Returned (RTO)
                                             </span>
                                             <span className="font-medium">{selectedItem.units_returned}</span>
                                         </div>
-                                        <div className="w-full bg-slate-100 h-2 rounded-full">
-                                            <div 
-                                                className="bg-red-500 h-2 rounded-full" 
-                                                style={{width: `${((selectedItem.units_returned / (selectedItem.units_sold + selectedItem.units_returned + selectedItem.units_in_transit || 1)) * 100)}%`}}
-                                            ></div>
+                                        <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                            <div className="bg-red-500 h-2" style={{width: `${(selectedItem.units_returned / (selectedItem.units_sold + selectedItem.units_returned + selectedItem.units_in_transit || 1)) * 100}%`}}></div>
                                         </div>
-                                    </div>
-                                </div>
+                                     </div>
+                                 </div>
                             </div>
                         </div>
                     </div>
