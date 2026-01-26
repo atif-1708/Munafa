@@ -15,7 +15,8 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
   const filteredOrders = orders.filter(o => {
     // 1. Search Filter
     const matchesSearch = o.shopify_order_number.toLowerCase().includes(search.toLowerCase()) || 
-                          o.customer_city.toLowerCase().includes(search.toLowerCase());
+                          o.customer_city.toLowerCase().includes(search.toLowerCase()) ||
+                          o.items.some(i => i.sku?.toLowerCase().includes(search.toLowerCase()));
     if (!matchesSearch) return false;
 
     // 2. Date Range Filter
@@ -32,8 +33,11 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
 
     // 3. Status Category Filter
     if (filter === 'ALL') return true;
-    if (filter === 'RTO') return o.status === OrderStatus.RETURNED || o.status === OrderStatus.RTO_INITIATED;
-    if (filter === 'PENDING_PAYMENT') return o.status === OrderStatus.DELIVERED && o.payment_status === PaymentStatus.UNPAID;
+    if (filter === 'UNBOOKED') return o.status === OrderStatus.PENDING;
+    if (filter === 'BOOKED') return o.status === OrderStatus.IN_TRANSIT;
+    if (filter === 'IN_TRANSIT') return o.status === OrderStatus.IN_TRANSIT;
+    if (filter === 'DELIVERED') return o.status === OrderStatus.DELIVERED;
+    if (filter === 'RETURNED') return o.status === OrderStatus.RETURNED || o.status === OrderStatus.RTO_INITIATED;
     
     return true;
   });
@@ -68,7 +72,7 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
             <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
             <input 
               type="text" 
-              placeholder="Search Order # or City..." 
+              placeholder="Search Order #, City, SKU..." 
               className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -82,7 +86,7 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
       </div>
 
       <div className="flex gap-2 overflow-x-auto pb-2">
-        {['ALL', 'RTO', 'PENDING_PAYMENT'].map(f => (
+        {['ALL', 'UNBOOKED', 'BOOKED', 'IN_TRANSIT', 'DELIVERED', 'RETURNED'].map(f => (
             <button 
                 key={f}
                 onClick={() => setFilter(f)}
@@ -90,7 +94,7 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
                     filter === f ? 'bg-brand-600 text-white' : 'bg-white border text-slate-600 hover:bg-slate-50'
                 }`}
             >
-                {f.replace('_', ' ')}
+                {f === 'ALL' ? 'All Orders' : f.replace('_', ' ').toLowerCase().replace(/\b\w/g, l => l.toUpperCase())}
             </button>
         ))}
       </div>
@@ -100,13 +104,12 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50 border-b border-gray-200">
               <tr>
-                <th className="px-6 py-4 font-semibold text-slate-700">Order</th>
+                <th className="px-6 py-4 font-semibold text-slate-700">Order & SKU</th>
                 <th className="px-6 py-4 font-semibold text-slate-700">Date</th>
                 <th className="px-6 py-4 font-semibold text-slate-700">City</th>
                 <th className="px-6 py-4 font-semibold text-slate-700">Status</th>
                 <th className="px-6 py-4 font-semibold text-slate-700">Finances</th>
                 <th className="px-6 py-4 font-semibold text-slate-700">Courier</th>
-                <th className="px-6 py-4 font-semibold text-slate-700">Remittance</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -114,7 +117,9 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
                 <tr key={order.id} className="hover:bg-slate-50 transition-colors">
                   <td className="px-6 py-4">
                     <div className="font-medium text-slate-900">{order.shopify_order_number}</div>
-                    <div className="text-xs text-slate-500">{order.items.length} items</div>
+                    <div className="text-xs text-slate-500 font-mono mt-1">
+                      {order.items.map(i => i.sku || 'No SKU').join(', ')}
+                    </div>
                   </td>
                   <td className="px-6 py-4 text-slate-600">
                     {new Date(order.created_at).toLocaleDateString()}
@@ -128,7 +133,7 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
                   <td className="px-6 py-4">
                     <div className="font-medium">{formatCurrency(order.cod_amount)}</div>
                     <div className="text-xs text-red-500">
-                        {order.status === OrderStatus.RETURNED 
+                        {order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED
                             ? `-${formatCurrency(order.courier_fee + order.rto_penalty)} (Loss)` 
                             : `-${formatCurrency(order.courier_fee)} (Ship)`}
                     </div>
@@ -139,25 +144,10 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
                     </span>
                     <div className="text-xs text-slate-400 mt-1">{order.tracking_number}</div>
                   </td>
-                  <td className="px-6 py-4">
-                    {order.status === OrderStatus.DELIVERED ? (
-                        order.payment_status === PaymentStatus.REMITTED ? (
-                            <span className="text-xs font-bold text-green-600 flex items-center gap-1">
-                                ● Paid
-                            </span>
-                        ) : (
-                            <span className="text-xs font-bold text-amber-600 flex items-center gap-1">
-                                ● Pending
-                            </span>
-                        )
-                    ) : (
-                        <span className="text-xs text-slate-400">-</span>
-                    )}
-                  </td>
                 </tr>
               )) : (
                   <tr>
-                      <td colSpan={7} className="px-6 py-8 text-center text-slate-500">
+                      <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
                           No orders found matching your filters.
                       </td>
                   </tr>
@@ -179,10 +169,12 @@ const StatusBadge = ({ status }: { status: OrderStatus }) => {
         [OrderStatus.RETURNED]: 'bg-red-100 text-red-700',
         [OrderStatus.CANCELLED]: 'bg-gray-100 text-gray-700',
     };
+    
+    const label = status === OrderStatus.PENDING ? 'UNBOOKED' : status.replace('_', ' ');
 
     return (
         <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${styles[status]}`}>
-            {status.replace('_', ' ')}
+            {label}
         </span>
     );
 };

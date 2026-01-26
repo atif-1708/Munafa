@@ -241,6 +241,7 @@ export class PostExAdapter implements CourierAdapter {
                     quantity: 1,
                     sale_price: amount,
                     product_name: 'Product Item',
+                    sku: 'N/A', 
                     cogs_at_time_of_order: amount * 0.4 
                 }]
             };

@@ -113,6 +113,7 @@ export const getOrders = (products: Product[]): Order[] => {
         quantity: quantity,
         sale_price: salePrice / quantity,
         product_name: product.title,
+        sku: product.sku,
         cogs_at_time_of_order: product.current_cogs
       }]
     });

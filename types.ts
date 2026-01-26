@@ -42,6 +42,7 @@ export interface OrderItem {
   quantity: number;
   sale_price: number;
   product_name: string;
+  sku?: string;
   cogs_at_time_of_order: number;
 }
 
