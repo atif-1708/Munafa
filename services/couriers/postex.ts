@@ -179,9 +179,9 @@ export class PostExAdapter implements CourierAdapter {
     const formatDate = (d: Date) => d.toISOString().split('T')[0]; // yyyy-mm-dd
 
     const params = {
-        // orderStatusID: 0, // Removing explicit 0 as it sometimes causes 400 if API expects string or nothing
-        fromDate: formatDate(startDate),
-        toDate: formatDate(endDate)
+        orderStatusID: 0, // Mandatory
+        startDate: formatDate(startDate), // Fixed: API requires 'startDate', not 'fromDate'
+        endDate: formatDate(endDate)      // Fixed: API requires 'endDate', not 'toDate'
     };
 
     try {
@@ -190,18 +190,13 @@ export class PostExAdapter implements CourierAdapter {
             headers: { 
                 'token': config.api_token, 
                 'Accept': 'application/json' 
-                // Removed Content-Type for GET request as it can trigger 400s with some proxies/gateways
             }
         });
 
         if (!response.ok) {
             const errorText = await response.text();
             console.warn(`PostEx Fetch Failed: ${response.status} - ${errorText}`);
-            // If strict 400, return empty list to avoid blocking UI, but log error
-            if (response.status === 400) {
-                 throw new Error(`PostEx API Invalid Request (400). check date range or token permissions.`);
-            }
-            throw new Error(`Failed to fetch from PostEx (${response.status})`);
+            throw new Error(`Failed to fetch from PostEx (${response.status}). Details: ${errorText}`);
         }
 
         const json = await response.json();
