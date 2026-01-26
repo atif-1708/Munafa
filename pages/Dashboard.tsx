@@ -1,11 +1,11 @@
-import React, { useMemo } from 'react';
-import { Order, AdSpend, DashboardMetrics } from '../types';
+import React, { useMemo, useState } from 'react';
+import { Order, AdSpend, DashboardMetrics, OrderStatus } from '../types';
 import { calculateMetrics, formatCurrency } from '../services/calculator';
 import KPICard from '../components/KPICard';
 import ProfitChart from '../components/ProfitChart';
 import { 
   Wallet, TrendingDown, PackageCheck, AlertTriangle, 
-  Banknote, ArrowRightLeft 
+  Banknote, ArrowRightLeft, Calendar 
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -14,46 +14,100 @@ interface DashboardProps {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend }) => {
-  const metrics: DashboardMetrics = useMemo(() => calculateMetrics(orders, adSpend), [orders, adSpend]);
+  // Default to Last 30 Days
+  const [dateRange, setDateRange] = useState(() => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - 30);
+    return {
+      start: start.toISOString().split('T')[0],
+      end: end.toISOString().split('T')[0]
+    };
+  });
 
-  // Transform data for chart (Last 7 days aggregated)
+  // Filter Data based on Range
+  const filteredData = useMemo(() => {
+    const start = new Date(dateRange.start);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(dateRange.end);
+    end.setHours(23, 59, 59, 999);
+
+    return {
+      orders: orders.filter(o => {
+        const d = new Date(o.created_at);
+        return d >= start && d <= end;
+      }),
+      adSpend: adSpend.filter(a => {
+        const d = new Date(a.date);
+        return d >= start && d <= end;
+      })
+    };
+  }, [orders, adSpend, dateRange]);
+
+  const metrics: DashboardMetrics = useMemo(() => calculateMetrics(filteredData.orders, filteredData.adSpend), [filteredData]);
+
+  // Transform data for chart based on selected range
   const chartData = useMemo(() => {
     const days: Record<string, { date: string, revenue: number, profit: number, expense: number }> = {};
-    const now = new Date();
     
-    // Initialize last 7 days
-    for(let i=6; i>=0; i--) {
-        const d = new Date();
-        d.setDate(now.getDate() - i);
-        const key = d.toISOString().split('T')[0];
-        days[key] = { date: d.toLocaleDateString('en-US', {weekday: 'short'}), revenue: 0, profit: 0, expense: 0 };
+    const start = new Date(dateRange.start);
+    const end = new Date(dateRange.end);
+    
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) return [];
+
+    // Initialize all days in range to ensure continuity in chart
+    const current = new Date(start);
+    while (current <= end) {
+      const key = current.toISOString().split('T')[0];
+      days[key] = { 
+        date: current.toLocaleDateString('en-US', {month: 'short', day: 'numeric'}), 
+        revenue: 0, profit: 0, expense: 0 
+      };
+      current.setDate(current.getDate() + 1);
     }
 
-    // Populate data (Simplified for demo - usually would use the full calc engine per day)
-    orders.forEach(o => {
+    filteredData.orders.forEach(o => {
         const key = o.created_at.split('T')[0];
-        if (days[key] && o.status === 'DELIVERED') {
+        if (days[key] && o.status === OrderStatus.DELIVERED) {
             days[key].revenue += o.cod_amount;
-            // Rough estimation for chart
-            const expense = (o.cod_amount * 0.6); 
-            days[key].expense += expense;
-            days[key].profit += (o.cod_amount - expense);
+            // Simplified expense calculation for chart visualization
+            // Real calc is in calculateMetrics, but chart needs per-day breakdown
+            const shipping = o.courier_fee + o.packaging_cost;
+            const cogs = o.items.reduce((sum, item) => sum + (item.cogs_at_time_of_order * item.quantity), 0);
+            
+            days[key].expense += (shipping + cogs);
+            days[key].profit += (o.cod_amount - (shipping + cogs));
         }
     });
 
     return Object.values(days);
-  }, [orders]);
+  }, [filteredData, dateRange]);
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Financial Overview</h2>
           <p className="text-slate-500 text-sm">Real-time profit tracking including RTO deduction</p>
         </div>
-        <div className="flex gap-2">
-            <span className="bg-white border px-3 py-1 rounded text-sm text-slate-600">Last 30 Days</span>
-            <button className="bg-brand-600 text-white px-4 py-1 rounded text-sm hover:bg-brand-700">Export Report</button>
+        <div className="flex items-center gap-2 bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
+            <Calendar size={16} className="text-slate-500 ml-2" />
+            <input 
+              type="date" 
+              value={dateRange.start}
+              onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+              className="text-sm text-slate-600 border-none focus:ring-0 outline-none w-32"
+            />
+            <span className="text-slate-400">-</span>
+            <input 
+              type="date" 
+              value={dateRange.end}
+              onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+              className="text-sm text-slate-600 border-none focus:ring-0 outline-none w-32"
+            />
+            <button className="bg-brand-600 text-white px-4 py-1.5 rounded text-sm hover:bg-brand-700 ml-2">
+              Export
+            </button>
         </div>
       </div>
 
@@ -115,7 +169,13 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend }) => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
           <h3 className="text-lg font-bold text-slate-800 mb-6">Revenue vs Profit Trend</h3>
-          <ProfitChart data={chartData} />
+          {chartData.length > 0 ? (
+            <ProfitChart data={chartData} />
+          ) : (
+            <div className="h-80 flex items-center justify-center text-slate-400">
+              No data for selected period
+            </div>
+          )}
         </div>
 
         <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
@@ -133,7 +193,7 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend }) => {
                 <span className="font-bold text-sm">Loss Alert: RTOs</span>
             </div>
             <p className="text-xs text-red-600">
-                You lost <strong>{formatCurrency(metrics.rto_orders * 250)}</strong> approx. on RTO shipping fees this month.
+                You lost <strong>{formatCurrency(metrics.rto_orders * 250)}</strong> approx. on RTO shipping fees this period.
             </p>
           </div>
         </div>
@@ -143,7 +203,10 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend }) => {
 };
 
 const CostBar = ({ label, amount, total, color }: any) => {
-    const percent = total > 0 ? (amount / total) * 100 : 0;
+    // Avoid division by zero
+    const displayTotal = total > 0 ? total : (amount > 0 ? amount * 1.5 : 100); 
+    const percent = Math.min((amount / displayTotal) * 100, 100);
+    
     return (
         <div>
             <div className="flex justify-between text-sm mb-1">

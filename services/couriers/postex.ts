@@ -7,6 +7,7 @@ export class PostExAdapter implements CourierAdapter {
   private readonly BASE_URL = 'https://api.postex.pk/services/integration/api';
   
   // PROXY: Required to bypass CORS in browser environments.
+  // Note: Free tier has 1MB limit.
   private readonly PROXY_URL = 'https://corsproxy.io/?';
 
   private getUrl(endpoint: string, params?: Record<string, string | number>): string {
@@ -38,7 +39,7 @@ export class PostExAdapter implements CourierAdapter {
         status === 'booked' || 
         status === 'postex warehouse' || 
         status === 'out for delivery' || 
-        status === 'delivery under review' ||
+        status === 'delivery under review' || 
         status === 'picked by postex' ||
         status === 'en-route to postex warehouse' ||
         status === 'attempted'
@@ -172,16 +173,20 @@ export class PostExAdapter implements CourierAdapter {
         return mockOrders.map(o => ({...o, courier: CourierName.POSTEX}));
     }
 
+    // REDUCED DATE RANGE: 
+    // The free CORS proxy limits responses to 1MB. 
+    // Reduced from 30 days to 7 days to ensure payload size stays under this limit.
     const endDate = new Date();
     const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 30); // Last 30 days
+    startDate.setDate(startDate.getDate() - 7); 
 
     const formatDate = (d: Date) => d.toISOString().split('T')[0]; // yyyy-mm-dd
 
     const params = {
-        orderStatusID: 0, // Mandatory
-        startDate: formatDate(startDate), // Fixed: API requires 'startDate', not 'fromDate'
-        endDate: formatDate(endDate)      // Fixed: API requires 'endDate', not 'toDate'
+        orderStatusID: 0, // Try uppercase ID (per PDF)
+        orderStatusId: 0, // Try camelCase Id (per Server Log)
+        startDate: formatDate(startDate),
+        endDate: formatDate(endDate)
     };
 
     try {
@@ -194,6 +199,13 @@ export class PostExAdapter implements CourierAdapter {
         });
 
         if (!response.ok) {
+            // Handle Proxy Errors specially
+            if (response.status === 403) {
+                 const errorText = await response.text();
+                 if (errorText.includes('proxy files larger than')) {
+                     throw new Error(`Data too large for proxy. The date range was automatically reduced, but the response is still over 1MB. Please try 'demo_123' key for simulation.`);
+                 }
+            }
             const errorText = await response.text();
             console.warn(`PostEx Fetch Failed: ${response.status} - ${errorText}`);
             throw new Error(`Failed to fetch from PostEx (${response.status}). Details: ${errorText}`);

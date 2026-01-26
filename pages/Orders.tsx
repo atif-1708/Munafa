@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Order, OrderStatus, PaymentStatus } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { Filter, Search } from 'lucide-react';
+import { Filter, Search, Calendar } from 'lucide-react';
 
 interface OrdersProps {
   orders: Order[];
@@ -10,22 +10,60 @@ interface OrdersProps {
 const Orders: React.FC<OrdersProps> = ({ orders }) => {
   const [filter, setFilter] = useState('ALL');
   const [search, setSearch] = useState('');
+  const [dateRange, setDateRange] = useState({ start: '', end: '' });
 
   const filteredOrders = orders.filter(o => {
+    // 1. Search Filter
     const matchesSearch = o.shopify_order_number.toLowerCase().includes(search.toLowerCase()) || 
                           o.customer_city.toLowerCase().includes(search.toLowerCase());
-    if (filter === 'ALL') return matchesSearch;
-    if (filter === 'RTO') return matchesSearch && (o.status === OrderStatus.RETURNED || o.status === OrderStatus.RTO_INITIATED);
-    if (filter === 'PENDING_PAYMENT') return matchesSearch && o.status === OrderStatus.DELIVERED && o.payment_status === PaymentStatus.UNPAID;
-    return matchesSearch;
+    if (!matchesSearch) return false;
+
+    // 2. Date Range Filter
+    if (dateRange.start) {
+        const start = new Date(dateRange.start);
+        start.setHours(0, 0, 0, 0);
+        if (new Date(o.created_at) < start) return false;
+    }
+    if (dateRange.end) {
+        const end = new Date(dateRange.end);
+        end.setHours(23, 59, 59, 999);
+        if (new Date(o.created_at) > end) return false;
+    }
+
+    // 3. Status Category Filter
+    if (filter === 'ALL') return true;
+    if (filter === 'RTO') return o.status === OrderStatus.RETURNED || o.status === OrderStatus.RTO_INITIATED;
+    if (filter === 'PENDING_PAYMENT') return o.status === OrderStatus.DELIVERED && o.payment_status === PaymentStatus.UNPAID;
+    
+    return true;
   });
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
         <h2 className="text-2xl font-bold text-slate-900">Order Management</h2>
         
-        <div className="flex gap-2 w-full sm:w-auto">
+        <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
+          {/* Date Filters */}
+          <div className="flex items-center gap-2 bg-white px-3 py-2 border rounded-lg text-sm">
+            <Calendar size={16} className="text-slate-400" />
+            <input 
+              type="date" 
+              placeholder="Start"
+              className="outline-none text-slate-600 bg-transparent w-32"
+              value={dateRange.start}
+              onChange={(e) => setDateRange(prev => ({...prev, start: e.target.value}))}
+            />
+            <span className="text-slate-300">|</span>
+            <input 
+              type="date" 
+              placeholder="End"
+              className="outline-none text-slate-600 bg-transparent w-32"
+              value={dateRange.end}
+              onChange={(e) => setDateRange(prev => ({...prev, end: e.target.value}))}
+            />
+          </div>
+
           <div className="relative flex-1 sm:w-64">
             <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
             <input 
@@ -36,7 +74,7 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <button className="flex items-center gap-2 px-4 py-2 bg-white border rounded-lg text-slate-600 hover:bg-slate-50 text-sm">
+          <button className="flex items-center gap-2 px-4 py-2 bg-white border rounded-lg text-slate-600 hover:bg-slate-50 text-sm whitespace-nowrap">
             <Filter size={18} />
             Filter
           </button>
@@ -72,7 +110,7 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {filteredOrders.map((order) => (
+              {filteredOrders.length > 0 ? filteredOrders.map((order) => (
                 <tr key={order.id} className="hover:bg-slate-50 transition-colors">
                   <td className="px-6 py-4">
                     <div className="font-medium text-slate-900">{order.shopify_order_number}</div>
@@ -117,7 +155,13 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
                     )}
                   </td>
                 </tr>
-              ))}
+              )) : (
+                  <tr>
+                      <td colSpan={7} className="px-6 py-8 text-center text-slate-500">
+                          No orders found matching your filters.
+                      </td>
+                  </tr>
+              )}
             </tbody>
           </table>
         </div>
