@@ -78,6 +78,7 @@ export interface AdSpend {
 
 // Dashboard Aggregates
 export interface DashboardMetrics {
+  total_orders: number;
   gross_revenue: number;
   total_cogs: number;
   total_shipping_expense: number; // Forward + Return

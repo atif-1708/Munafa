@@ -9,6 +9,8 @@ export const calculateMetrics = (orders: Order[], adSpend: AdSpend[]): Dashboard
   let rto_orders = 0;
   let pending_remittance = 0;
 
+  const total_orders = orders.length;
+
   orders.forEach(order => {
     const isDelivered = order.status === OrderStatus.DELIVERED;
     const isRto = order.status === OrderStatus.RETURNED;
@@ -53,6 +55,7 @@ export const calculateMetrics = (orders: Order[], adSpend: AdSpend[]): Dashboard
   const roi = total_investment > 0 ? (net_profit / total_investment) * 100 : 0;
 
   return {
+    total_orders,
     gross_revenue,
     total_cogs,
     total_shipping_expense,

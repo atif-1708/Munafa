@@ -5,7 +5,7 @@ import KPICard from '../components/KPICard';
 import ProfitChart from '../components/ProfitChart';
 import { 
   Wallet, TrendingDown, PackageCheck, AlertTriangle, 
-  Banknote, ArrowRightLeft, Calendar 
+  Banknote, ArrowRightLeft, Calendar, Package, Truck, CheckCircle
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -111,62 +111,62 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend }) => {
         </div>
       </div>
 
-      {/* Top Row: The Critical Numbers */}
+      {/* Row 1: High Level Financials */}
+      <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Financials</h3>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <KPICard 
-          title="Net Profit (Real)" 
+          title="Delivered Sale" 
+          value={formatCurrency(metrics.gross_revenue)} 
+          subValue="Revenue collected"
+          icon={Banknote} 
+          color="blue"
+        />
+        <KPICard 
+          title="Net Profit" 
           value={formatCurrency(metrics.net_profit)} 
           subValue={`${metrics.roi.toFixed(1)}% ROI`}
           icon={Wallet} 
           color="green"
         />
         <KPICard 
-          title="Pending Remittance" 
-          value={formatCurrency(metrics.pending_remittance)} 
-          subValue="Cash held by couriers"
-          icon={Banknote} 
-          color="amber"
+          title="Shipping Costs" 
+          value={formatCurrency(metrics.total_shipping_expense)} 
+          subValue="Includes RTO Penalties"
+          icon={Truck} 
+          trend="down"
+          color="orange"
+        />
+      </div>
+
+      {/* Row 2: Order Volume */}
+      <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mt-2">Order Statistics</h3>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <KPICard 
+          title="Total Orders" 
+          value={metrics.total_orders.toString()} 
+          subValue="In selected period"
+          icon={Package} 
+          color="slate"
+        />
+         <KPICard 
+          title="Delivered" 
+          value={metrics.delivered_orders.toString()} 
+          subValue="Successful deliveries"
+          icon={CheckCircle} 
+          color="emerald"
         />
         <KPICard 
-          title="RTO Rate" 
-          value={`${metrics.rto_rate.toFixed(1)}%`} 
-          subValue={`${metrics.rto_orders} Orders Returned`}
+          title="Returned (RTO)" 
+          value={metrics.rto_orders.toString()} 
+          subValue={`${metrics.rto_rate.toFixed(1)}% Rate`}
           icon={ArrowRightLeft} 
           trend="down"
           color="red"
         />
       </div>
 
-      {/* Second Row: Detailed Breakdown */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <KPICard 
-          title="Gross Revenue" 
-          value={formatCurrency(metrics.gross_revenue)} 
-          icon={TrendingDown} 
-          color="blue"
-        />
-        <KPICard 
-          title="Ad Spend" 
-          value={formatCurrency(metrics.total_ad_spend)} 
-          icon={TrendingDown} 
-          color="purple"
-        />
-         <KPICard 
-          title="Shipping & RTO Cost" 
-          value={formatCurrency(metrics.total_shipping_expense)} 
-          icon={TrendingDown} 
-          color="orange"
-        />
-         <KPICard 
-          title="COGS" 
-          value={formatCurrency(metrics.total_cogs)} 
-          icon={PackageCheck} 
-          color="slate"
-        />
-      </div>
-
       {/* Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-4">
         <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
           <h3 className="text-lg font-bold text-slate-800 mb-6">Revenue vs Profit Trend</h3>
           {chartData.length > 0 ? (
@@ -181,7 +181,7 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend }) => {
         <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
           <h3 className="text-lg font-bold text-slate-800 mb-4">Cost Breakdown</h3>
           <div className="space-y-4">
-            <CostBar label="COGS" amount={metrics.total_cogs} total={metrics.gross_revenue} color="bg-slate-500" />
+            <CostBar label="COGS (Product Cost)" amount={metrics.total_cogs} total={metrics.gross_revenue} color="bg-slate-500" />
             <CostBar label="Shipping (Fwd + RTO)" amount={metrics.total_shipping_expense} total={metrics.gross_revenue} color="bg-orange-500" />
             <CostBar label="Ad Spend" amount={metrics.total_ad_spend} total={metrics.gross_revenue} color="bg-purple-500" />
             <CostBar label="Packaging" amount={metrics.delivered_orders * 45} total={metrics.gross_revenue} color="bg-blue-400" />
