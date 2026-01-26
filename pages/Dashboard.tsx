@@ -5,7 +5,7 @@ import KPICard from '../components/KPICard';
 import ProfitChart from '../components/ProfitChart';
 import { 
   Wallet, TrendingDown, PackageCheck, AlertTriangle, 
-  Banknote, ArrowRightLeft, Calendar, Package, Truck, CheckCircle
+  Banknote, ArrowRightLeft, Calendar, Package, Truck, CheckCircle, ShoppingBasket, Hourglass, Clock, BarChart3, ClipboardList, Clipboard
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -68,27 +68,47 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend }) => {
 
     filteredData.orders.forEach(o => {
         const key = o.created_at.split('T')[0];
-        if (days[key] && o.status === OrderStatus.DELIVERED) {
-            days[key].revenue += o.cod_amount;
-            // Simplified expense calculation for chart visualization
-            // Real calc is in calculateMetrics, but chart needs per-day breakdown
-            const shipping = o.courier_fee + o.packaging_cost;
-            const cogs = o.items.reduce((sum, item) => sum + (item.cogs_at_time_of_order * item.quantity), 0);
-            
-            days[key].expense += (shipping + cogs);
-            days[key].profit += (o.cod_amount - (shipping + cogs));
+        if (days[key]) {
+             // Calculate specifics for this day
+             // Simplified day-by-day logic to mirror the main calc logic
+             const isDelivered = o.status === OrderStatus.DELIVERED;
+             const isDispatched = o.status !== OrderStatus.PENDING && o.status !== OrderStatus.BOOKED && o.status !== OrderStatus.CANCELLED;
+             
+             if (isDelivered) {
+                 days[key].revenue += o.cod_amount;
+             }
+             
+             if (isDispatched) {
+                 const shipping = o.courier_fee + o.packaging_cost + o.rto_penalty;
+                 const cogs = o.items.reduce((sum, item) => sum + (item.cogs_at_time_of_order * item.quantity), 0);
+                 
+                 days[key].expense += (shipping + cogs);
+                 
+                 if (isDelivered) {
+                     // For chart profit, we align mainly with delivered logic but subtract all expenses
+                     days[key].profit += (o.cod_amount - (shipping + cogs)); 
+                 } else {
+                     // For non-delivered dispatched items, it's a negative cash flow for that day (expense but no revenue)
+                     days[key].profit -= (shipping + cogs);
+                 }
+             }
         }
     });
 
     return Object.values(days);
   }, [filteredData, dateRange]);
 
+  const calculatePercentage = (count: number) => {
+      if (metrics.total_orders === 0) return '0%';
+      return `${((count / metrics.total_orders) * 100).toFixed(1)}%`;
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Financial Overview</h2>
-          <p className="text-slate-500 text-sm">Real-time profit tracking including RTO deduction</p>
+          <p className="text-slate-500 text-sm">Real-time cash flow & profit tracking</p>
         </div>
         <div className="flex items-center gap-2 bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
             <Calendar size={16} className="text-slate-500 ml-2" />
@@ -112,35 +132,55 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend }) => {
       </div>
 
       {/* Row 1: High Level Financials */}
-      <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Financials</h3>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Financials (Cash Basis)</h3>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <KPICard 
           title="Delivered Sale" 
           value={formatCurrency(metrics.gross_revenue)} 
-          subValue="Revenue collected"
+          subValue="Realized Revenue"
           icon={Banknote} 
           color="blue"
         />
         <KPICard 
-          title="Net Profit" 
+          title="Total COGS" 
+          value={formatCurrency(metrics.total_cogs)} 
+          subValue="All Dispatched Inv."
+          icon={ShoppingBasket} 
+          color="slate"
+        />
+        <KPICard 
+          title="Shipping Expense" 
+          value={formatCurrency(metrics.total_shipping_expense)} 
+          subValue="Fwd + RTO Charges"
+          icon={Truck} 
+          color="orange"
+        />
+        <KPICard 
+          title="Ad Spend" 
+          value={formatCurrency(metrics.total_ad_spend)} 
+          subValue="Marketing Costs"
+          icon={BarChart3} 
+          color="pink"
+        />
+        <KPICard 
+          title="Cash In Stock" 
+          value={formatCurrency(metrics.cash_in_transit_stock)} 
+          subValue="In-Transit / RTO"
+          icon={Hourglass} 
+          color="purple"
+        />
+        <KPICard 
+          title="Real Net Profit" 
           value={formatCurrency(metrics.net_profit)} 
           subValue={`${metrics.roi.toFixed(1)}% ROI`}
           icon={Wallet} 
           color="green"
         />
-        <KPICard 
-          title="Shipping Costs" 
-          value={formatCurrency(metrics.total_shipping_expense)} 
-          subValue="Includes RTO Penalties"
-          icon={Truck} 
-          trend="down"
-          color="orange"
-        />
       </div>
 
       {/* Row 2: Order Volume */}
       <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mt-2">Order Statistics</h3>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <KPICard 
           title="Total Orders" 
           value={metrics.total_orders.toString()} 
@@ -148,10 +188,31 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend }) => {
           icon={Package} 
           color="slate"
         />
+        <KPICard 
+          title="Unbooked" 
+          value={metrics.unbooked_orders.toString()} 
+          subValue={`${calculatePercentage(metrics.unbooked_orders)} of Total`}
+          icon={ClipboardList} 
+          color="yellow"
+        />
+        <KPICard 
+          title="Booked" 
+          value={metrics.booked_orders.toString()} 
+          subValue={`${calculatePercentage(metrics.booked_orders)} of Total`}
+          icon={Clipboard} 
+          color="indigo"
+        />
+        <KPICard 
+          title="In Transit" 
+          value={metrics.in_transit_orders.toString()} 
+          subValue={`${calculatePercentage(metrics.in_transit_orders)} of Total`}
+          icon={Clock} 
+          color="blue"
+        />
          <KPICard 
           title="Delivered" 
           value={metrics.delivered_orders.toString()} 
-          subValue="Successful deliveries"
+          subValue={`${calculatePercentage(metrics.delivered_orders)} of Total`}
           icon={CheckCircle} 
           color="emerald"
         />
@@ -181,10 +242,10 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend }) => {
         <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
           <h3 className="text-lg font-bold text-slate-800 mb-4">Cost Breakdown</h3>
           <div className="space-y-4">
-            <CostBar label="COGS (Product Cost)" amount={metrics.total_cogs} total={metrics.gross_revenue} color="bg-slate-500" />
+            <CostBar label="Dispatched COGS" amount={metrics.total_cogs} total={metrics.gross_revenue} color="bg-slate-500" />
             <CostBar label="Shipping (Fwd + RTO)" amount={metrics.total_shipping_expense} total={metrics.gross_revenue} color="bg-orange-500" />
             <CostBar label="Ad Spend" amount={metrics.total_ad_spend} total={metrics.gross_revenue} color="bg-purple-500" />
-            <CostBar label="Packaging" amount={metrics.delivered_orders * 45} total={metrics.gross_revenue} color="bg-blue-400" />
+            <CostBar label="Inventory In Transit" amount={metrics.cash_in_transit_stock} total={metrics.total_cogs} color="bg-indigo-400" />
           </div>
           
           <div className="mt-8 p-4 bg-red-50 rounded-lg border border-red-100">

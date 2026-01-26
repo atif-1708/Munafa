@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
 import Orders from './pages/Orders';
@@ -6,12 +6,15 @@ import Couriers from './pages/Couriers';
 import Profitability from './pages/Profitability';
 import Integrations from './pages/Integrations';
 import Settings from './pages/Settings';
+import Inventory from './pages/Inventory';
+import Marketing from './pages/Marketing';
 import { PostExAdapter } from './services/couriers/postex';
 import { Order, Product, AdSpend, CourierName, IntegrationConfig, OrderStatus } from './types';
 import { Loader2, AlertTriangle, LogIn, UserPlus, ShieldCheck, RefreshCw, Box } from 'lucide-react';
-import { supabase, getCurrentUser } from './services/supabase';
+import { supabase } from './services/supabase';
+import { calculateMetrics, getCostAtDate } from './services/calculator';
 import { COURIER_RATES, PACKAGING_COST_AVG } from './constants';
-import { getOrders } from './services/mockData';
+import { getOrders, getAdSpend } from './services/mockData';
 
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
@@ -53,6 +56,30 @@ const App: React.FC = () => {
     return () => subscription.unsubscribe();
   }, []);
 
+  // --- Helper: Recalculate Order Costs ---
+  // When products change (new cost rules), we must update the 'cogs_at_time_of_order' 
+  // on all orders to reflect the new reality in the Dashboard.
+  const recalculateOrderCosts = useCallback((currentOrders: Order[], currentProducts: Product[]) => {
+    return currentOrders.map(order => {
+        const updatedItems = order.items.map(item => {
+            // Find the defining product
+            const productDef = currentProducts.find(p => p.sku === item.sku) || 
+                               currentProducts.find(p => p.id === item.product_id);
+            
+            let correctCogs = item.cogs_at_time_of_order;
+            
+            if (productDef) {
+                // If we have a product definition, Use it!
+                // This respects the Date-Based Cost History
+                correctCogs = getCostAtDate(productDef, order.created_at);
+            }
+
+            return { ...item, cogs_at_time_of_order: correctCogs };
+        });
+        return { ...order, items: updatedItems };
+    });
+  }, []);
+
   // 2. Fetch Data when Session exists OR Demo Mode
   useEffect(() => {
     if (!session && !isDemoMode) return;
@@ -81,14 +108,8 @@ const App: React.FC = () => {
 
         // A. Fetch Settings
         let settings = { rates: COURIER_RATES, packagingCost: PACKAGING_COST_AVG };
-        
         if (!isDemoMode) {
-            const { data: settingsData } = await supabase
-                .from('app_settings')
-                .select('*')
-                .eq('user_id', user.id)
-                .single();
-            
+            const { data: settingsData } = await supabase.from('app_settings').select('*').eq('user_id', user.id).single();
             if (settingsData) {
                 settings = { 
                     rates: settingsData.courier_rates || COURIER_RATES, 
@@ -97,25 +118,61 @@ const App: React.FC = () => {
             }
         } else {
             const localSettings = localStorage.getItem('munafa_settings');
-            if (localSettings) {
-                const parsed = JSON.parse(localSettings);
-                settings = {
-                    rates: parsed.rates || COURIER_RATES,
-                    packagingCost: parsed.packagingCost || PACKAGING_COST_AVG
-                };
-            }
+            if (localSettings) settings = JSON.parse(localSettings);
         }
 
-        // B. Fetch Integrations
-        let postExConfig: IntegrationConfig | undefined;
-        let anyActiveConfig = false;
-
+        // B. Fetch SAVED Products (Database Source of Truth)
+        let savedProducts: Product[] = [];
         if (!isDemoMode) {
-            const { data: configData } = await supabase
-                .from('integration_configs')
+            const { data: productData, error: prodError } = await supabase
+                .from('products')
                 .select('*')
                 .eq('user_id', user.id);
             
+            if (productData) {
+                // Map DB snake_case to Product interface
+                savedProducts = productData.map((p: any) => ({
+                    id: p.id,
+                    shopify_id: p.shopify_id || '',
+                    title: p.title,
+                    sku: p.sku,
+                    image_url: p.image_url || '',
+                    current_cogs: p.current_cogs,
+                    cost_history: p.cost_history || []
+                }));
+            }
+        }
+
+        // C. Fetch Ad Spend
+        if (!isDemoMode) {
+            const { data: adData, error: adError } = await supabase
+                .from('ad_spend')
+                .select('*')
+                .eq('user_id', user.id)
+                .order('date', { ascending: false });
+            
+            if (adData) {
+                setAdSpend(adData.map((a: any) => ({
+                    id: a.id,
+                    date: a.date,
+                    platform: a.platform,
+                    amount_spent: a.amount_spent,
+                    product_id: a.product_id,
+                    attributed_orders: a.attributed_orders
+                })));
+            }
+            if (adError) {
+                console.warn("Could not fetch ad_spend. Ensure table exists.", adError);
+            }
+        }
+
+        // D. Fetch Integrations & Orders
+        let postExConfig: IntegrationConfig | undefined;
+        let anyActiveConfig = false;
+
+        // ... (Config loading logic similar to previous) ...
+        if (!isDemoMode) {
+            const { data: configData } = await supabase.from('integration_configs').select('*').eq('user_id', user.id);
             if (configData && configData.length > 0) {
                  anyActiveConfig = configData.some(c => c.is_active);
                  postExConfig = configData.find(c => c.courier === CourierName.POSTEX && c.is_active);
@@ -124,8 +181,7 @@ const App: React.FC = () => {
             const localConfigs = localStorage.getItem('munafa_api_configs');
             if (localConfigs) {
                 const configs = JSON.parse(localConfigs);
-                const values = Object.values(configs) as IntegrationConfig[];
-                anyActiveConfig = values.some(c => c.is_active);
+                anyActiveConfig = Object.values(configs).some((c: any) => c.is_active);
                 postExConfig = configs[CourierName.POSTEX];
             }
         }
@@ -133,49 +189,71 @@ const App: React.FC = () => {
         if (!anyActiveConfig) {
             setLoading(false);
             setIsConfigured(false);
+            setProducts(savedProducts); // Still set products if we have them
             return;
         }
 
         setIsConfigured(true);
 
-        // C. Fetch Live Orders from PostEx (if active)
+        // E. Fetch Live Orders
         if (postExConfig && postExConfig.is_active) {
             const postExAdapter = new PostExAdapter();
             const rawOrders = await postExAdapter.fetchRecentOrders(postExConfig);
 
+            // Merge Logic: Detect new products from orders that aren't in DB yet
+            const finalProducts = [...savedProducts];
+            const seenSkus = new Set(savedProducts.map(p => p.sku));
+
+            rawOrders.forEach(o => {
+                o.items.forEach(item => {
+                    const sku = item.sku || 'UNKNOWN';
+                    if (!seenSkus.has(sku)) {
+                        seenSkus.add(sku);
+                        finalProducts.push({
+                            id: item.product_id || Math.random().toString(36),
+                            shopify_id: 'unknown',
+                            title: item.product_name,
+                            sku: sku,
+                            image_url: '',
+                            current_cogs: 0, // Default to 0 if new
+                            cost_history: []
+                        });
+                    }
+                });
+            });
+
+            // Process Orders (apply correct costs from finalProducts)
             const processedOrders = rawOrders.map(order => {
                 const rateCard = settings.rates[order.courier] || settings.rates[CourierName.POSTEX];
                 const isRto = order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED;
                 
+                // Map items using finalProducts to get accurate COGS
+                const updatedItems = order.items.map(item => {
+                    const productDef = finalProducts.find(p => p.sku === item.sku);
+                    const historicalCogs = productDef ? getCostAtDate(productDef, order.created_at) : 0;
+                    return { ...item, cogs_at_time_of_order: historicalCogs };
+                });
+
                 return {
                     ...order,
+                    items: updatedItems,
                     packaging_cost: settings.packagingCost,
                     courier_fee: rateCard.forward,
                     rto_penalty: isRto ? rateCard.rto : 0
                 };
             });
 
+            setProducts(finalProducts);
             setOrders(processedOrders);
-            
-            // Mock Products
-            const inferredProducts: Product[] = processedOrders.map(o => ({
-                id: o.items[0].product_id,
-                shopify_id: 'unknown',
-                title: o.items[0].product_name,
-                sku: 'SYNCED-SKU',
-                image_url: '',
-                current_cogs: o.items[0].cogs_at_time_of_order,
-                cost_history: []
-            }));
-            setProducts(inferredProducts);
+
         } else {
-            setOrders([]); // Or handle other couriers
+            setOrders([]);
+            setProducts(savedProducts);
         }
 
       } catch (err: any) {
         console.error("Data Sync Error", err);
         setError("Failed to sync data. " + (err.message || ""));
-        // Even if sync fails, if we had a config, we are 'configured'
         setIsConfigured(true); 
       } finally {
         setLoading(false);
@@ -189,20 +267,108 @@ const App: React.FC = () => {
     setLoading(true);
     setTimeout(() => {
         const mockOrders = getOrders([]);
+        // For demo, we infer products from orders
+        const inferredProducts: Product[] = [];
+        const seen = new Set();
+        mockOrders.forEach(o => {
+            const item = o.items[0];
+            if (!seen.has(item.sku)) {
+                seen.add(item.sku);
+                inferredProducts.push({
+                    id: item.product_id,
+                    shopify_id: 'unknown',
+                    title: item.product_name,
+                    sku: item.sku || 'SKU',
+                    image_url: '',
+                    current_cogs: item.cogs_at_time_of_order,
+                    cost_history: []
+                });
+            }
+        });
+        
         setOrders(mockOrders);
-        const inferredProducts: Product[] = mockOrders.map(o => ({
-            id: o.items[0].product_id,
-            shopify_id: 'unknown',
-            title: o.items[0].product_name,
-            sku: 'SYNCED-SKU',
-            image_url: '',
-            current_cogs: o.items[0].cogs_at_time_of_order,
-            cost_history: []
-        }));
         setProducts(inferredProducts);
+        if (adSpend.length === 0) setAdSpend(getAdSpend());
         setError(null);
         setLoading(false);
     }, 800);
+  };
+
+  const handleUpdateProduct = async (updatedProduct: Product) => {
+    // 1. Optimistic Update (UI reacts instantly)
+    const newProducts = products.map(p => p.id === updatedProduct.id ? updatedProduct : p);
+    setProducts(newProducts);
+
+    // 2. Recalculate Orders (Dashboard reacts instantly)
+    // This ensures if you change a cost, the "Total COGS" and "Net Profit" on dashboard update immediately.
+    const newOrders = recalculateOrderCosts(orders, newProducts);
+    setOrders(newOrders);
+
+    // 3. Persist to Database
+    if (!isDemoMode && session?.user) {
+        try {
+            const { error } = await supabase.from('products').upsert({
+                id: updatedProduct.id,
+                user_id: session.user.id,
+                sku: updatedProduct.sku,
+                title: updatedProduct.title,
+                current_cogs: updatedProduct.current_cogs,
+                cost_history: updatedProduct.cost_history,
+                shopify_id: updatedProduct.shopify_id
+            });
+            
+            if (error) {
+                console.error("Failed to save product:", error);
+                // Optionally revert state or show toast
+            }
+        } catch (e) {
+            console.error("DB Error:", e);
+        }
+    }
+  };
+
+  const handleAddAdSpend = async (entry: AdSpend) => {
+    setAdSpend(prev => [entry, ...prev]);
+
+    if (!isDemoMode && session?.user) {
+        try {
+            const { error } = await supabase.from('ad_spend').insert({
+                id: entry.id,
+                user_id: session.user.id,
+                date: entry.date,
+                platform: entry.platform,
+                amount_spent: entry.amount_spent,
+                product_id: entry.product_id || null
+            });
+            
+            if (error) {
+                console.error('Error saving ad spend:', error);
+                if (error.code === '42P01') { // 42P01 is Postgres code for undefined_table
+                    alert("Error: 'ad_spend' table missing. Please run the provided supabase_schema.sql in your Supabase SQL Editor.");
+                } else {
+                    alert(`Error saving to DB: ${error.message}`);
+                }
+            }
+        } catch (e) {
+            console.error("DB Error:", e);
+        }
+    }
+  };
+
+  const handleDeleteAdSpend = async (id: string) => {
+    setAdSpend(prev => prev.filter(a => a.id !== id));
+
+    if (!isDemoMode && session?.user) {
+        try {
+            const { error } = await supabase.from('ad_spend').delete().eq('id', id);
+            if (error) {
+                console.error('Error deleting ad spend:', error);
+                alert(`Error deleting from DB: ${error.message}`);
+            }
+        } catch (e) {
+            console.error("DB Error:", e);
+        }
+    }
   };
 
   const handleAuth = async (e: React.FormEvent) => {
@@ -389,15 +555,11 @@ const App: React.FC = () => {
                 {currentPage === 'dashboard' && <Dashboard orders={orders} adSpend={adSpend} />}
                 {currentPage === 'orders' && <Orders orders={orders} />}
                 {currentPage === 'couriers' && <Couriers orders={orders} />}
-                {currentPage === 'profitability' && <Profitability orders={orders} products={products} />}
+                {currentPage === 'profitability' && <Profitability orders={orders} products={products} adSpend={adSpend} />}
+                {currentPage === 'inventory' && <Inventory products={products} onUpdateProduct={handleUpdateProduct} />}
+                {currentPage === 'marketing' && <Marketing adSpend={adSpend} products={products} onAddAdSpend={handleAddAdSpend} onDeleteAdSpend={handleDeleteAdSpend} />}
                 {currentPage === 'integrations' && <Integrations onConfigUpdate={() => setRefreshTrigger(p => p + 1)} />}
                 {currentPage === 'settings' && <Settings />}
-                {currentPage === 'marketing' && (
-                    <div className="flex flex-col items-center justify-center h-96 text-slate-400">
-                        <p className="text-xl font-medium">Marketing Module</p>
-                        <p className="text-sm">Ad integration coming soon.</p>
-                    </div>
-                )}
               </>
           )}
         </div>

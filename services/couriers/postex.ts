@@ -33,10 +33,10 @@ export class PostExAdapter implements CourierAdapter {
     if (status === 'out for return' || status === 'return to shipper' || status === 'out for return') return OrderStatus.RTO_INITIATED;
     if (status === 'cancelled') return OrderStatus.CANCELLED;
     if (status === 'unbooked') return OrderStatus.PENDING;
+    if (status === 'booked') return OrderStatus.BOOKED;
     
     // Transit statuses
     if (
-        status === 'booked' || 
         status === 'postex warehouse' || 
         status === 'out for delivery' || 
         status === 'delivery under review' || 

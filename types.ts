@@ -11,7 +11,8 @@ export enum CourierName {
 
 export enum OrderStatus {
   PENDING = 'PENDING',
-  IN_TRANSIT = 'IN_TRANSIT',
+  BOOKED = 'BOOKED', // Label Created / Ready to Ship
+  IN_TRANSIT = 'IN_TRANSIT', // Picked up by courier
   DELIVERED = 'DELIVERED', // Successfully collected COD
   RTO_INITIATED = 'RTO_INITIATED',
   RETURNED = 'RETURNED', // RTO delivered back to seller (Loss)
@@ -74,6 +75,7 @@ export interface AdSpend {
   date: string;
   platform: 'Facebook' | 'TikTok' | 'Google';
   amount_spent: number;
+  product_id?: string; // ID of the product this ad was for (optional)
   attributed_orders?: number; // Optional simplified attribution
 }
 
@@ -87,8 +89,12 @@ export interface DashboardMetrics {
   net_profit: number;
   delivered_orders: number;
   rto_orders: number;
+  in_transit_orders: number;
+  booked_orders: number;
+  unbooked_orders: number;
   rto_rate: number;
   pending_remittance: number; // Cash with couriers
+  cash_in_transit_stock: number; // Cost of inventory currently dispatched but not delivered (In Transit + RTO)
   roi: number; // Return on Investment
 }
 

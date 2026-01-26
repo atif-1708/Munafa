@@ -4,17 +4,31 @@ import { COURIER_RATES } from '../constants';
 export const calculateMetrics = (orders: Order[], adSpend: AdSpend[]): DashboardMetrics => {
   let gross_revenue = 0;
   let total_cogs = 0;
+  let cash_in_transit_stock = 0;
   let total_shipping_expense = 0;
   let delivered_orders = 0;
   let rto_orders = 0;
+  let in_transit_orders = 0;
+  let booked_orders = 0;
+  let unbooked_orders = 0;
   let pending_remittance = 0;
 
   const total_orders = orders.length;
 
   orders.forEach(order => {
     const isDelivered = order.status === OrderStatus.DELIVERED;
-    const isRto = order.status === OrderStatus.RETURNED;
-    
+    const isRto = order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED;
+    const isCancelled = order.status === OrderStatus.CANCELLED;
+    const isPending = order.status === OrderStatus.PENDING;
+    const isBooked = order.status === OrderStatus.BOOKED;
+    const isInTransit = order.status === OrderStatus.IN_TRANSIT;
+
+    const isDispatched = !isCancelled && !isPending && !isBooked;
+
+    if (isInTransit) in_transit_orders++;
+    if (isBooked) booked_orders++;
+    if (isPending) unbooked_orders++;
+
     // 1. Revenue & Pending Remittance
     if (isDelivered) {
       gross_revenue += order.cod_amount;
@@ -28,24 +42,30 @@ export const calculateMetrics = (orders: Order[], adSpend: AdSpend[]): Dashboard
     }
 
     // 2. Shipping Expenses (Charged regardless of success usually, plus RTO fee)
-    if (order.status !== OrderStatus.CANCELLED && order.status !== OrderStatus.PENDING) {
+    // EXCLUDE: Cancelled, Pending (Unbooked), and Booked (Label Created but not picked up)
+    if (isDispatched) {
        total_shipping_expense += order.courier_fee;
        total_shipping_expense += order.rto_penalty; // Add Return charges if applicable
        total_shipping_expense += order.packaging_cost;
-    }
 
-    // 3. COGS
-    if (isDelivered) {
-      order.items.forEach(item => {
-        total_cogs += (item.cogs_at_time_of_order * item.quantity);
-      });
+       // 3. COGS & Cash in Stock Logic
+       // Total COGS = Cost of all SKUs except booked and unbooked (and cancelled)
+       const orderCost = order.items.reduce((sum, item) => sum + (item.cogs_at_time_of_order * item.quantity), 0);
+       total_cogs += orderCost;
+
+       // Cash in Stock = Cost of all skus except booked, unbooked, delivered (and cancelled)
+       // Essentially: Cost of Inventory currently floating in the courier network
+       if (!isDelivered) {
+           cash_in_transit_stock += orderCost;
+       }
     }
   });
 
   // 4. Marketing Costs
   const total_ad_spend = adSpend.reduce((sum, ad) => sum + ad.amount_spent, 0);
 
-  // 5. Net Profit Formula
+  // 5. Net Profit Formula (Cash Basis)
+  // Revenue (Realized) - COGS (All Dispatched) - Shipping (All Dispatched) - Ads
   const net_profit = gross_revenue - total_cogs - total_shipping_expense - total_ad_spend;
 
   const total_finished_orders = delivered_orders + rto_orders;
@@ -63,13 +83,38 @@ export const calculateMetrics = (orders: Order[], adSpend: AdSpend[]): Dashboard
     net_profit,
     delivered_orders,
     rto_orders,
+    in_transit_orders,
+    booked_orders,
+    unbooked_orders,
     rto_rate,
     pending_remittance,
+    cash_in_transit_stock,
     roi
   };
 };
 
-// --- New Analytical Helpers ---
+// --- Helper: Date-Based Costing ---
+export const getCostAtDate = (product: Product, dateStr: string): number => {
+    if (!product.cost_history || product.cost_history.length === 0) {
+        return product.current_cogs;
+    }
+
+    const orderDate = new Date(dateStr).getTime();
+    
+    // Sort history: Newest first
+    const sortedHistory = [...product.cost_history].sort((a, b) => 
+        new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+
+    // Find the first history entry that is BEFORE or ON the order date
+    const applicable = sortedHistory.find(h => new Date(h.date).getTime() <= orderDate);
+
+    // If found, that's the cost. 
+    // If not found (order is older than all history), use the oldest history entry.
+    return applicable ? applicable.cogs : sortedHistory[sortedHistory.length - 1].cogs;
+};
+
+// --- Analytical Helpers ---
 
 export interface CourierStats {
   name: string;
@@ -120,40 +165,121 @@ export interface ProductPerformance {
   title: string;
   sku: string;
   units_sold: number;
+  units_returned: number;
+  units_in_transit: number; // New field
   gross_revenue: number;
   cogs_total: number;
-  gross_profit: number;
+  cash_in_stock: number; // New field: Value of stock currently in network
+  shipping_cost_allocation: number; // Share of Forward Shipping + RTO Penalty
+  ad_spend_allocation: number;
+  net_profit: number;
+  rto_rate: number;
 }
 
-export const calculateProductPerformance = (orders: Order[], products: Product[]): ProductPerformance[] => {
+export const calculateProductPerformance = (
+    orders: Order[], 
+    products: Product[],
+    adSpend: AdSpend[] = []
+): ProductPerformance[] => {
   const perf: Record<string, ProductPerformance> = {};
 
+  // 1. Initialize
   products.forEach(p => {
-    perf[p.id] = {
+    // Sum relevant ads
+    const relevantAds = adSpend.filter(a => a.product_id === p.id);
+    const totalAdSpend = relevantAds.reduce((sum, a) => sum + a.amount_spent, 0);
+
+    perf[p.sku] = { // Key by SKU to aggregate same items
       id: p.id, title: p.title, sku: p.sku, 
-      units_sold: 0, gross_revenue: 0, cogs_total: 0, gross_profit: 0
+      units_sold: 0, 
+      units_returned: 0,
+      units_in_transit: 0,
+      gross_revenue: 0, 
+      cogs_total: 0,
+      cash_in_stock: 0,
+      shipping_cost_allocation: 0,
+      ad_spend_allocation: totalAdSpend,
+      net_profit: 0,
+      rto_rate: 0
     };
   });
 
+  // 2. Process Orders
   orders.forEach(order => {
-    if (order.status === OrderStatus.DELIVERED) {
-      order.items.forEach(item => {
-        if (perf[item.product_id]) {
-          const p = perf[item.product_id];
-          p.units_sold += item.quantity;
-          p.gross_revenue += (item.sale_price * item.quantity);
-          p.cogs_total += (item.cogs_at_time_of_order * item.quantity);
+    const itemCount = order.items.length;
+    if (itemCount === 0) return;
+
+    // Shipping Allocation Logic: Even split per item
+    // NOTE: We only allocate shipping cost if the order is in a chargeable status
+    const isChargeable = order.status !== OrderStatus.CANCELLED && 
+                         order.status !== OrderStatus.PENDING &&
+                         order.status !== OrderStatus.BOOKED;
+
+    const totalOrderShippingCost = isChargeable 
+        ? order.courier_fee + order.rto_penalty + order.packaging_cost
+        : 0;
+        
+    const shippingPerItem = totalOrderShippingCost / itemCount;
+
+    order.items.forEach(item => {
+        // Find product to get accurate Historical COGS
+        const productDef = products.find(p => p.sku === item.sku) || products.find(p => p.id === item.product_id);
+        
+        // Lookup key: Priority SKU, fallback ID
+        const key = item.sku || productDef?.sku || item.product_id;
+        
+        if (!perf[key]) {
+             // If unknown product found in orders
+             perf[key] = {
+                 id: item.product_id, title: item.product_name, sku: item.sku || 'N/A',
+                 units_sold: 0, units_returned: 0, units_in_transit: 0,
+                 gross_revenue: 0, cogs_total: 0, cash_in_stock: 0,
+                 shipping_cost_allocation: 0, ad_spend_allocation: 0, net_profit: 0, rto_rate: 0
+             };
         }
-      });
-    }
+        
+        const p = perf[key];
+        // Historical COGS calculation
+        const historicalCogs = productDef ? getCostAtDate(productDef, order.created_at) : item.cogs_at_time_of_order;
+
+        // RTO Logic
+        if (order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED) {
+             p.units_returned += item.quantity;
+             p.shipping_cost_allocation += (shippingPerItem * item.quantity); 
+             // RTO is technically stock stuck in the network until received
+             p.cash_in_stock += (historicalCogs * item.quantity);
+        }
+        // Delivered Logic
+        else if (order.status === OrderStatus.DELIVERED) {
+             p.units_sold += item.quantity;
+             p.gross_revenue += (item.sale_price * item.quantity);
+             p.cogs_total += (historicalCogs * item.quantity); // Realized Cost
+             p.shipping_cost_allocation += (shippingPerItem * item.quantity);
+        }
+        // In Transit / Dispatched - we still allocate shipping cost if applicable
+        else if (isChargeable) {
+            p.shipping_cost_allocation += (shippingPerItem * item.quantity);
+            p.units_in_transit += item.quantity;
+            p.cash_in_stock += (historicalCogs * item.quantity);
+        }
+    });
   });
 
   return Object.values(perf)
     .map(p => {
-      p.gross_profit = p.gross_revenue - p.cogs_total;
+      // Net Profit = Revenue - Realized COGS - Shipping - Ads
+      // Note: We typically subtract ALL shipping costs (even for In Transit) to be conservative on cash flow,
+      // but standard accrual accounting might differ. Here we follow cash/loss basis logic.
+      p.net_profit = p.gross_revenue - p.cogs_total - p.shipping_cost_allocation - p.ad_spend_allocation;
+      
+      const total_dispatched = p.units_sold + p.units_returned + p.units_in_transit;
+      // RTO Rate is usually calculated on closed orders (Sold + Returned)
+      const closed_orders = p.units_sold + p.units_returned;
+      p.rto_rate = closed_orders > 0 ? (p.units_returned / closed_orders) * 100 : 0;
+      
       return p;
     })
-    .sort((a, b) => b.gross_profit - a.gross_profit);
+    .sort((a, b) => b.net_profit - a.net_profit); // Sort by Net Profit descending
 };
 
 export const formatCurrency = (amount: number) => {

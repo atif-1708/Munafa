@@ -34,7 +34,7 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
     // 3. Status Category Filter
     if (filter === 'ALL') return true;
     if (filter === 'UNBOOKED') return o.status === OrderStatus.PENDING;
-    if (filter === 'BOOKED') return o.status === OrderStatus.IN_TRANSIT;
+    if (filter === 'BOOKED') return o.status === OrderStatus.BOOKED;
     if (filter === 'IN_TRANSIT') return o.status === OrderStatus.IN_TRANSIT;
     if (filter === 'DELIVERED') return o.status === OrderStatus.DELIVERED;
     if (filter === 'RETURNED') return o.status === OrderStatus.RETURNED || o.status === OrderStatus.RTO_INITIATED;
@@ -113,7 +113,13 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {filteredOrders.length > 0 ? filteredOrders.map((order) => (
+              {filteredOrders.length > 0 ? filteredOrders.map((order) => {
+                // Determine if charges apply
+                const isCharged = order.status !== OrderStatus.PENDING && 
+                                  order.status !== OrderStatus.BOOKED && 
+                                  order.status !== OrderStatus.CANCELLED;
+
+                return (
                 <tr key={order.id} className="hover:bg-slate-50 transition-colors">
                   <td className="px-6 py-4">
                     <div className="font-medium text-slate-900">{order.shopify_order_number}</div>
@@ -132,10 +138,17 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
                   </td>
                   <td className="px-6 py-4">
                     <div className="font-medium">{formatCurrency(order.cod_amount)}</div>
-                    <div className="text-xs text-red-500">
-                        {order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED
-                            ? `-${formatCurrency(order.courier_fee + order.rto_penalty)} (Loss)` 
-                            : `-${formatCurrency(order.courier_fee)} (Ship)`}
+                    <div className="text-xs text-slate-500 mt-0.5">
+                        {!isCharged && <span className="text-slate-400">Not Charged Yet</span>}
+                        {isCharged && order.status === OrderStatus.DELIVERED && (
+                            <span className="text-red-500">-{formatCurrency(order.courier_fee)} (Ship)</span>
+                        )}
+                        {isCharged && (order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED) && (
+                            <span className="text-red-500">-{formatCurrency(order.courier_fee + order.rto_penalty)} (Loss)</span>
+                        )}
+                        {isCharged && order.status === OrderStatus.IN_TRANSIT && (
+                             <span className="text-slate-500">Est. Ship: -{formatCurrency(order.courier_fee)}</span>
+                        )}
                     </div>
                   </td>
                   <td className="px-6 py-4">
@@ -145,7 +158,7 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
                     <div className="text-xs text-slate-400 mt-1">{order.tracking_number}</div>
                   </td>
                 </tr>
-              )) : (
+              )}) : (
                   <tr>
                       <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
                           No orders found matching your filters.
@@ -164,6 +177,7 @@ const StatusBadge = ({ status }: { status: OrderStatus }) => {
     const styles = {
         [OrderStatus.DELIVERED]: 'bg-green-100 text-green-700',
         [OrderStatus.PENDING]: 'bg-yellow-100 text-yellow-700',
+        [OrderStatus.BOOKED]: 'bg-indigo-100 text-indigo-700',
         [OrderStatus.IN_TRANSIT]: 'bg-blue-100 text-blue-700',
         [OrderStatus.RTO_INITIATED]: 'bg-orange-100 text-orange-700',
         [OrderStatus.RETURNED]: 'bg-red-100 text-red-700',

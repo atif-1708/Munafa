@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, ShoppingBag, Truck, BarChart3, Settings, TrendingUp, Plug } from 'lucide-react';
+import { LayoutDashboard, ShoppingBag, Truck, BarChart3, Settings, TrendingUp, Plug, PackageSearch } from 'lucide-react';
 
 interface SidebarProps {
   currentPage: string;
@@ -9,10 +9,11 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({ currentPage, setPage }) => {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'inventory', label: 'Inventory & Costs', icon: PackageSearch },
     { id: 'orders', label: 'Orders & RTO', icon: ShoppingBag },
     { id: 'couriers', label: 'Courier Performance', icon: Truck },
     { id: 'profitability', label: 'Product Profitability', icon: TrendingUp },
-    { id: 'marketing', label: 'Ad Spend (ROAS)', icon: BarChart3 },
+    { id: 'marketing', label: 'Ad Spend', icon: BarChart3 },
     { id: 'integrations', label: 'Integrations', icon: Plug },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
