@@ -21,7 +21,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setPage }) => {
   return (
     <div className="w-64 bg-slate-900 text-white h-screen fixed left-0 top-0 flex flex-col border-r border-slate-800 z-50">
       <div className="p-6 border-b border-slate-800">
-        <h1 className="text-2xl font-bold tracking-tight text-brand-500">Munafa</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-brand-500">MunafaBakhsh</h1>
         <p className="text-xs text-slate-400 mt-1">Profit Intelligence OS</p>
       </div>
 

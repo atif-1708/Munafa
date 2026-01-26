@@ -409,7 +409,7 @@ const App: React.FC = () => {
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
             <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md border border-slate-200">
                 <div className="text-center mb-6">
-                    <h1 className="text-3xl font-bold text-brand-600">Munafa</h1>
+                    <h1 className="text-3xl font-bold text-brand-600">MunafaBakhsh</h1>
                     <p className="text-slate-500 mt-2">Profit Intelligence for Pakistan</p>
                 </div>
                 <div className="flex bg-slate-100 p-1 rounded-lg mb-6">
