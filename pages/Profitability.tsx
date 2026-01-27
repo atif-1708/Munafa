@@ -1,4 +1,3 @@
-
 import React, { useMemo, useState } from 'react';
 import { Order, Product, AdSpend } from '../types';
 import { calculateProductPerformance, formatCurrency, ProductPerformance } from '../services/calculator';
@@ -119,14 +118,14 @@ const ProfitabilityRow = ({
                     </span>
                 </td>
 
-                {/* 7. Gross Profit (Moved before Ads) */}
-                <td className="px-1 py-3 text-right font-medium text-slate-600 tabular-nums hidden lg:table-cell">
-                    {formatCurrency(item.gross_profit)}
-                </td>
-
-                {/* 8. Ads (Moved after Gross) */}
+                {/* 7. Ads (Moved before Gross) */}
                 <td className="px-1 py-3 text-right text-purple-600 tabular-nums">
                     {item.ad_spend_allocation > 0 ? formatCurrency(item.ad_spend_allocation) : '-'}
+                </td>
+
+                {/* 8. Gross Profit (After Ads) */}
+                <td className="px-1 py-3 text-right font-medium text-slate-600 tabular-nums hidden lg:table-cell">
+                    {formatCurrency(item.gross_profit)}
                 </td>
 
                 {/* 9. Net Profit */}
@@ -274,8 +273,9 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
         const expenses = g.cogs_total + g.shipping_cost_allocation + g.overhead_allocation + g.tax_allocation + g.ad_spend_allocation;
         g.net_profit = g.gross_revenue - expenses - g.cash_in_stock;
         
-        // Consistent with calculateMetrics definitions
-        g.gross_profit = g.net_profit + g.cash_in_stock + g.ad_spend_allocation;
+        // Consistent with calculateMetrics definitions (Gross = Net + Stock)
+        // This implies Gross = Revenue - Expenses (including Ads)
+        g.gross_profit = g.net_profit + g.cash_in_stock;
 
         const closed = g.units_sold + g.units_returned;
         g.rto_rate = closed > 0 ? (g.units_returned / closed) * 100 : 0;
@@ -315,18 +315,25 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
 
   // Helper Calculation for Detail View
   const getCPRData = (item: ProductPerformance) => {
-      // CHANGED: CPR now uses Total Orders (Dispatched) as denominator, not just Delivered
+      // CPR uses Total Orders (Dispatched) as denominator
       const totalOrders = item.units_sold + item.units_returned + item.units_in_transit;
       
       const cpr = totalOrders > 0 ? item.ad_spend_allocation / totalOrders : 0;
       
-      // Profit Before Ads = Net Profit + Ad Spend + Stock Stuck (Gross Profit) - Stock Stuck?
-      // Actually Gross Profit = Net Profit + Stock Stuck + Ads.
-      // So Net = Gross - Ads - Stock.
-      // We want break even Ads where Net = 0.
-      // 0 = Gross - Ads - Stock => Ads = Gross - Stock.
+      // Break Even CPR:
+      // Since Gross Profit = Net Profit + Stock Stuck.
+      // Net Profit = Gross Profit - Stock Stuck.
+      // (This assumes Gross Profit already has ads deducted).
+      // To find Max Allowable Ads (Break Even), we need Profit Before Ads.
+      // Profit Before Ads = Gross Profit + Ad Spend.
       
-      const profitAvailableForAds = item.gross_profit - item.cash_in_stock;
+      const profitBeforeAds = item.gross_profit + item.ad_spend_allocation;
+      
+      // We want to find Ad Spend where Net Profit = 0.
+      // 0 = ProfitBeforeAds - Ads - Stock.
+      // Ads = ProfitBeforeAds - Stock.
+      
+      const profitAvailableForAds = profitBeforeAds - item.cash_in_stock;
       const breakEvenCPR = totalOrders > 0 ? profitAvailableForAds / totalOrders : 0;
 
       return { cpr, breakEvenCPR, totalOrders };
@@ -397,9 +404,8 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                 <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider">Rev</th>
                 <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider hidden sm:table-cell">COGS</th>
                 <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider hidden md:table-cell">Stock</th>
-                {/* Reordered: Gross before Ads */}
-                <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider hidden lg:table-cell">Gross</th>
                 <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider">Ads</th>
+                <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider hidden lg:table-cell">Gross</th>
                 <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider">Net Profit</th>
                 <th className="px-2 py-3 font-semibold text-slate-700 text-center w-[50px]"></th>
               </tr>
@@ -503,6 +509,12 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                     <span className="text-sm flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span> Shipping & Packaging</span>
                                     <span className="font-medium">-{formatCurrency(selectedItem.shipping_cost_allocation)}</span>
                                 </div>
+                                <div className="flex justify-between items-center text-purple-600 mt-2">
+                                    <div className="flex flex-col">
+                                        <span className="text-sm flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-purple-400"></span> Ad Spend</span>
+                                    </div>
+                                    <span className="font-medium">-{formatCurrency(selectedItem.ad_spend_allocation)}</span>
+                                </div>
 
                                 {(selectedItem.overhead_allocation > 0 || selectedItem.tax_allocation > 0) && (
                                     <>
@@ -520,15 +532,8 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                 <div className="my-2 border-t border-dashed border-slate-200"></div>
                                 
                                 <div className="flex justify-between items-center bg-slate-50 p-3 rounded-lg">
-                                    <span className="text-sm font-bold text-slate-700">Gross Profit (Before Ads)</span>
+                                    <span className="text-sm font-bold text-slate-700">Gross Profit</span>
                                     <span className="font-bold text-slate-800">{formatCurrency(selectedItem.gross_profit)}</span>
-                                </div>
-
-                                <div className="flex justify-between items-center text-purple-600 mt-2">
-                                    <div className="flex flex-col">
-                                        <span className="text-sm flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-purple-400"></span> Ad Spend</span>
-                                    </div>
-                                    <span className="font-medium">-{formatCurrency(selectedItem.ad_spend_allocation)}</span>
                                 </div>
 
                                 <div className="flex justify-between items-center text-indigo-600 mt-0">

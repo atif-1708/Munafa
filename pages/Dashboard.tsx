@@ -200,7 +200,7 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend, adsTaxRate = 0 }
              <KPICard 
               title="Gross Profit" 
               value={formatCurrency(metrics.gross_profit)} 
-              subValue="Stock in Hand Excluded"
+              subValue="After Ad Spend"
               icon={Wallet} 
               color="indigo"
             />

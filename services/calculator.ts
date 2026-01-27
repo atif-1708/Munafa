@@ -94,16 +94,17 @@ export const calculateMetrics = (
   // Revenue (Realized) - COGS (All Dispatched) - Shipping - Overhead - Tax - Ads
   const net_profit = gross_revenue - total_cogs - total_shipping_expense - total_overhead_cost - total_courier_tax - total_ad_spend;
 
-  // Gross Profit (Operational Profit) = Net Profit + Ads + Cash Stuck
-  // This definition represents: Realized Revenue - Realized COGS - Shipping - Overhead - Tax.
-  // It EXCLUDES Ad Spend and Inventory Asset in Transit.
-  const gross_profit = net_profit + cash_in_transit_stock + total_ad_spend;
+  // Gross Profit (Operational Profit AFTER Ads)
+  // Logic: Net Profit + Cash Stuck.
+  // This essentially means: Realized Revenue - Realized COGS - Shipping - Overhead - Tax - ADS.
+  // We add back cash_in_transit_stock because `net_profit` deducted full `total_cogs`.
+  // By adding it back, we get "Realized Profit after Ads".
+  const gross_profit = net_profit + cash_in_transit_stock;
 
   const total_finished_orders = delivered_orders + rto_orders;
   const rto_rate = total_finished_orders > 0 ? (rto_orders / total_finished_orders) * 100 : 0;
   
   // ROI: Profit / Investment. 
-  // Investment includes COGS, Shipping, Overhead, Ads. Tax is usually a deduction from revenue, not investment, but functionally acts as cost.
   const total_investment = total_cogs + total_shipping_expense + total_overhead_cost + total_ad_spend;
   const roi = total_investment > 0 ? (net_profit / total_investment) * 100 : 0;
 
@@ -180,7 +181,6 @@ export const calculateCourierPerformance = (orders: Order[]): CourierStats[] => 
     if (!s) return;
 
     // EXCLUDE: Booked, Pending (Unbooked), and Cancelled.
-    // We only want to track performance for orders actually in the courier's hands.
     const isDispatched = order.status !== OrderStatus.PENDING && 
                          order.status !== OrderStatus.BOOKED && 
                          order.status !== OrderStatus.CANCELLED;
@@ -203,9 +203,6 @@ export const calculateCourierPerformance = (orders: Order[]): CourierStats[] => 
   });
 
   return Object.values(stats).map(s => {
-    // Delivery Rate is traditionally: Delivered / (Delivered + RTO) aka Settled Orders
-    // However, some prefer Delivered / Total Dispatched.
-    // For now, keeping "Settled Rate" to avoid punishing for recent In Transit orders.
     const closed_orders = s.delivered + s.rto;
     s.delivery_rate = closed_orders > 0 ? (s.delivered / closed_orders) * 100 : 0;
     return s;
@@ -220,14 +217,14 @@ export interface ProductPerformance {
   group_name?: string | null;
   units_sold: number;
   units_returned: number;
-  units_in_transit: number; // New field
+  units_in_transit: number; 
   gross_revenue: number;
   cogs_total: number;
-  gross_profit: number; // New field: Revenue - COGS
-  cash_in_stock: number; // New field: Value of stock currently in network
-  shipping_cost_allocation: number; // Share of Forward Shipping + RTO Penalty
-  overhead_allocation: number; // New
-  tax_allocation: number; // New
+  gross_profit: number; 
+  cash_in_stock: number;
+  shipping_cost_allocation: number;
+  overhead_allocation: number;
+  tax_allocation: number;
   ad_spend_allocation: number;
   net_profit: number;
   rto_rate: number;
@@ -345,17 +342,16 @@ export const calculateProductPerformance = (
 
   return Object.values(perf)
     .map(p => {
-      // Gross Profit = Revenue - Realized COGS - Shipping Allocation - Overhead - Tax
-      // Net Profit = Gross Profit - Ads - Cash Stuck
-      
+      // Net Profit = Revenue - All Expenses (Realized COGS, Shipping, Overhead, Tax, Ads) - Stuck Stock
       const expenses = p.cogs_total + p.shipping_cost_allocation + p.overhead_allocation + p.tax_allocation + p.ad_spend_allocation;
       
       p.net_profit = p.gross_revenue - expenses - p.cash_in_stock;
 
-      // Gross Profit (Dashboard definition) -> Usually Net Profit + Ads + Stuck Stock
-      p.gross_profit = p.net_profit + p.cash_in_stock + p.ad_spend_allocation;
+      // Gross Profit (Modified) -> NOW SUBTRACTS ADS.
+      // Logic: Net Profit + Cash Stuck (Asset).
+      // This is effectively: Revenue - Realized Expenses (including Ads).
+      p.gross_profit = p.net_profit + p.cash_in_stock;
       
-      const total_dispatched = p.units_sold + p.units_returned + p.units_in_transit;
       const closed_orders = p.units_sold + p.units_returned;
       p.rto_rate = closed_orders > 0 ? (p.units_returned / closed_orders) * 100 : 0;
       
