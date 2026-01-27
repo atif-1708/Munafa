@@ -77,15 +77,18 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend }) => {
              }
              
              if (isDispatched) {
-                 const shipping = o.courier_fee + o.packaging_cost + o.rto_penalty;
+                 const shipping = o.courier_fee + o.packaging_cost + o.rto_penalty + o.overhead_cost;
                  const cogs = o.items.reduce((sum, item) => sum + (item.cogs_at_time_of_order * item.quantity), 0);
+                 const tax = o.tax_amount || 0;
                  
-                 days[key].expense += (shipping + cogs);
+                 const totalOrderExpense = shipping + cogs + tax;
+
+                 days[key].expense += totalOrderExpense;
                  
                  if (isDelivered) {
-                     days[key].profit += (o.cod_amount - (shipping + cogs)); 
+                     days[key].profit += (o.cod_amount - totalOrderExpense); 
                  } else {
-                     days[key].profit -= (shipping + cogs);
+                     days[key].profit -= totalOrderExpense;
                  }
              }
         }
@@ -275,6 +278,13 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend }) => {
             <CostBar label="Shipping (Fwd + RTO)" amount={metrics.total_shipping_expense} total={metrics.gross_revenue} color="bg-orange-500" />
             <CostBar label="Marketing Ads" amount={metrics.total_ad_spend} total={metrics.gross_revenue} color="bg-pink-500" />
             
+            {(metrics.total_overhead_cost > 0 || metrics.total_courier_tax > 0) && (
+                <>
+                    <CostBar label="Fixed Overhead" amount={metrics.total_overhead_cost} total={metrics.gross_revenue} color="bg-indigo-400" />
+                    <CostBar label="Courier/Sales Tax" amount={metrics.total_courier_tax} total={metrics.gross_revenue} color="bg-red-400" />
+                </>
+            )}
+
             <div className="my-4 border-t border-dashed border-slate-200"></div>
 
             <CostBar label="Inventory In Transit" amount={metrics.cash_in_transit_stock} total={metrics.total_cogs} color="bg-purple-500" />

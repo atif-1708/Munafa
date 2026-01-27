@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { COURIER_RATES, PACKAGING_COST_AVG } from '../constants';
 import { CourierName } from '../types';
-import { Save, AlertCircle, Database } from 'lucide-react';
+import { Save, AlertCircle, Database, Box, FileText, Percent } from 'lucide-react';
 import { supabase } from '../services/supabase';
 
 const Settings: React.FC = () => {
   const [packagingCost, setPackagingCost] = useState(PACKAGING_COST_AVG);
+  const [overheadCost, setOverheadCost] = useState(0);
+  const [taxRate, setTaxRate] = useState(0);
   const [rates, setRates] = useState(COURIER_RATES);
   const [savedMsg, setSavedMsg] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -25,6 +27,8 @@ const Settings: React.FC = () => {
         if (data) {
             setPackagingCost(data.packaging_cost);
             setRates(data.courier_rates);
+            setOverheadCost(data.overhead_cost || 0);
+            setTaxRate(data.courier_tax_rate || 0);
         }
     };
     loadSettings();
@@ -49,12 +53,14 @@ const Settings: React.FC = () => {
             .upsert({
                 user_id: user.id,
                 packaging_cost: packagingCost,
-                courier_rates: rates
+                courier_rates: rates,
+                overhead_cost: overheadCost,
+                courier_tax_rate: taxRate
             });
         
         if (!error) {
-            setSavedMsg('Settings saved to database!');
-            setTimeout(() => setSavedMsg(''), 3000);
+            setSavedMsg('Settings saved! Reload to update all charts.');
+            setTimeout(() => setSavedMsg(''), 4000);
         } else {
             setSavedMsg('Error saving settings');
         }
@@ -67,7 +73,7 @@ const Settings: React.FC = () => {
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Store Configuration</h2>
-          <p className="text-slate-500 text-sm">Manage your operational costs and courier contracts</p>
+          <p className="text-slate-500 text-sm">Manage operational costs, taxes, and courier contracts</p>
         </div>
         <div className="flex items-center gap-4">
             {savedMsg && <span className="text-sm text-green-600 font-medium animate-pulse">{savedMsg}</span>}
@@ -87,26 +93,67 @@ const Settings: React.FC = () => {
         <div>
             <h4 className="font-bold text-green-900 text-sm">Cloud Sync Active</h4>
             <p className="text-xs text-green-700 mt-1">
-                Your cost configurations are securely synced to Supabase.
+                Your cost configurations are securely synced to Supabase. Updating these values will recalculate profitability for all historical orders.
             </p>
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-        <h3 className="text-lg font-bold text-slate-800 mb-4">Operational Costs</h3>
-        <div className="max-w-md">
-            <label className="block text-sm font-medium text-slate-700 mb-1">Average Packaging Cost (PKR)</label>
-            <div className="flex items-center gap-2">
-                <input 
-                    type="number" 
-                    value={packagingCost}
-                    onChange={(e) => setPackagingCost(parseInt(e.target.value) || 0)}
-                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-brand-500 outline-none" 
-                />
-                <span className="text-xs text-slate-500">Per Order</span>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+            <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                <Box size={20} className="text-slate-500" /> Operational Costs
+            </h3>
+            <div className="space-y-4">
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Packaging Cost (PKR)</label>
+                    <div className="flex items-center gap-2">
+                        <input 
+                            type="number" 
+                            value={packagingCost}
+                            onChange={(e) => setPackagingCost(parseInt(e.target.value) || 0)}
+                            className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-brand-500 outline-none" 
+                        />
+                        <span className="text-xs text-slate-500 whitespace-nowrap">per order</span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">Flyers, tape, bubble wrap. Applied to all dispatched orders.</p>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Fixed Overhead (PKR)</label>
+                    <div className="flex items-center gap-2">
+                        <input 
+                            type="number" 
+                            value={overheadCost}
+                            onChange={(e) => setOverheadCost(parseInt(e.target.value) || 0)}
+                            className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-brand-500 outline-none" 
+                        />
+                        <span className="text-xs text-slate-500 whitespace-nowrap">per order</span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">Rent, electricity, salaries (averaged). Applied to all dispatched orders.</p>
+                </div>
             </div>
-            <p className="text-xs text-slate-400 mt-2">Includes flyers, bubble wrap, and tape. Applied to every order.</p>
-        </div>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+            <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                <FileText size={20} className="text-slate-500" /> Taxes & Deductions
+            </h3>
+            <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Courier Tax / Service %</label>
+                <div className="flex items-center gap-2">
+                    <input 
+                        type="number" 
+                        step="0.1"
+                        value={taxRate}
+                        onChange={(e) => setTaxRate(parseFloat(e.target.value) || 0)}
+                        className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-brand-500 outline-none" 
+                    />
+                    <Percent size={16} className="text-slate-500" />
+                </div>
+                <p className="text-xs text-slate-400 mt-2">
+                    Percentage deducted from the COD amount of <strong>delivered</strong> orders (e.g. GST on service, Cash Handling Charges, or Sales Tax).
+                </p>
+            </div>
+          </div>
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">

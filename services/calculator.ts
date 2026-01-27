@@ -16,6 +16,8 @@ export const calculateMetrics = (orders: Order[], adSpend: AdSpend[]): Dashboard
   let total_cogs = 0;
   let cash_in_transit_stock = 0;
   let total_shipping_expense = 0;
+  let total_overhead_cost = 0;
+  let total_courier_tax = 0;
   let delivered_orders = 0;
   let rto_orders = 0;
   let in_transit_orders = 0;
@@ -44,6 +46,9 @@ export const calculateMetrics = (orders: Order[], adSpend: AdSpend[]): Dashboard
       gross_revenue += order.cod_amount;
       delivered_orders++;
       
+      // Accumulate Tax (Only on Delivered)
+      total_courier_tax += order.tax_amount;
+
       if (order.payment_status === PaymentStatus.UNPAID) {
         pending_remittance += order.cod_amount;
       }
@@ -51,12 +56,14 @@ export const calculateMetrics = (orders: Order[], adSpend: AdSpend[]): Dashboard
       rto_orders++;
     }
 
-    // 2. Shipping Expenses (Charged regardless of success usually, plus RTO fee)
-    // EXCLUDE: Cancelled, Pending (Unbooked), and Booked (Label Created but not picked up)
+    // 2. Operational Expenses (Charged on Dispatched)
+    // EXCLUDE: Cancelled, Pending (Unbooked), and Booked
     if (isDispatched) {
        total_shipping_expense += order.courier_fee;
        total_shipping_expense += order.rto_penalty; // Add Return charges if applicable
        total_shipping_expense += order.packaging_cost;
+       
+       total_overhead_cost += order.overhead_cost;
 
        // 3. COGS & Cash in Stock Logic
        // Total COGS = Cost of all SKUs except booked and unbooked (and cancelled)
@@ -75,17 +82,18 @@ export const calculateMetrics = (orders: Order[], adSpend: AdSpend[]): Dashboard
   const total_ad_spend = adSpend.reduce((sum, ad) => sum + ad.amount_spent, 0);
 
   // 5. Net Profit Formula (Cash Basis)
-  // Revenue (Realized) - COGS (All Dispatched) - Shipping (All Dispatched) - Ads
-  const net_profit = gross_revenue - total_cogs - total_shipping_expense - total_ad_spend;
+  // Revenue (Realized) - COGS (All Dispatched) - Shipping - Overhead - Tax - Ads
+  const net_profit = gross_revenue - total_cogs - total_shipping_expense - total_overhead_cost - total_courier_tax - total_ad_spend;
 
   // Gross Profit (Dashboard Definition) = Net Profit + Cash Stuck
-  // This represents profit on "Closed" operations, ignoring inventory asset shift
   const gross_profit = net_profit + cash_in_transit_stock;
 
   const total_finished_orders = delivered_orders + rto_orders;
   const rto_rate = total_finished_orders > 0 ? (rto_orders / total_finished_orders) * 100 : 0;
   
-  const total_investment = total_cogs + total_shipping_expense + total_ad_spend;
+  // ROI: Profit / Investment. 
+  // Investment includes COGS, Shipping, Overhead, Ads. Tax is usually a deduction from revenue, not investment, but functionally acts as cost.
+  const total_investment = total_cogs + total_shipping_expense + total_overhead_cost + total_ad_spend;
   const roi = total_investment > 0 ? (net_profit / total_investment) * 100 : 0;
 
   return {
@@ -93,6 +101,8 @@ export const calculateMetrics = (orders: Order[], adSpend: AdSpend[]): Dashboard
     gross_revenue,
     total_cogs,
     total_shipping_expense,
+    total_overhead_cost,
+    total_courier_tax,
     total_ad_spend,
     gross_profit,
     net_profit,
@@ -203,6 +213,8 @@ export interface ProductPerformance {
   gross_profit: number; // New field: Revenue - COGS
   cash_in_stock: number; // New field: Value of stock currently in network
   shipping_cost_allocation: number; // Share of Forward Shipping + RTO Penalty
+  overhead_allocation: number; // New
+  tax_allocation: number; // New
   ad_spend_allocation: number;
   net_profit: number;
   rto_rate: number;
@@ -235,6 +247,8 @@ export const calculateProductPerformance = (
       gross_profit: 0,
       cash_in_stock: 0,
       shipping_cost_allocation: 0,
+      overhead_allocation: 0,
+      tax_allocation: 0,
       ad_spend_allocation: totalAdSpend,
       net_profit: 0,
       rto_rate: 0
@@ -257,6 +271,8 @@ export const calculateProductPerformance = (
         : 0;
         
     const shippingPerItem = totalOrderShippingCost / itemCount;
+    const overheadPerItem = isChargeable ? (order.overhead_cost / itemCount) : 0;
+    const taxPerItem = order.status === OrderStatus.DELIVERED ? (order.tax_amount / itemCount) : 0;
 
     order.items.forEach(item => {
         // MATCHING: Fingerprint -> SKU -> ID
@@ -274,13 +290,19 @@ export const calculateProductPerformance = (
                  id: item.product_id, title: item.product_name, sku: item.sku || 'N/A',
                  units_sold: 0, units_returned: 0, units_in_transit: 0,
                  gross_revenue: 0, cogs_total: 0, gross_profit: 0, cash_in_stock: 0,
-                 shipping_cost_allocation: 0, ad_spend_allocation: 0, net_profit: 0, rto_rate: 0
+                 shipping_cost_allocation: 0, overhead_allocation: 0, tax_allocation: 0,
+                 ad_spend_allocation: 0, net_profit: 0, rto_rate: 0
              };
         }
         
         const p = perf[key];
         // Historical COGS calculation
         const historicalCogs = productDef ? getCostAtDate(productDef, order.created_at) : item.cogs_at_time_of_order;
+
+        if (isChargeable) {
+            // Apply overhead to all dispatched items
+            p.overhead_allocation += (overheadPerItem * item.quantity);
+        }
 
         // RTO Logic
         if (order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED) {
@@ -295,8 +317,9 @@ export const calculateProductPerformance = (
              p.gross_revenue += (item.sale_price * item.quantity);
              p.cogs_total += (historicalCogs * item.quantity); // Realized Cost
              p.shipping_cost_allocation += (shippingPerItem * item.quantity);
+             p.tax_allocation += (taxPerItem * item.quantity); // Tax applies only on success
         }
-        // In Transit / Dispatched - we still allocate shipping cost if applicable
+        // In Transit / Dispatched
         else if (isChargeable) {
             p.shipping_cost_allocation += (shippingPerItem * item.quantity);
             p.units_in_transit += item.quantity;
@@ -307,15 +330,20 @@ export const calculateProductPerformance = (
 
   return Object.values(perf)
     .map(p => {
-      // Gross Profit = Revenue - Realized COGS - Ad Spend Allocation - Shipping Allocation
-      p.gross_profit = p.gross_revenue - p.cogs_total - p.ad_spend_allocation - p.shipping_cost_allocation;
+      // Gross Profit = Revenue - Realized COGS - Ad Spend Allocation - Shipping Allocation - Overhead - Tax
+      // Wait, standard Gross Profit usually doesn't include Ads or Fixed Overhead, but for "Contribution Margin 2" or "Operating Profit" it does.
+      // Keeping consistent with previous logic: Gross Profit here is sort of "Cash Flow before Inventory Adjustment" + stuck stock.
+      // Let's stick to the definition:
+      // Net Profit = Revenue - COGS - Shipping - Overhead - Tax - Ads - Cash Stuck (Realized Cash)
+      
+      const expenses = p.cogs_total + p.shipping_cost_allocation + p.overhead_allocation + p.tax_allocation + p.ad_spend_allocation;
+      
+      p.net_profit = p.gross_revenue - expenses - p.cash_in_stock;
 
-      // Net Profit = Revenue - Realized COGS - Cash Stuck in Stock - Shipping - Ads
-      // This provides a "Real Cash Flow" view, deducting the cost of inventory stuck in the network.
-      p.net_profit = p.gross_revenue - p.cogs_total - p.cash_in_stock - p.shipping_cost_allocation - p.ad_spend_allocation;
+      // Gross Profit (Dashboard definition) -> Usually Net Profit + Stuck Stock
+      p.gross_profit = p.net_profit + p.cash_in_stock;
       
       const total_dispatched = p.units_sold + p.units_returned + p.units_in_transit;
-      // RTO Rate is usually calculated on closed orders (Sold + Returned)
       const closed_orders = p.units_sold + p.units_returned;
       p.rto_rate = closed_orders > 0 ? (p.units_returned / closed_orders) * 100 : 0;
       

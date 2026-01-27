@@ -105,13 +105,21 @@ const App: React.FC = () => {
         }
 
         // A. Fetch Settings
-        let settings = { rates: COURIER_RATES, packagingCost: PACKAGING_COST_AVG };
+        let settings = { 
+            rates: COURIER_RATES, 
+            packagingCost: PACKAGING_COST_AVG,
+            overheadCost: 0,
+            taxRate: 0
+        };
+
         if (!isDemoMode) {
             const { data: settingsData } = await supabase.from('app_settings').select('*').eq('user_id', user.id).single();
             if (settingsData) {
                 settings = { 
                     rates: settingsData.courier_rates || COURIER_RATES, 
-                    packagingCost: settingsData.packaging_cost || PACKAGING_COST_AVG 
+                    packagingCost: settingsData.packaging_cost || PACKAGING_COST_AVG,
+                    overheadCost: settingsData.overhead_cost || 0,
+                    taxRate: settingsData.courier_tax_rate || 0
                 };
             }
         } else {
@@ -256,11 +264,16 @@ const App: React.FC = () => {
                     const historicalCogs = productDef ? getCostAtDate(productDef, order.created_at) : 0;
                     return { ...item, cogs_at_time_of_order: historicalCogs };
                 });
+                
+                // Calculate Tax (Applied on Delivered Orders)
+                const taxAmount = order.status === OrderStatus.DELIVERED ? (order.cod_amount * (settings.taxRate / 100)) : 0;
 
                 return {
                     ...order,
                     items: updatedItems,
                     packaging_cost: settings.packagingCost,
+                    overhead_cost: settings.overheadCost,
+                    tax_amount: taxAmount,
                     courier_fee: rateCard.forward,
                     rto_penalty: isRto ? rateCard.rto : 0
                 };
@@ -311,7 +324,14 @@ const App: React.FC = () => {
             }
         });
         
-        setOrders(mockOrders);
+        // Demo Mode Defaults
+        const demoProcessed = mockOrders.map(o => ({
+            ...o, 
+            overhead_cost: 0, 
+            tax_amount: 0 
+        }));
+
+        setOrders(demoProcessed);
         setProducts(inferredProducts);
         if (adSpend.length === 0) setAdSpend(getAdSpend());
         setError(null);

@@ -230,6 +230,8 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                     gross_profit: 0,
                     cash_in_stock: 0,
                     shipping_cost_allocation: 0,
+                    overhead_allocation: 0,
+                    tax_allocation: 0,
                     ad_spend_allocation: 0,
                     net_profit: 0,
                     rto_rate: 0,
@@ -247,6 +249,8 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
             g.gross_profit += item.gross_profit;
             g.cash_in_stock += item.cash_in_stock;
             g.shipping_cost_allocation += item.shipping_cost_allocation;
+            g.overhead_allocation += item.overhead_allocation;
+            g.tax_allocation += item.tax_allocation;
             g.ad_spend_allocation += item.ad_spend_allocation; 
         } else {
             standalones.push(item);
@@ -262,10 +266,14 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
         const g = groups[groupId];
         g.ad_spend_allocation += groupLevelAds;
         
-        // Gross Profit = Revenue - COGS - Ads - Shipping (which includes pkg)
-        g.gross_profit = g.gross_revenue - g.cogs_total - g.ad_spend_allocation - g.shipping_cost_allocation;
+        // Gross Profit (Cash before Inventory)
+        // Net Profit = Revenue - COGS - Ads - Shipping - Overhead - Tax - Cash Stuck
         
-        g.net_profit = g.gross_revenue - g.cogs_total - g.cash_in_stock - g.shipping_cost_allocation - g.ad_spend_allocation;
+        const expenses = g.cogs_total + g.shipping_cost_allocation + g.overhead_allocation + g.tax_allocation + g.ad_spend_allocation;
+        g.net_profit = g.gross_revenue - expenses - g.cash_in_stock;
+        
+        // Consistent with calculateMetrics definitions
+        g.gross_profit = g.net_profit + g.cash_in_stock;
 
         const closed = g.units_sold + g.units_returned;
         g.rto_rate = closed > 0 ? (g.units_returned / closed) * 100 : 0;
@@ -306,7 +314,6 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
       const delivered = item.units_sold;
       const cpr = delivered > 0 ? item.ad_spend_allocation / delivered : 0;
       // Profit Before Ads = Net Profit + Ad Spend
-      // Note: This assumes Net Profit is Revenue - Expenses (including ads).
       const profitBeforeAds = item.net_profit + item.ad_spend_allocation;
       const breakEvenCPR = delivered > 0 ? profitBeforeAds / delivered : 0;
 
@@ -481,6 +488,19 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                     <span className="text-sm flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span> Shipping & Packaging</span>
                                     <span className="font-medium">-{formatCurrency(selectedItem.shipping_cost_allocation)}</span>
                                 </div>
+
+                                {(selectedItem.overhead_allocation > 0 || selectedItem.tax_allocation > 0) && (
+                                    <>
+                                        <div className="flex justify-between items-center text-indigo-500 mt-0">
+                                            <span className="text-sm flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-indigo-400"></span> Fixed Overhead</span>
+                                            <span className="font-medium">-{formatCurrency(selectedItem.overhead_allocation)}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center text-red-400 mt-0">
+                                            <span className="text-sm flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-red-400"></span> Sales Tax</span>
+                                            <span className="font-medium">-{formatCurrency(selectedItem.tax_allocation)}</span>
+                                        </div>
+                                    </>
+                                )}
                                 
                                 <div className="my-2 border-t border-dashed border-slate-200"></div>
                                 
@@ -503,7 +523,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                     </span>
                                 </div>
                                 
-                                {/* New CPR Section */}
+                                {/* CPR Section */}
                                 {(() => {
                                     const { cpr, breakEvenCPR, delivered } = getCPRData(selectedItem);
                                     if (delivered === 0 && selectedItem.ad_spend_allocation === 0) return null;

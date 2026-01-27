@@ -1,3 +1,4 @@
+
 -- Enable UUID extension
 create extension if not exists "uuid-ossp";
 
@@ -78,6 +79,8 @@ create policy "Users can all own configs" on integration_configs for all using (
 create table if not exists app_settings (
   user_id uuid references auth.users on delete cascade primary key,
   packaging_cost numeric default 0,
+  overhead_cost numeric default 0, -- NEW: Fixed cost per dispatched order
+  courier_tax_rate numeric default 0, -- NEW: Tax % on delivered sales
   courier_rates jsonb default '{}'::jsonb,
   created_at timestamptz default now()
 );

@@ -71,6 +71,8 @@ export interface Order {
   // Costs
   courier_fee: number; // Actual fee charged by courier
   packaging_cost: number;
+  overhead_cost: number; // New: Fixed operational cost per dispatched order
+  tax_amount: number; // New: % Tax on Delivered Sales
   rto_penalty: number; // Fee charged if returned
   
   items: OrderItem[];
@@ -92,6 +94,8 @@ export interface DashboardMetrics {
   gross_revenue: number;
   total_cogs: number;
   total_shipping_expense: number; // Forward + Return
+  total_overhead_cost: number; // New
+  total_courier_tax: number; // New
   total_ad_spend: number;
   gross_profit: number; // Revenue - Realized COGS - Expenses (Before Cash Stuck)
   net_profit: number;

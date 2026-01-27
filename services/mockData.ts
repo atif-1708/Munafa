@@ -110,6 +110,8 @@ export const getOrders = (products: Product[]): Order[] => {
       courier_fee: rates.forward,
       rto_penalty: isRto ? rates.rto : 0,
       packaging_cost: PACKAGING_COST_AVG,
+      overhead_cost: 0,
+      tax_amount: 0,
       
       items: [{
         product_id: product.id,

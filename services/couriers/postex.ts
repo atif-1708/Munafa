@@ -273,6 +273,8 @@ export class PostExAdapter implements CourierAdapter {
                 courier_fee: 180, 
                 rto_penalty: status === OrderStatus.RETURNED ? 90 : 0,
                 packaging_cost: 45,
+                overhead_cost: 0,
+                tax_amount: 0,
                 
                 items: items
             };
