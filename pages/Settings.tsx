@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { COURIER_RATES, PACKAGING_COST_AVG } from '../constants';
 import { CourierName } from '../types';
-import { Save, AlertCircle, Database, Box, FileText, Percent } from 'lucide-react';
+import { Save, AlertCircle, Database, Box, FileText, Percent, Megaphone } from 'lucide-react';
 import { supabase } from '../services/supabase';
 
 const Settings: React.FC = () => {
   const [packagingCost, setPackagingCost] = useState(PACKAGING_COST_AVG);
   const [overheadCost, setOverheadCost] = useState(0);
   const [taxRate, setTaxRate] = useState(0);
+  const [adsTaxRate, setAdsTaxRate] = useState(0);
   const [rates, setRates] = useState(COURIER_RATES);
   const [savedMsg, setSavedMsg] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -29,6 +30,7 @@ const Settings: React.FC = () => {
             setRates(data.courier_rates);
             setOverheadCost(data.overhead_cost || 0);
             setTaxRate(data.courier_tax_rate || 0);
+            setAdsTaxRate(data.ads_tax_rate || 0);
         }
     };
     loadSettings();
@@ -55,7 +57,8 @@ const Settings: React.FC = () => {
                 packaging_cost: packagingCost,
                 courier_rates: rates,
                 overhead_cost: overheadCost,
-                courier_tax_rate: taxRate
+                courier_tax_rate: taxRate,
+                ads_tax_rate: adsTaxRate
             });
         
         if (!error) {
@@ -137,21 +140,42 @@ const Settings: React.FC = () => {
             <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
                 <FileText size={20} className="text-slate-500" /> Taxes & Deductions
             </h3>
-            <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Courier Tax / Service %</label>
-                <div className="flex items-center gap-2">
-                    <input 
-                        type="number" 
-                        step="0.1"
-                        value={taxRate}
-                        onChange={(e) => setTaxRate(parseFloat(e.target.value) || 0)}
-                        className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-brand-500 outline-none" 
-                    />
-                    <Percent size={16} className="text-slate-500" />
+            <div className="space-y-4">
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Courier Tax / Sales Tax %</label>
+                    <div className="flex items-center gap-2">
+                        <input 
+                            type="number" 
+                            step="0.1"
+                            value={taxRate}
+                            onChange={(e) => setTaxRate(parseFloat(e.target.value) || 0)}
+                            className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-brand-500 outline-none" 
+                        />
+                        <Percent size={16} className="text-slate-500" />
+                    </div>
+                    <p className="text-xs text-slate-400 mt-2">
+                        Deducted from the COD amount of <strong>delivered</strong> orders (e.g. GST on service, Cash Handling Charges).
+                    </p>
                 </div>
-                <p className="text-xs text-slate-400 mt-2">
-                    Percentage deducted from the COD amount of <strong>delivered</strong> orders (e.g. GST on service, Cash Handling Charges, or Sales Tax).
-                </p>
+
+                 <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                        <Megaphone size={14} className="text-purple-500" /> Ads Tax %
+                    </label>
+                    <div className="flex items-center gap-2">
+                        <input 
+                            type="number" 
+                            step="0.1"
+                            value={adsTaxRate}
+                            onChange={(e) => setAdsTaxRate(parseFloat(e.target.value) || 0)}
+                            className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-brand-500 outline-none" 
+                        />
+                        <Percent size={16} className="text-slate-500" />
+                    </div>
+                    <p className="text-xs text-slate-400 mt-2">
+                        GST/VAT charged by banks or ad platforms (e.g. 13% Sindh ST). Added on top of Ad Spend.
+                    </p>
+                </div>
             </div>
           </div>
       </div>

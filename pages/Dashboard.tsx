@@ -5,15 +5,16 @@ import KPICard from '../components/KPICard';
 import ProfitChart from '../components/ProfitChart';
 import { 
   Wallet, TrendingDown, PackageCheck, AlertTriangle, 
-  Banknote, ArrowRightLeft, Calendar, Package, Truck, CheckCircle, ShoppingBasket, Hourglass, Clock, BarChart3, ClipboardList, Clipboard, Filter
+  Banknote, ArrowRightLeft, Calendar, Package, Truck, CheckCircle, ShoppingBasket, Hourglass, Clock, BarChart3, ClipboardList, Clipboard, Filter, Receipt, FileText
 } from 'lucide-react';
 
 interface DashboardProps {
   orders: Order[];
   adSpend: AdSpend[];
+  adsTaxRate?: number;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend }) => {
+const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend, adsTaxRate = 0 }) => {
   // Default to Last 30 Days
   const [dateRange, setDateRange] = useState(() => {
     const end = new Date();
@@ -44,7 +45,7 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend }) => {
     };
   }, [orders, adSpend, dateRange]);
 
-  const metrics: DashboardMetrics = useMemo(() => calculateMetrics(filteredData.orders, filteredData.adSpend), [filteredData]);
+  const metrics: DashboardMetrics = useMemo(() => calculateMetrics(filteredData.orders, filteredData.adSpend, adsTaxRate), [filteredData, adsTaxRate]);
 
   // Transform data for chart based on selected range
   const chartData = useMemo(() => {
@@ -93,9 +94,20 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend }) => {
              }
         }
     });
+    
+    // Add Ad Spend & Tax to expenses/profit
+    // Note: Ad spend doesn't have an exact timestamp usually, just date.
+    filteredData.adSpend.forEach(ad => {
+         const key = ad.date;
+         if (days[key]) {
+             const amountWithTax = ad.amount_spent * (1 + adsTaxRate/100);
+             days[key].expense += amountWithTax;
+             days[key].profit -= amountWithTax;
+         }
+    });
 
     return Object.values(days);
-  }, [filteredData, dateRange]);
+  }, [filteredData, dateRange, adsTaxRate]);
 
   const calculatePercentage = (count: number) => {
       if (metrics.total_orders === 0) return '0%';
@@ -166,16 +178,23 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend }) => {
             <KPICard 
               title="Marketing Spend" 
               value={formatCurrency(metrics.total_ad_spend)} 
-              subValue="Ads (FB/TikTok/Google)"
+              subValue={`Incl. ${formatCurrency(metrics.total_ads_tax)} Tax`}
               icon={BarChart3} 
               color="pink"
             />
              <KPICard 
-              title="Cash Stuck in Network" 
-              value={formatCurrency(metrics.cash_in_transit_stock)} 
-              subValue="Inventory Dispatched"
-              icon={Hourglass} 
-              color="purple"
+              title="Courier Tax & Fees" 
+              value={formatCurrency(metrics.total_courier_tax)} 
+              subValue="Deducted from Sales"
+              icon={Receipt} 
+              color="red"
+            />
+             <KPICard 
+              title="Overhead Costs" 
+              value={formatCurrency(metrics.total_overhead_cost)} 
+              subValue="Fixed Ops Cost"
+              icon={FileText} 
+              color="yellow"
             />
              <KPICard 
               title="Gross Profit" 
@@ -276,7 +295,7 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend }) => {
           <div className="space-y-6">
             <CostBar label="COGS (Dispatched)" amount={metrics.total_cogs} total={metrics.gross_revenue} color="bg-slate-600" />
             <CostBar label="Shipping (Fwd + RTO)" amount={metrics.total_shipping_expense} total={metrics.gross_revenue} color="bg-orange-500" />
-            <CostBar label="Marketing Ads" amount={metrics.total_ad_spend} total={metrics.gross_revenue} color="bg-pink-500" />
+            <CostBar label="Marketing Ads (+Tax)" amount={metrics.total_ad_spend} total={metrics.gross_revenue} color="bg-pink-500" />
             
             {(metrics.total_overhead_cost > 0 || metrics.total_courier_tax > 0) && (
                 <>

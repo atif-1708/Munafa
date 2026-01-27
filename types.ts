@@ -97,6 +97,7 @@ export interface DashboardMetrics {
   total_overhead_cost: number; // New
   total_courier_tax: number; // New
   total_ad_spend: number;
+  total_ads_tax: number; // New: Tax on Ads
   gross_profit: number; // Revenue - Realized COGS - Expenses (Before Cash Stuck)
   net_profit: number;
   delivered_orders: number;

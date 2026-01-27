@@ -37,6 +37,15 @@ const App: React.FC = () => {
   const [adSpend, setAdSpend] = useState<AdSpend[]>([]);
   const [isConfigured, setIsConfigured] = useState(false);
   
+  // Settings State
+  const [settings, setSettings] = useState({
+     rates: COURIER_RATES,
+     packagingCost: PACKAGING_COST_AVG,
+     overheadCost: 0,
+     taxRate: 0,
+     adsTaxRate: 0
+  });
+  
   // Trigger to force re-fetch
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
@@ -105,27 +114,30 @@ const App: React.FC = () => {
         }
 
         // A. Fetch Settings
-        let settings = { 
+        let fetchedSettings = { 
             rates: COURIER_RATES, 
             packagingCost: PACKAGING_COST_AVG,
             overheadCost: 0,
-            taxRate: 0
+            taxRate: 0,
+            adsTaxRate: 0
         };
 
         if (!isDemoMode) {
             const { data: settingsData } = await supabase.from('app_settings').select('*').eq('user_id', user.id).single();
             if (settingsData) {
-                settings = { 
+                fetchedSettings = { 
                     rates: settingsData.courier_rates || COURIER_RATES, 
                     packagingCost: settingsData.packaging_cost || PACKAGING_COST_AVG,
                     overheadCost: settingsData.overhead_cost || 0,
-                    taxRate: settingsData.courier_tax_rate || 0
+                    taxRate: settingsData.courier_tax_rate || 0,
+                    adsTaxRate: settingsData.ads_tax_rate || 0
                 };
             }
         } else {
             const localSettings = localStorage.getItem('munafa_settings');
-            if (localSettings) settings = JSON.parse(localSettings);
+            if (localSettings) fetchedSettings = JSON.parse(localSettings);
         }
+        setSettings(fetchedSettings);
 
         // B. Fetch SAVED Products (Database Source of Truth)
         let savedProducts: Product[] = [];
@@ -253,7 +265,7 @@ const App: React.FC = () => {
 
             // Process Orders (apply correct costs from finalProducts)
             const processedOrders = rawOrders.map(order => {
-                const rateCard = settings.rates[order.courier] || settings.rates[CourierName.POSTEX];
+                const rateCard = fetchedSettings.rates[order.courier] || fetchedSettings.rates[CourierName.POSTEX];
                 const isRto = order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED;
                 
                 const updatedItems = order.items.map(item => {
@@ -266,13 +278,13 @@ const App: React.FC = () => {
                 });
                 
                 // Calculate Tax (Applied on Delivered Orders)
-                const taxAmount = order.status === OrderStatus.DELIVERED ? (order.cod_amount * (settings.taxRate / 100)) : 0;
+                const taxAmount = order.status === OrderStatus.DELIVERED ? (order.cod_amount * (fetchedSettings.taxRate / 100)) : 0;
 
                 return {
                     ...order,
                     items: updatedItems,
-                    packaging_cost: settings.packagingCost,
-                    overhead_cost: settings.overheadCost,
+                    packaging_cost: fetchedSettings.packagingCost,
+                    overhead_cost: fetchedSettings.overheadCost,
                     tax_amount: taxAmount,
                     courier_fee: rateCard.forward,
                     rto_penalty: isRto ? rateCard.rto : 0
@@ -470,10 +482,10 @@ const App: React.FC = () => {
           {/* ... (Error & Config State logic same as before) ... */}
           {(isConfigured || currentPage === 'integrations') && (
               <>
-                {currentPage === 'dashboard' && <Dashboard orders={orders} adSpend={adSpend} />}
+                {currentPage === 'dashboard' && <Dashboard orders={orders} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} />}
                 {currentPage === 'orders' && <Orders orders={orders} />}
                 {currentPage === 'couriers' && <Couriers orders={orders} />}
-                {currentPage === 'profitability' && <Profitability orders={orders} products={products} adSpend={adSpend} />}
+                {currentPage === 'profitability' && <Profitability orders={orders} products={products} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} />}
                 {currentPage === 'inventory' && <Inventory products={products} onUpdateProducts={handleUpdateProducts} />}
                 {currentPage === 'marketing' && <Marketing adSpend={adSpend} products={products} onAddAdSpend={handleAddAdSpend} onDeleteAdSpend={handleDeleteAdSpend} />}
                 {currentPage === 'integrations' && <Integrations onConfigUpdate={() => setRefreshTrigger(p => p + 1)} />}

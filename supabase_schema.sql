@@ -81,6 +81,7 @@ create table if not exists app_settings (
   packaging_cost numeric default 0,
   overhead_cost numeric default 0, -- NEW: Fixed cost per dispatched order
   courier_tax_rate numeric default 0, -- NEW: Tax % on delivered sales
+  ads_tax_rate numeric default 0, -- NEW: Tax % on Ad Spend (GST/VAT)
   courier_rates jsonb default '{}'::jsonb,
   created_at timestamptz default now()
 );

@@ -7,6 +7,7 @@ interface ProfitabilityProps {
   orders: Order[];
   products: Product[];
   adSpend?: AdSpend[];
+  adsTaxRate?: number;
 }
 
 // Extend interface locally for view logic
@@ -163,7 +164,7 @@ const ProfitabilityRow = ({
     );
 };
 
-const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend = [] }) => {
+const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend = [], adsTaxRate = 0 }) => {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [selectedItem, setSelectedItem] = useState<ProductPerformance | null>(null);
 
@@ -197,7 +198,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
     return { orders: filteredOrders, adSpend: filteredAdSpend };
   }, [orders, adSpend, dateRange]);
 
-  const variantData = useMemo(() => calculateProductPerformance(filteredData.orders, products, filteredData.adSpend), [filteredData, products]);
+  const variantData = useMemo(() => calculateProductPerformance(filteredData.orders, products, filteredData.adSpend, adsTaxRate), [filteredData, products, adsTaxRate]);
 
   // Group Aggregation & Filtering Logic
   const data = useMemo(() => {
@@ -259,9 +260,12 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
 
     // 2. Add Group-Level Ad Spend & Final Calculations
     Object.keys(groups).forEach(groupId => {
-        const groupLevelAds = filteredData.adSpend
+        const groupLevelRawAds = filteredData.adSpend
             .filter(a => a.product_id === groupId)
             .reduce((sum, a) => sum + a.amount_spent, 0);
+        
+        // Add Tax to Group Ads
+        const groupLevelAds = groupLevelRawAds * (1 + adsTaxRate / 100);
         
         const g = groups[groupId];
         g.ad_spend_allocation += groupLevelAds;
@@ -281,7 +285,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
 
     return [...Object.values(groups), ...standalones].sort((a, b) => b.net_profit - a.net_profit);
 
-  }, [variantData, filteredData.adSpend]);
+  }, [variantData, filteredData.adSpend, adsTaxRate]);
 
   const summary = useMemo(() => {
     return data.reduce((acc, item) => ({

@@ -11,7 +11,11 @@ export const formatCurrency = (amount: number): string => {
   }).format(amount);
 };
 
-export const calculateMetrics = (orders: Order[], adSpend: AdSpend[]): DashboardMetrics => {
+export const calculateMetrics = (
+    orders: Order[], 
+    adSpend: AdSpend[], 
+    adsTaxRate: number = 0
+): DashboardMetrics => {
   let gross_revenue = 0;
   let total_cogs = 0;
   let cash_in_transit_stock = 0;
@@ -78,8 +82,10 @@ export const calculateMetrics = (orders: Order[], adSpend: AdSpend[]): Dashboard
     }
   });
 
-  // 4. Marketing Costs
-  const total_ad_spend = adSpend.reduce((sum, ad) => sum + ad.amount_spent, 0);
+  // 4. Marketing Costs & Tax
+  const raw_ad_spend = adSpend.reduce((sum, ad) => sum + ad.amount_spent, 0);
+  const total_ads_tax = raw_ad_spend * (adsTaxRate / 100);
+  const total_ad_spend = raw_ad_spend + total_ads_tax;
 
   // 5. Net Profit Formula (Cash Basis)
   // Revenue (Realized) - COGS (All Dispatched) - Shipping - Overhead - Tax - Ads
@@ -104,6 +110,7 @@ export const calculateMetrics = (orders: Order[], adSpend: AdSpend[]): Dashboard
     total_overhead_cost,
     total_courier_tax,
     total_ad_spend,
+    total_ads_tax,
     gross_profit,
     net_profit,
     delivered_orders,
@@ -223,7 +230,8 @@ export interface ProductPerformance {
 export const calculateProductPerformance = (
     orders: Order[], 
     products: Product[],
-    adSpend: AdSpend[] = []
+    adSpend: AdSpend[] = [],
+    adsTaxRate: number = 0
 ): ProductPerformance[] => {
   const perf: Record<string, ProductPerformance> = {};
 
@@ -231,7 +239,8 @@ export const calculateProductPerformance = (
   products.forEach(p => {
     // Sum relevant ads (DIRECT MATCH ONLY - Group ads handled in Profitability.tsx view)
     const relevantAds = adSpend.filter(a => a.product_id === p.id);
-    const totalAdSpend = relevantAds.reduce((sum, a) => sum + a.amount_spent, 0);
+    const rawAdSpend = relevantAds.reduce((sum, a) => sum + a.amount_spent, 0);
+    const totalAdSpend = rawAdSpend * (1 + adsTaxRate / 100);
     
     // Key by Fingerprint (preferred) or SKU
     const lookupKey = p.variant_fingerprint || p.sku;
