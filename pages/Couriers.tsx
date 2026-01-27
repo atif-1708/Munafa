@@ -1,21 +1,61 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Order } from '../types';
 import { calculateCourierPerformance, formatCurrency } from '../services/calculator';
-import { Truck, AlertCircle, CheckCircle2, Banknote } from 'lucide-react';
+import { Truck, AlertCircle, CheckCircle2, Banknote, Calendar } from 'lucide-react';
 
 interface CouriersProps {
   orders: Order[];
 }
 
 const Couriers: React.FC<CouriersProps> = ({ orders }) => {
-  const stats = useMemo(() => calculateCourierPerformance(orders), [orders]);
+  // Default to Last 30 Days
+  const [dateRange, setDateRange] = useState(() => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - 30);
+    return {
+      start: start.toISOString().split('T')[0],
+      end: end.toISOString().split('T')[0]
+    };
+  });
+
+  const filteredOrders = useMemo(() => {
+    const start = new Date(dateRange.start);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(dateRange.end);
+    end.setHours(23, 59, 59, 999);
+
+    return orders.filter(o => {
+        const d = new Date(o.created_at);
+        return d >= start && d <= end;
+    });
+  }, [orders, dateRange]);
+
+  const stats = useMemo(() => calculateCourierPerformance(filteredOrders), [filteredOrders]);
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Courier Performance</h2>
           <p className="text-slate-500 text-sm">Analyze Delivery Rates & Remittance Health</p>
+        </div>
+
+        <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm">
+            <Calendar size={16} className="text-slate-500" />
+            <input 
+              type="date" 
+              value={dateRange.start}
+              onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+              className="text-sm text-slate-700 bg-transparent border-none focus:ring-0 outline-none w-28 font-medium cursor-pointer"
+            />
+            <span className="text-slate-400">to</span>
+            <input 
+              type="date" 
+              value={dateRange.end}
+              onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+              className="text-sm text-slate-700 bg-transparent border-none focus:ring-0 outline-none w-28 font-medium cursor-pointer"
+            />
         </div>
       </div>
 

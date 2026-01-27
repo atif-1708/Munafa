@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Order, Product, AdSpend } from '../types';
 import { calculateProductPerformance, formatCurrency, ProductPerformance } from '../services/calculator';
-import { Package, Eye, X, Banknote, ShoppingBag, CheckCircle2, RotateCcw, Clock, Layers, ChevronDown, ChevronRight, CornerDownRight, ArrowUpRight, TrendingUp, AlertCircle } from 'lucide-react';
+import { Package, Eye, X, Banknote, ShoppingBag, CheckCircle2, RotateCcw, Clock, Layers, ChevronDown, ChevronRight, CornerDownRight, ArrowUpRight, TrendingUp, AlertCircle, Calendar } from 'lucide-react';
 
 interface ProfitabilityProps {
   orders: Order[];
@@ -167,7 +167,37 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [selectedItem, setSelectedItem] = useState<ProductPerformance | null>(null);
 
-  const variantData = useMemo(() => calculateProductPerformance(orders, products, adSpend), [orders, products, adSpend]);
+  // Default to Last 30 Days
+  const [dateRange, setDateRange] = useState(() => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - 30);
+    return {
+      start: start.toISOString().split('T')[0],
+      end: end.toISOString().split('T')[0]
+    };
+  });
+
+  const filteredData = useMemo(() => {
+    const start = new Date(dateRange.start);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(dateRange.end);
+    end.setHours(23, 59, 59, 999);
+
+    const filteredOrders = orders.filter(o => {
+        const d = new Date(o.created_at);
+        return d >= start && d <= end;
+    });
+
+    const filteredAdSpend = adSpend.filter(a => {
+        const d = new Date(a.date);
+        return d >= start && d <= end;
+    });
+
+    return { orders: filteredOrders, adSpend: filteredAdSpend };
+  }, [orders, adSpend, dateRange]);
+
+  const variantData = useMemo(() => calculateProductPerformance(filteredData.orders, products, filteredData.adSpend), [filteredData, products]);
 
   // Group Aggregation & Filtering Logic
   const data = useMemo(() => {
@@ -225,7 +255,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
 
     // 2. Add Group-Level Ad Spend & Final Calculations
     Object.keys(groups).forEach(groupId => {
-        const groupLevelAds = adSpend
+        const groupLevelAds = filteredData.adSpend
             .filter(a => a.product_id === groupId)
             .reduce((sum, a) => sum + a.amount_spent, 0);
         
@@ -243,7 +273,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
 
     return [...Object.values(groups), ...standalones].sort((a, b) => b.net_profit - a.net_profit);
 
-  }, [variantData, adSpend]);
+  }, [variantData, filteredData.adSpend]);
 
   const toggleGroup = (id: string) => {
       const newSet = new Set(expandedGroups);
@@ -264,10 +294,26 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
 
   return (
     <div className="space-y-4 relative h-full">
-      <div className="flex justify-between items-end">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Profitability Matrix</h2>
           <p className="text-slate-500 text-sm mt-1">Unit economics for active products.</p>
+        </div>
+        <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm">
+            <Calendar size={16} className="text-slate-500" />
+            <input 
+              type="date" 
+              value={dateRange.start}
+              onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+              className="text-sm text-slate-700 bg-transparent border-none focus:ring-0 outline-none w-28 font-medium cursor-pointer"
+            />
+            <span className="text-slate-400">to</span>
+            <input 
+              type="date" 
+              value={dateRange.end}
+              onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+              className="text-sm text-slate-700 bg-transparent border-none focus:ring-0 outline-none w-28 font-medium cursor-pointer"
+            />
         </div>
       </div>
 
@@ -291,7 +337,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
               {data.length === 0 ? (
                   <tr>
                       <td colSpan={10} className="px-6 py-12 text-center text-slate-400 italic">
-                          No active dispatched orders or ad spend found.
+                          No active dispatched orders or ad spend found for this period.
                       </td>
                   </tr>
               ) : (

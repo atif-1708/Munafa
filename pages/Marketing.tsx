@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { AdSpend, Product } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { BarChart3, Plus, Trash2, Layers } from 'lucide-react';
+import { BarChart3, Plus, Trash2, Layers, Calendar } from 'lucide-react';
 
 interface MarketingProps {
   adSpend: AdSpend[];
@@ -21,6 +21,17 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
       platform: 'Facebook',
       amount: '',
       product_id: ''
+  });
+
+  // Default to Last 30 Days
+  const [dateRange, setDateRange] = useState(() => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - 30);
+    return {
+      start: start.toISOString().split('T')[0],
+      end: end.toISOString().split('T')[0]
+    };
   });
 
   // Extract unique groups
@@ -60,14 +71,40 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
     setNewAd(prev => ({ ...prev, amount: '' }));
   };
 
-  const sortedAds = [...adSpend].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const filteredAds = useMemo(() => {
+    const start = new Date(dateRange.start);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(dateRange.end);
+    end.setHours(23, 59, 59, 999);
+
+    return adSpend.filter(a => {
+        const d = new Date(a.date);
+        return d >= start && d <= end;
+    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [adSpend, dateRange]);
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Marketing & Ad Spend</h2>
           <p className="text-slate-500 text-sm">Track daily spend and attribute it to products or groups.</p>
+        </div>
+        <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm">
+            <Calendar size={16} className="text-slate-500" />
+            <input 
+              type="date" 
+              value={dateRange.start}
+              onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+              className="text-sm text-slate-700 bg-transparent border-none focus:ring-0 outline-none w-28 font-medium cursor-pointer"
+            />
+            <span className="text-slate-400">to</span>
+            <input 
+              type="date" 
+              value={dateRange.end}
+              onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+              className="text-sm text-slate-700 bg-transparent border-none focus:ring-0 outline-none w-28 font-medium cursor-pointer"
+            />
         </div>
       </div>
 
@@ -158,10 +195,10 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                        {sortedAds.length === 0 && (
-                            <tr><td colSpan={5} className="px-6 py-8 text-center text-slate-400">No ad spend recorded yet.</td></tr>
+                        {filteredAds.length === 0 && (
+                            <tr><td colSpan={5} className="px-6 py-8 text-center text-slate-400">No ad spend recorded for this period.</td></tr>
                         )}
-                        {sortedAds.map(ad => {
+                        {filteredAds.map(ad => {
                             const product = products.find(p => p.id === ad.product_id);
                             const group = groups.find(g => g.id === ad.product_id);
                             
