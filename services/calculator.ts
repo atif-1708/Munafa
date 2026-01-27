@@ -22,6 +22,7 @@ export const calculateMetrics = (
   let total_shipping_expense = 0;
   let total_overhead_cost = 0;
   let total_courier_tax = 0;
+  let dispatched_orders = 0;
   let delivered_orders = 0;
   let rto_orders = 0;
   let in_transit_orders = 0;
@@ -63,6 +64,8 @@ export const calculateMetrics = (
     // 2. Operational Expenses (Charged on Dispatched)
     // EXCLUDE: Cancelled, Pending (Unbooked), and Booked
     if (isDispatched) {
+       dispatched_orders++;
+
        total_shipping_expense += order.courier_fee;
        total_shipping_expense += order.rto_penalty; // Add Return charges if applicable
        total_shipping_expense += order.packaging_cost;
@@ -106,6 +109,7 @@ export const calculateMetrics = (
 
   return {
     total_orders,
+    dispatched_orders,
     gross_revenue,
     total_cogs,
     total_shipping_expense,

@@ -110,8 +110,9 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend, adsTaxRate = 0 }
   }, [filteredData, dateRange, adsTaxRate]);
 
   const calculatePercentage = (count: number) => {
-      if (metrics.total_orders === 0) return '0%';
-      return `${((count / metrics.total_orders) * 100).toFixed(1)}%`;
+      // Use Dispatched Orders as the denominator for operational percentages
+      if (metrics.dispatched_orders === 0) return '0%';
+      return `${((count / metrics.dispatched_orders) * 100).toFixed(1)}%`;
   };
 
   return (
@@ -204,7 +205,7 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend, adsTaxRate = 0 }
               color="indigo"
             />
             <KPICard 
-              title="Stock in Hand Included" 
+              title="Net Profit" 
               value={formatCurrency(metrics.net_profit)} 
               subValue={`${metrics.roi.toFixed(1)}% ROI`}
               icon={Wallet} 
@@ -222,9 +223,9 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend, adsTaxRate = 0 }
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-5">
             <KPICard 
-              title="Total Orders" 
-              value={metrics.total_orders.toString()} 
-              subValue="All Statuses"
+              title="Dispatched Orders" 
+              value={metrics.dispatched_orders.toString()} 
+              subValue="Left Warehouse"
               icon={Package} 
               color="slate"
             />
