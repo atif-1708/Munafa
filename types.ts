@@ -93,6 +93,7 @@ export interface DashboardMetrics {
   total_cogs: number;
   total_shipping_expense: number; // Forward + Return
   total_ad_spend: number;
+  gross_profit: number; // Revenue - Realized COGS - Expenses (Before Cash Stuck)
   net_profit: number;
   delivered_orders: number;
   rto_orders: number;

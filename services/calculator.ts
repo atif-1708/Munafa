@@ -78,6 +78,10 @@ export const calculateMetrics = (orders: Order[], adSpend: AdSpend[]): Dashboard
   // Revenue (Realized) - COGS (All Dispatched) - Shipping (All Dispatched) - Ads
   const net_profit = gross_revenue - total_cogs - total_shipping_expense - total_ad_spend;
 
+  // Gross Profit (Dashboard Definition) = Net Profit + Cash Stuck
+  // This represents profit on "Closed" operations, ignoring inventory asset shift
+  const gross_profit = net_profit + cash_in_transit_stock;
+
   const total_finished_orders = delivered_orders + rto_orders;
   const rto_rate = total_finished_orders > 0 ? (rto_orders / total_finished_orders) * 100 : 0;
   
@@ -90,6 +94,7 @@ export const calculateMetrics = (orders: Order[], adSpend: AdSpend[]): Dashboard
     total_cogs,
     total_shipping_expense,
     total_ad_spend,
+    gross_profit,
     net_profit,
     delivered_orders,
     rto_orders,
