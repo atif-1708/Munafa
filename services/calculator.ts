@@ -288,8 +288,8 @@ export const calculateProductPerformance = (
 
   return Object.values(perf)
     .map(p => {
-      // Gross Profit = Revenue - Realized COGS - Ad Spend Allocation
-      p.gross_profit = p.gross_revenue - p.cogs_total - p.ad_spend_allocation;
+      // Gross Profit = Revenue - Realized COGS - Ad Spend Allocation - Shipping Allocation
+      p.gross_profit = p.gross_revenue - p.cogs_total - p.ad_spend_allocation - p.shipping_cost_allocation;
 
       // Net Profit = Revenue - Realized COGS - Cash Stuck in Stock - Shipping - Ads
       // This provides a "Real Cash Flow" view, deducting the cost of inventory stuck in the network.

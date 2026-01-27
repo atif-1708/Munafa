@@ -232,7 +232,9 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
         const g = groups[groupId];
         g.ad_spend_allocation += groupLevelAds;
         
-        g.gross_profit = g.gross_revenue - g.cogs_total - g.ad_spend_allocation;
+        // Gross Profit = Revenue - COGS - Ads - Shipping (which includes pkg)
+        g.gross_profit = g.gross_revenue - g.cogs_total - g.ad_spend_allocation - g.shipping_cost_allocation;
+        
         g.net_profit = g.gross_revenue - g.cogs_total - g.cash_in_stock - g.shipping_cost_allocation - g.ad_spend_allocation;
 
         const closed = g.units_sold + g.units_returned;
@@ -251,6 +253,13 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
           newSet.add(id);
       }
       setExpandedGroups(newSet);
+  };
+  
+  // Helpers for view
+  const getTotalUnits = (item: ProductPerformance) => item.units_sold + item.units_returned + item.units_in_transit;
+  const getPercent = (val: number, item: ProductPerformance) => {
+      const total = getTotalUnits(item);
+      return total > 0 ? ((val / total) * 100).toFixed(0) : '0';
   };
 
   return (
@@ -338,9 +347,9 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                             <h4 className={`text-2xl font-bold ${selectedItem.net_profit > 0 ? 'text-emerald-700' : 'text-red-700'}`}>{formatCurrency(selectedItem.net_profit)}</h4>
                         </div>
                         <div className="p-5 rounded-xl border border-slate-200 bg-white shadow-sm">
-                            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Profit Margin</p>
+                            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Gross Profit</p>
                             <h4 className="text-2xl font-bold text-slate-800">
-                                {selectedItem.gross_revenue > 0 ? ((selectedItem.net_profit / selectedItem.gross_revenue) * 100).toFixed(1) : 0}%
+                                {formatCurrency(selectedItem.gross_profit)}
                             </h4>
                         </div>
                         <div className="p-5 rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -379,6 +388,10 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                     </div>
                                     <span className="font-medium">-{formatCurrency(selectedItem.ad_spend_allocation)}</span>
                                 </div>
+                                <div className="flex justify-between items-center text-orange-600 mt-0">
+                                    <span className="text-sm flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span> Shipping & Packaging</span>
+                                    <span className="font-medium">-{formatCurrency(selectedItem.shipping_cost_allocation)}</span>
+                                </div>
                                 
                                 <div className="my-2 border-t border-dashed border-slate-200"></div>
                                 
@@ -387,11 +400,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                     <span className="font-bold text-slate-800">{formatCurrency(selectedItem.gross_profit)}</span>
                                 </div>
 
-                                <div className="flex justify-between items-center text-orange-600 mt-2">
-                                    <span className="text-sm flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span> Shipping & Packaging</span>
-                                    <span className="font-medium">-{formatCurrency(selectedItem.shipping_cost_allocation)}</span>
-                                </div>
-                                <div className="flex justify-between items-center text-indigo-600">
+                                <div className="flex justify-between items-center text-indigo-600 mt-2">
                                     <div className="flex flex-col">
                                         <span className="text-sm flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-indigo-400"></span> Cash Stuck (Stock)</span>
                                     </div>
@@ -416,7 +425,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                              <div className="mb-8 text-center">
                                 <p className="text-sm text-slate-500 mb-1">Total Units Dispatched</p>
                                 <p className="text-4xl font-bold text-slate-900 tracking-tight">
-                                    {selectedItem.units_sold + selectedItem.units_returned + selectedItem.units_in_transit}
+                                    {getTotalUnits(selectedItem)}
                                 </p>
                              </div>
 
@@ -427,10 +436,13 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                         <span className="flex items-center gap-2 text-slate-700 font-medium">
                                             <CheckCircle2 size={16} className="text-emerald-500" /> Delivered
                                         </span>
-                                        <span className="font-bold text-emerald-700">{selectedItem.units_sold}</span>
+                                        <div className="text-right">
+                                            <span className="font-bold text-emerald-700">{selectedItem.units_sold}</span>
+                                            <span className="text-xs text-slate-400 ml-1">({getPercent(selectedItem.units_sold, selectedItem)}%)</span>
+                                        </div>
                                     </div>
                                     <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                                        <div className="bg-emerald-500 h-2.5" style={{width: `${(selectedItem.units_sold / (selectedItem.units_sold + selectedItem.units_returned + selectedItem.units_in_transit || 1)) * 100}%`}}></div>
+                                        <div className="bg-emerald-500 h-2.5" style={{width: `${(selectedItem.units_sold / (getTotalUnits(selectedItem) || 1)) * 100}%`}}></div>
                                     </div>
                                  </div>
 
@@ -440,10 +452,13 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                         <span className="flex items-center gap-2 text-slate-700 font-medium">
                                             <Clock size={16} className="text-blue-500" /> In Transit
                                         </span>
-                                        <span className="font-bold text-blue-700">{selectedItem.units_in_transit}</span>
+                                        <div className="text-right">
+                                            <span className="font-bold text-blue-700">{selectedItem.units_in_transit}</span>
+                                            <span className="text-xs text-slate-400 ml-1">({getPercent(selectedItem.units_in_transit, selectedItem)}%)</span>
+                                        </div>
                                     </div>
                                     <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                                        <div className="bg-blue-500 h-2.5" style={{width: `${(selectedItem.units_in_transit / (selectedItem.units_sold + selectedItem.units_returned + selectedItem.units_in_transit || 1)) * 100}%`}}></div>
+                                        <div className="bg-blue-500 h-2.5" style={{width: `${(selectedItem.units_in_transit / (getTotalUnits(selectedItem) || 1)) * 100}%`}}></div>
                                     </div>
                                  </div>
 
@@ -453,10 +468,13 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                         <span className="flex items-center gap-2 text-slate-700 font-medium">
                                             <RotateCcw size={16} className="text-red-500" /> Returned (RTO)
                                         </span>
-                                        <span className="font-bold text-red-700">{selectedItem.units_returned}</span>
+                                        <div className="text-right">
+                                            <span className="font-bold text-red-700">{selectedItem.units_returned}</span>
+                                            <span className="text-xs text-slate-400 ml-1">({getPercent(selectedItem.units_returned, selectedItem)}%)</span>
+                                        </div>
                                     </div>
                                     <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                                        <div className="bg-red-500 h-2.5" style={{width: `${(selectedItem.units_returned / (selectedItem.units_sold + selectedItem.units_returned + selectedItem.units_in_transit || 1)) * 100}%`}}></div>
+                                        <div className="bg-red-500 h-2.5" style={{width: `${(selectedItem.units_returned / (getTotalUnits(selectedItem) || 1)) * 100}%`}}></div>
                                     </div>
                                  </div>
                              </div>
