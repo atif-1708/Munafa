@@ -156,6 +156,14 @@ export const calculateCourierPerformance = (orders: Order[]): CourierStats[] => 
     const s = stats[order.courier];
     if (!s) return;
 
+    // EXCLUDE: Booked, Pending (Unbooked), and Cancelled.
+    // We only want to track performance for orders actually in the courier's hands.
+    const isDispatched = order.status !== OrderStatus.PENDING && 
+                         order.status !== OrderStatus.BOOKED && 
+                         order.status !== OrderStatus.CANCELLED;
+
+    if (!isDispatched) return;
+
     s.total_orders++;
     s.shipping_spend += (order.courier_fee + order.rto_penalty);
 
@@ -172,6 +180,9 @@ export const calculateCourierPerformance = (orders: Order[]): CourierStats[] => 
   });
 
   return Object.values(stats).map(s => {
+    // Delivery Rate is traditionally: Delivered / (Delivered + RTO) aka Settled Orders
+    // However, some prefer Delivered / Total Dispatched.
+    // For now, keeping "Settled Rate" to avoid punishing for recent In Transit orders.
     const closed_orders = s.delivered + s.rto;
     s.delivery_rate = closed_orders > 0 ? (s.delivered / closed_orders) * 100 : 0;
     return s;

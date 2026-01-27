@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Order } from '../types';
 import { calculateCourierPerformance, formatCurrency } from '../services/calculator';
-import { Truck, AlertCircle, CheckCircle2, Banknote, Calendar, Package, Clock } from 'lucide-react';
+import { Truck, AlertCircle, CheckCircle2, Banknote, Calendar, Package, Clock, Box } from 'lucide-react';
 
 interface CouriersProps {
   orders: Order[];
@@ -85,6 +85,15 @@ const Couriers: React.FC<CouriersProps> = ({ orders }) => {
               </div>
 
               <div className="space-y-3">
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-slate-500 flex items-center gap-2">
+                    <Box size={14} /> Total Dispatched
+                  </span>
+                  <div className="text-right">
+                    <span className="font-medium">{courier.total_orders}</span>
+                  </div>
+                </div>
+
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-slate-500 flex items-center gap-2">
                     <CheckCircle2 size={14} /> Delivered
