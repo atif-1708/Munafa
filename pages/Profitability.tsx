@@ -275,6 +275,15 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
 
   }, [variantData, filteredData.adSpend]);
 
+  const summary = useMemo(() => {
+    return data.reduce((acc, item) => ({
+        revenue: acc.revenue + item.gross_revenue,
+        netProfit: acc.netProfit + item.net_profit,
+        adSpend: acc.adSpend + item.ad_spend_allocation,
+        units: acc.units + item.units_sold
+    }), { revenue: 0, netProfit: 0, adSpend: 0, units: 0 });
+  }, [data]);
+
   const toggleGroup = (id: string) => {
       const newSet = new Set(expandedGroups);
       if (newSet.has(id)) {
@@ -315,6 +324,28 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
               className="text-sm text-slate-700 bg-transparent border-none focus:ring-0 outline-none w-28 font-medium cursor-pointer"
             />
         </div>
+      </div>
+
+      {/* Summary Strip */}
+      <div className="grid grid-cols-4 gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+         <div>
+            <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">Total Revenue</p>
+            <p className="text-lg font-bold text-slate-800">{formatCurrency(summary.revenue)}</p>
+         </div>
+         <div>
+            <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">Total Ad Spend</p>
+            <p className="text-lg font-bold text-purple-600">{formatCurrency(summary.adSpend)}</p>
+         </div>
+         <div>
+            <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">Delivered Units</p>
+            <p className="text-lg font-bold text-blue-600">{summary.units}</p>
+         </div>
+         <div>
+            <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">Total Net Profit</p>
+            <p className={`text-lg font-bold ${summary.netProfit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                {formatCurrency(summary.netProfit)}
+            </p>
+         </div>
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">

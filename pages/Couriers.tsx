@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Order } from '../types';
 import { calculateCourierPerformance, formatCurrency } from '../services/calculator';
-import { Truck, AlertCircle, CheckCircle2, Banknote, Calendar } from 'lucide-react';
+import { Truck, AlertCircle, CheckCircle2, Banknote, Calendar, Package } from 'lucide-react';
 
 interface CouriersProps {
   orders: Order[];
@@ -32,12 +32,18 @@ const Couriers: React.FC<CouriersProps> = ({ orders }) => {
   }, [orders, dateRange]);
 
   const stats = useMemo(() => calculateCourierPerformance(filteredOrders), [filteredOrders]);
+  const totalVolume = filteredOrders.length;
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900">Courier Performance</h2>
+          <div className="flex items-center gap-3 mb-1">
+            <h2 className="text-2xl font-bold text-slate-900">Courier Performance</h2>
+            <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full text-xs font-bold flex items-center gap-1 border border-slate-200">
+                <Package size={12} /> {totalVolume} Orders
+            </span>
+          </div>
           <p className="text-slate-500 text-sm">Analyze Delivery Rates & Remittance Health</p>
         </div>
 

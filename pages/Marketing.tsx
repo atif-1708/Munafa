@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { AdSpend, Product } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { BarChart3, Plus, Trash2, Layers, Calendar } from 'lucide-react';
+import { BarChart3, Plus, Trash2, Layers, Calendar, DollarSign } from 'lucide-react';
 
 interface MarketingProps {
   adSpend: AdSpend[];
@@ -82,6 +82,8 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
         return d >= start && d <= end;
     }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [adSpend, dateRange]);
+
+  const totalPeriodSpend = useMemo(() => filteredAds.reduce((sum, ad) => sum + ad.amount_spent, 0), [filteredAds]);
 
   return (
     <div className="space-y-6">
@@ -179,66 +181,79 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
         </div>
 
         {/* List */}
-        <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-             <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
-                 <h3 className="font-bold text-slate-700 text-sm">Recent Expenses</h3>
+        <div className="lg:col-span-2 space-y-4">
+             {/* Total Card */}
+             <div className="bg-slate-900 text-white p-5 rounded-xl shadow-md flex justify-between items-center">
+                <div>
+                    <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Total Period Spend</p>
+                    <h3 className="text-3xl font-bold">{formatCurrency(totalPeriodSpend)}</h3>
+                </div>
+                <div className="w-12 h-12 rounded-lg bg-slate-800 flex items-center justify-center text-brand-500">
+                    <DollarSign size={24} />
+                </div>
              </div>
-             <div className="max-h-[500px] overflow-y-auto">
-                 <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-50 border-b border-slate-100 sticky top-0">
-                        <tr>
-                            <th className="px-6 py-3 font-semibold text-slate-700">Date</th>
-                            <th className="px-6 py-3 font-semibold text-slate-700">Platform</th>
-                            <th className="px-6 py-3 font-semibold text-slate-700">Attribution</th>
-                            <th className="px-6 py-3 font-semibold text-slate-700">Amount</th>
-                            <th className="px-6 py-3 font-semibold text-slate-700">Action</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                        {filteredAds.length === 0 && (
-                            <tr><td colSpan={5} className="px-6 py-8 text-center text-slate-400">No ad spend recorded for this period.</td></tr>
-                        )}
-                        {filteredAds.map(ad => {
-                            const product = products.find(p => p.id === ad.product_id);
-                            const group = groups.find(g => g.id === ad.product_id);
-                            
-                            return (
-                                <tr key={ad.id} className="hover:bg-slate-50">
-                                    <td className="px-6 py-3 text-slate-600">{ad.date}</td>
-                                    <td className="px-6 py-3">
-                                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                                            ad.platform === 'Facebook' ? 'bg-blue-100 text-blue-700' :
-                                            ad.platform === 'TikTok' ? 'bg-gray-800 text-white' : 'bg-green-100 text-green-700'
-                                        }`}>
-                                            {ad.platform}
-                                        </span>
-                                    </td>
-                                    <td className="px-6 py-3 text-slate-600 text-xs">
-                                        {group ? (
-                                             <span className="font-bold text-indigo-700 flex items-center gap-1">
-                                                 <Layers size={12} /> {group.name}
-                                             </span>
-                                        ) : product ? (
-                                            <div className="truncate max-w-[150px]">{product.title}</div>
-                                        ) : (
-                                            <span className="text-slate-400 italic">General</span>
-                                        )}
-                                    </td>
-                                    <td className="px-6 py-3 font-medium text-slate-900">{formatCurrency(ad.amount_spent)}</td>
-                                    <td className="px-6 py-3">
-                                        <button 
-                                            onClick={() => onDeleteAdSpend(ad.id)}
-                                            className="text-red-400 hover:text-red-600"
-                                        >
-                                            <Trash2 size={16} />
-                                        </button>
-                                    </td>
-                                </tr>
-                            );
-                        })}
-                    </tbody>
-                 </table>
-             </div>
+
+             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                 <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+                     <h3 className="font-bold text-slate-700 text-sm">Recent Expenses</h3>
+                 </div>
+                 <div className="max-h-[500px] overflow-y-auto">
+                     <table className="w-full text-left text-sm">
+                        <thead className="bg-slate-50 border-b border-slate-100 sticky top-0">
+                            <tr>
+                                <th className="px-6 py-3 font-semibold text-slate-700">Date</th>
+                                <th className="px-6 py-3 font-semibold text-slate-700">Platform</th>
+                                <th className="px-6 py-3 font-semibold text-slate-700">Attribution</th>
+                                <th className="px-6 py-3 font-semibold text-slate-700">Amount</th>
+                                <th className="px-6 py-3 font-semibold text-slate-700">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {filteredAds.length === 0 && (
+                                <tr><td colSpan={5} className="px-6 py-8 text-center text-slate-400">No ad spend recorded for this period.</td></tr>
+                            )}
+                            {filteredAds.map(ad => {
+                                const product = products.find(p => p.id === ad.product_id);
+                                const group = groups.find(g => g.id === ad.product_id);
+                                
+                                return (
+                                    <tr key={ad.id} className="hover:bg-slate-50">
+                                        <td className="px-6 py-3 text-slate-600">{ad.date}</td>
+                                        <td className="px-6 py-3">
+                                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                                ad.platform === 'Facebook' ? 'bg-blue-100 text-blue-700' :
+                                                ad.platform === 'TikTok' ? 'bg-gray-800 text-white' : 'bg-green-100 text-green-700'
+                                            }`}>
+                                                {ad.platform}
+                                            </span>
+                                        </td>
+                                        <td className="px-6 py-3 text-slate-600 text-xs">
+                                            {group ? (
+                                                <span className="font-bold text-indigo-700 flex items-center gap-1">
+                                                    <Layers size={12} /> {group.name}
+                                                </span>
+                                            ) : product ? (
+                                                <div className="truncate max-w-[150px]">{product.title}</div>
+                                            ) : (
+                                                <span className="text-slate-400 italic">General</span>
+                                            )}
+                                        </td>
+                                        <td className="px-6 py-3 font-medium text-slate-900">{formatCurrency(ad.amount_spent)}</td>
+                                        <td className="px-6 py-3">
+                                            <button 
+                                                onClick={() => onDeleteAdSpend(ad.id)}
+                                                className="text-red-400 hover:text-red-600"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                     </table>
+                 </div>
+            </div>
         </div>
       </div>
     </div>
