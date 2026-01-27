@@ -164,7 +164,7 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend, adsTaxRate = 0 }
             <KPICard 
               title="Total COGS" 
               value={formatCurrency(metrics.total_cogs)} 
-              subValue="Product Cost (Sold+Inv)"
+              subValue="Dispatched Products Cost"
               icon={ShoppingBasket} 
               color="slate"
             />
@@ -199,12 +199,12 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend, adsTaxRate = 0 }
              <KPICard 
               title="Gross Profit" 
               value={formatCurrency(metrics.gross_profit)} 
-              subValue="Before Cash Deductions"
+              subValue="Stock in Hand Excluded"
               icon={Wallet} 
               color="indigo"
             />
             <KPICard 
-              title="Real Net Profit" 
+              title="Stock in Hand Included" 
               value={formatCurrency(metrics.net_profit)} 
               subValue={`${metrics.roi.toFixed(1)}% ROI`}
               icon={Wallet} 

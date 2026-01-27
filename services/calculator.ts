@@ -91,8 +91,10 @@ export const calculateMetrics = (
   // Revenue (Realized) - COGS (All Dispatched) - Shipping - Overhead - Tax - Ads
   const net_profit = gross_revenue - total_cogs - total_shipping_expense - total_overhead_cost - total_courier_tax - total_ad_spend;
 
-  // Gross Profit (Dashboard Definition) = Net Profit + Cash Stuck
-  const gross_profit = net_profit + cash_in_transit_stock;
+  // Gross Profit (Operational Profit) = Net Profit + Ads + Cash Stuck
+  // This definition represents: Realized Revenue - Realized COGS - Shipping - Overhead - Tax.
+  // It EXCLUDES Ad Spend and Inventory Asset in Transit.
+  const gross_profit = net_profit + cash_in_transit_stock + total_ad_spend;
 
   const total_finished_orders = delivered_orders + rto_orders;
   const rto_rate = total_finished_orders > 0 ? (rto_orders / total_finished_orders) * 100 : 0;
@@ -339,18 +341,15 @@ export const calculateProductPerformance = (
 
   return Object.values(perf)
     .map(p => {
-      // Gross Profit = Revenue - Realized COGS - Ad Spend Allocation - Shipping Allocation - Overhead - Tax
-      // Wait, standard Gross Profit usually doesn't include Ads or Fixed Overhead, but for "Contribution Margin 2" or "Operating Profit" it does.
-      // Keeping consistent with previous logic: Gross Profit here is sort of "Cash Flow before Inventory Adjustment" + stuck stock.
-      // Let's stick to the definition:
-      // Net Profit = Revenue - COGS - Shipping - Overhead - Tax - Ads - Cash Stuck (Realized Cash)
+      // Gross Profit = Revenue - Realized COGS - Shipping Allocation - Overhead - Tax
+      // Net Profit = Gross Profit - Ads - Cash Stuck
       
       const expenses = p.cogs_total + p.shipping_cost_allocation + p.overhead_allocation + p.tax_allocation + p.ad_spend_allocation;
       
       p.net_profit = p.gross_revenue - expenses - p.cash_in_stock;
 
-      // Gross Profit (Dashboard definition) -> Usually Net Profit + Stuck Stock
-      p.gross_profit = p.net_profit + p.cash_in_stock;
+      // Gross Profit (Dashboard definition) -> Usually Net Profit + Ads + Stuck Stock
+      p.gross_profit = p.net_profit + p.cash_in_stock + p.ad_spend_allocation;
       
       const total_dispatched = p.units_sold + p.units_returned + p.units_in_transit;
       const closed_orders = p.units_sold + p.units_returned;

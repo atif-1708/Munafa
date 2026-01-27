@@ -1,3 +1,4 @@
+
 import React, { useMemo, useState } from 'react';
 import { Order, Product, AdSpend } from '../types';
 import { calculateProductPerformance, formatCurrency, ProductPerformance } from '../services/calculator';
@@ -270,14 +271,11 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
         const g = groups[groupId];
         g.ad_spend_allocation += groupLevelAds;
         
-        // Gross Profit (Cash before Inventory)
-        // Net Profit = Revenue - COGS - Ads - Shipping - Overhead - Tax - Cash Stuck
-        
         const expenses = g.cogs_total + g.shipping_cost_allocation + g.overhead_allocation + g.tax_allocation + g.ad_spend_allocation;
         g.net_profit = g.gross_revenue - expenses - g.cash_in_stock;
         
         // Consistent with calculateMetrics definitions
-        g.gross_profit = g.net_profit + g.cash_in_stock;
+        g.gross_profit = g.net_profit + g.cash_in_stock + g.ad_spend_allocation;
 
         const closed = g.units_sold + g.units_returned;
         g.rto_rate = closed > 0 ? (g.units_returned / closed) * 100 : 0;
@@ -292,8 +290,10 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
         revenue: acc.revenue + item.gross_revenue,
         netProfit: acc.netProfit + item.net_profit,
         adSpend: acc.adSpend + item.ad_spend_allocation,
-        units: acc.units + item.units_sold
-    }), { revenue: 0, netProfit: 0, adSpend: 0, units: 0 });
+        units: acc.units + item.units_sold,
+        overhead: acc.overhead + item.overhead_allocation,
+        tax: acc.tax + item.tax_allocation
+    }), { revenue: 0, netProfit: 0, adSpend: 0, units: 0, overhead: 0, tax: 0 });
   }, [data]);
 
   const toggleGroup = (id: string) => {
@@ -350,7 +350,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
       </div>
 
       {/* Summary Strip */}
-      <div className="grid grid-cols-4 gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
          <div>
             <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">Total Revenue</p>
             <p className="text-lg font-bold text-slate-800">{formatCurrency(summary.revenue)}</p>
@@ -358,6 +358,14 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
          <div>
             <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">Total Ad Spend</p>
             <p className="text-lg font-bold text-purple-600">{formatCurrency(summary.adSpend)}</p>
+         </div>
+         <div>
+            <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">Courier/Sales Tax</p>
+            <p className="text-lg font-bold text-red-500">{formatCurrency(summary.tax)}</p>
+         </div>
+         <div>
+            <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">Overhead</p>
+            <p className="text-lg font-bold text-yellow-600">{formatCurrency(summary.overhead)}</p>
          </div>
          <div>
             <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">Delivered Units</p>
@@ -482,12 +490,6 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                     <span className="text-sm flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-red-400"></span> COGS (Sold)</span>
                                     <span className="font-medium">-{formatCurrency(selectedItem.cogs_total)}</span>
                                 </div>
-                                <div className="flex justify-between items-center text-purple-600">
-                                    <div className="flex flex-col">
-                                        <span className="text-sm flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-purple-400"></span> Ad Spend</span>
-                                    </div>
-                                    <span className="font-medium">-{formatCurrency(selectedItem.ad_spend_allocation)}</span>
-                                </div>
                                 <div className="flex justify-between items-center text-orange-600 mt-0">
                                     <span className="text-sm flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span> Shipping & Packaging</span>
                                     <span className="font-medium">-{formatCurrency(selectedItem.shipping_cost_allocation)}</span>
@@ -509,11 +511,18 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                 <div className="my-2 border-t border-dashed border-slate-200"></div>
                                 
                                 <div className="flex justify-between items-center bg-slate-50 p-3 rounded-lg">
-                                    <span className="text-sm font-bold text-slate-700">Gross Profit</span>
+                                    <span className="text-sm font-bold text-slate-700">Gross Profit (Before Ads)</span>
                                     <span className="font-bold text-slate-800">{formatCurrency(selectedItem.gross_profit)}</span>
                                 </div>
 
-                                <div className="flex justify-between items-center text-indigo-600 mt-2">
+                                <div className="flex justify-between items-center text-purple-600 mt-2">
+                                    <div className="flex flex-col">
+                                        <span className="text-sm flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-purple-400"></span> Ad Spend</span>
+                                    </div>
+                                    <span className="font-medium">-{formatCurrency(selectedItem.ad_spend_allocation)}</span>
+                                </div>
+
+                                <div className="flex justify-between items-center text-indigo-600 mt-0">
                                     <div className="flex flex-col">
                                         <span className="text-sm flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-indigo-400"></span> Cash Stuck (Stock)</span>
                                     </div>
