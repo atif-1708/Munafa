@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Order, Product, AdSpend } from '../types';
 import { calculateProductPerformance, formatCurrency, ProductPerformance } from '../services/calculator';
-import { Package, Eye, X, Banknote, ShoppingBag, CheckCircle2, RotateCcw, Clock, Layers, ChevronDown, ChevronRight, CornerDownRight, ArrowUpRight, TrendingUp, AlertCircle, Calendar } from 'lucide-react';
+import { Package, Eye, X, Banknote, ShoppingBag, CheckCircle2, RotateCcw, Clock, Layers, ChevronDown, ChevronRight, CornerDownRight, ArrowUpRight, TrendingUp, AlertCircle, Calendar, Target } from 'lucide-react';
 
 interface ProfitabilityProps {
   orders: Order[];
@@ -301,6 +301,18 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
       return total > 0 ? ((val / total) * 100).toFixed(0) : '0';
   };
 
+  // Helper Calculation for Detail View
+  const getCPRData = (item: ProductPerformance) => {
+      const delivered = item.units_sold;
+      const cpr = delivered > 0 ? item.ad_spend_allocation / delivered : 0;
+      // Profit Before Ads = Net Profit + Ad Spend
+      // Note: This assumes Net Profit is Revenue - Expenses (including ads).
+      const profitBeforeAds = item.net_profit + item.ad_spend_allocation;
+      const breakEvenCPR = delivered > 0 ? profitBeforeAds / delivered : 0;
+
+      return { cpr, breakEvenCPR, delivered };
+  };
+
   return (
     <div className="space-y-4 relative h-full">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
@@ -490,6 +502,37 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                         {formatCurrency(selectedItem.net_profit)}
                                     </span>
                                 </div>
+                                
+                                {/* New CPR Section */}
+                                {(() => {
+                                    const { cpr, breakEvenCPR, delivered } = getCPRData(selectedItem);
+                                    if (delivered === 0 && selectedItem.ad_spend_allocation === 0) return null;
+                                    
+                                    return (
+                                        <div className="mt-6 pt-4 border-t border-slate-100 grid grid-cols-2 gap-4">
+                                            <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <Target size={14} className="text-purple-500" />
+                                                    <p className="text-xs text-slate-500 uppercase font-bold">Cost Per Result</p>
+                                                </div>
+                                                <p className="text-lg font-bold text-purple-600">
+                                                    {delivered > 0 ? formatCurrency(cpr) : (selectedItem.ad_spend_allocation > 0 ? '∞' : formatCurrency(0))}
+                                                </p>
+                                                <p className="text-[10px] text-slate-400">Ad Spend / Delivered Order</p>
+                                            </div>
+                                            <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <TrendingUp size={14} className="text-slate-500" />
+                                                    <p className="text-xs text-slate-500 uppercase font-bold">Break-Even CPR</p>
+                                                </div>
+                                                <p className="text-lg font-bold text-slate-700">
+                                                    {delivered > 0 ? formatCurrency(breakEvenCPR) : '-'}
+                                                </p>
+                                                <p className="text-[10px] text-slate-400">Max Allowable CPA</p>
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         </div>
 
