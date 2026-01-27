@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Product } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { PackageSearch, History, Edit2, Plus, Save, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder } from 'lucide-react';
+import { PackageSearch, History, Edit2, Plus, Save, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, FolderPlus } from 'lucide-react';
 
 interface InventoryProps {
   products: Product[];
@@ -16,9 +16,11 @@ const Inventory: React.FC<InventoryProps> = ({ products, onUpdateProducts }) => 
   // Group Logic State
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   
-  // Group Creation State
+  // Group Creation/Edit State
   const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
+  const [groupAction, setGroupAction] = useState<'create' | 'existing'>('create');
   const [newGroupName, setNewGroupName] = useState('');
+  const [selectedGroupId, setSelectedGroupId] = useState('');
 
   const filteredProducts = products.filter(p => 
     p.title.toLowerCase().includes(search.toLowerCase()) || 
@@ -103,15 +105,28 @@ const Inventory: React.FC<InventoryProps> = ({ products, onUpdateProducts }) => 
     setSelectedProduct(updated);
   };
 
-  const handleCreateGroup = () => {
-    if (!newGroupName.trim() || selectedIds.size < 2) return;
+  const handleApplyGroup = () => {
+    if (selectedIds.size === 0) return;
 
-    const groupId = crypto.randomUUID();
+    let targetId = '';
+    let targetName = '';
+
+    if (groupAction === 'create') {
+        if (!newGroupName.trim()) return;
+        targetId = crypto.randomUUID();
+        targetName = newGroupName;
+    } else {
+        if (!selectedGroupId) return;
+        const group = inventoryTree.groups.find(g => g.id === selectedGroupId);
+        if (!group) return;
+        targetId = group.id;
+        targetName = group.name;
+    }
+
     const updates: Product[] = [];
-
     products.forEach(p => {
         if (selectedIds.has(p.id)) {
-            updates.push({ ...p, group_id: groupId, group_name: newGroupName });
+            updates.push({ ...p, group_id: targetId, group_name: targetName });
         }
     });
 
@@ -119,6 +134,8 @@ const Inventory: React.FC<InventoryProps> = ({ products, onUpdateProducts }) => 
     setSelectedIds(new Set());
     setIsGroupModalOpen(false);
     setNewGroupName('');
+    setSelectedGroupId('');
+    setGroupAction('create');
   };
 
   const handleUngroup = (product: Product) => {
@@ -126,6 +143,18 @@ const Inventory: React.FC<InventoryProps> = ({ products, onUpdateProducts }) => 
       if(selectedProduct?.id === product.id) {
           setSelectedProduct({...product, group_id: null, group_name: null});
       }
+  };
+
+  const openGroupModal = () => {
+      // If groups exist, default to existing if convenient, but let's stick to 'create' default
+      // or check if we want smart defaults. 'create' is safer.
+      if (inventoryTree.groups.length > 0) {
+          setGroupAction('existing');
+          setSelectedGroupId(inventoryTree.groups[0].id);
+      } else {
+          setGroupAction('create');
+      }
+      setIsGroupModalOpen(true);
   };
 
   return (
@@ -138,7 +167,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, onUpdateProducts }) => 
         <div className="flex items-center gap-3">
              {selectedIds.size > 0 && (
                  <button 
-                    onClick={() => setIsGroupModalOpen(true)}
+                    onClick={openGroupModal}
                     className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-indigo-700 transition-colors"
                  >
                      <Layers size={16} /> Group Selected ({selectedIds.size})
@@ -404,21 +433,80 @@ const Inventory: React.FC<InventoryProps> = ({ products, onUpdateProducts }) => 
       {isGroupModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
               <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
-                  <h3 className="text-lg font-bold text-slate-900 mb-4">Create Product Group</h3>
-                  <p className="text-sm text-slate-500 mb-4">
-                      Group {selectedIds.size} selected variants together. They will share Ad Spend allocation and show aggregated profit.
+                  <h3 className="text-lg font-bold text-slate-900 mb-2">Manage Product Group</h3>
+                  <p className="text-sm text-slate-500 mb-6">
+                      Assign {selectedIds.size} selected items to a group.
                   </p>
-                  <input 
-                    autoFocus
-                    type="text" 
-                    placeholder="e.g. Summer Polo Collection"
-                    className="w-full px-4 py-2 border rounded-lg mb-6 focus:ring-2 focus:ring-indigo-500 outline-none"
-                    value={newGroupName}
-                    onChange={(e) => setNewGroupName(e.target.value)}
-                  />
+                  
+                  {/* Action Toggle */}
+                  <div className="flex bg-slate-100 p-1 rounded-lg mb-4">
+                      <button 
+                          onClick={() => setGroupAction('existing')}
+                          disabled={inventoryTree.groups.length === 0}
+                          className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${
+                              groupAction === 'existing' 
+                                ? 'bg-white text-indigo-600 shadow-sm' 
+                                : 'text-slate-500 hover:text-slate-700 disabled:opacity-50'
+                          }`}
+                      >
+                          Add to Existing
+                      </button>
+                      <button 
+                          onClick={() => setGroupAction('create')}
+                          className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${
+                              groupAction === 'create' 
+                                ? 'bg-white text-indigo-600 shadow-sm' 
+                                : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                      >
+                          Create New
+                      </button>
+                  </div>
+
+                  {groupAction === 'create' ? (
+                      <div className="mb-6">
+                        <label className="block text-xs font-medium text-slate-700 mb-1">New Group Name</label>
+                        <input 
+                            autoFocus
+                            type="text" 
+                            placeholder="e.g. Summer Polo Collection"
+                            className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                            value={newGroupName}
+                            onChange={(e) => setNewGroupName(e.target.value)}
+                        />
+                      </div>
+                  ) : (
+                      <div className="mb-6">
+                        <label className="block text-xs font-medium text-slate-700 mb-1">Select Existing Group</label>
+                        {inventoryTree.groups.length > 0 ? (
+                            <select 
+                                className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm bg-white"
+                                value={selectedGroupId}
+                                onChange={(e) => setSelectedGroupId(e.target.value)}
+                            >
+                                {inventoryTree.groups.map(g => (
+                                    <option key={g.id} value={g.id}>{g.name} ({g.items.length} items)</option>
+                                ))}
+                            </select>
+                        ) : (
+                            <p className="text-sm text-red-500 italic">No existing groups found.</p>
+                        )}
+                      </div>
+                  )}
+
                   <div className="flex gap-3">
-                      <button onClick={() => setIsGroupModalOpen(false)} className="flex-1 px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg">Cancel</button>
-                      <button onClick={handleCreateGroup} className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Create Group</button>
+                      <button 
+                        onClick={() => setIsGroupModalOpen(false)} 
+                        className="flex-1 px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg text-sm"
+                      >
+                        Cancel
+                      </button>
+                      <button 
+                        onClick={handleApplyGroup} 
+                        className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium"
+                      >
+                        {groupAction === 'create' ? 'Create Group' : 'Update Group'}
+                      </button>
                   </div>
               </div>
           </div>
