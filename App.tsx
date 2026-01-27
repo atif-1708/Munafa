@@ -355,19 +355,21 @@ const App: React.FC = () => {
     }
   };
 
-  const handleAddAdSpend = async (entry: AdSpend) => {
-    setAdSpend(prev => [entry, ...prev]);
+  const handleAddAdSpend = async (entries: AdSpend[]) => {
+    setAdSpend(prev => [...entries, ...prev]);
 
     if (!isDemoMode && session?.user) {
         try {
-            const { error } = await supabase.from('ad_spend').insert({
+            const dbPayload = entries.map(entry => ({
                 id: entry.id,
                 user_id: session.user.id,
                 date: entry.date,
                 platform: entry.platform,
                 amount_spent: entry.amount_spent,
                 product_id: entry.product_id || null
-            });
+            }));
+
+            const { error } = await supabase.from('ad_spend').insert(dbPayload);
             if (error) console.error('Error saving ad spend:', error);
         } catch (e) { console.error("DB Error:", e); }
     }

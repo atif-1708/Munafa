@@ -1,23 +1,25 @@
 import React, { useState, useMemo } from 'react';
 import { AdSpend, Product } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { BarChart3, Plus, Trash2, Layers, Calendar, DollarSign } from 'lucide-react';
+import { BarChart3, Plus, Trash2, Layers, Calendar, DollarSign, CalendarRange } from 'lucide-react';
 
 interface MarketingProps {
   adSpend: AdSpend[];
   products: Product[];
-  onAddAdSpend: (ad: AdSpend) => void;
+  onAddAdSpend: (ads: AdSpend[]) => void;
   onDeleteAdSpend: (id: string) => void;
 }
 
 const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, onDeleteAdSpend }) => {
   const [newAd, setNewAd] = useState<{
-      date: string, 
+      startDate: string,
+      endDate: string,
       platform: 'Facebook' | 'TikTok' | 'Google', 
       amount: string, 
       product_id: string
   }>({
-      date: new Date().toISOString().split('T')[0],
+      startDate: new Date().toISOString().split('T')[0],
+      endDate: new Date().toISOString().split('T')[0],
       platform: 'Facebook',
       amount: '',
       product_id: ''
@@ -59,15 +61,37 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
     e.preventDefault();
     if (!newAd.amount) return;
 
-    const entry: AdSpend = {
-        id: generateUUID(),
-        date: newAd.date,
-        platform: newAd.platform,
-        amount_spent: parseFloat(newAd.amount),
-        product_id: newAd.product_id || undefined
-    };
+    const start = new Date(newAd.startDate);
+    const end = new Date(newAd.endDate);
+    
+    // Safety check
+    if (end < start) {
+        alert("End date cannot be before start date");
+        return;
+    }
 
-    onAddAdSpend(entry);
+    const diffTime = Math.abs(end.getTime() - start.getTime());
+    const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // Inclusive of start day
+    
+    const totalAmount = parseFloat(newAd.amount);
+    const dailyAmount = totalAmount / days;
+    
+    const entries: AdSpend[] = [];
+    
+    for (let i = 0; i < days; i++) {
+        const d = new Date(start);
+        d.setDate(d.getDate() + i);
+        entries.push({
+            id: generateUUID(),
+            date: d.toISOString().split('T')[0],
+            platform: newAd.platform,
+            amount_spent: dailyAmount,
+            product_id: newAd.product_id || undefined
+        });
+    }
+
+    onAddAdSpend(entries);
+    // Reset amount but keep dates/platform for easier consecutive entry
     setNewAd(prev => ({ ...prev, amount: '' }));
   };
 
@@ -84,6 +108,19 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
   }, [adSpend, dateRange]);
 
   const totalPeriodSpend = useMemo(() => filteredAds.reduce((sum, ad) => sum + ad.amount_spent, 0), [filteredAds]);
+  
+  // Helper for UI calculation
+  const calculateDailyPreview = () => {
+     if (!newAd.startDate || !newAd.endDate || !newAd.amount) return null;
+     const start = new Date(newAd.startDate);
+     const end = new Date(newAd.endDate);
+     if (end < start) return null;
+     const diffTime = Math.abs(end.getTime() - start.getTime());
+     const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+     return days > 1 ? (parseFloat(newAd.amount) / days) : null;
+  };
+
+  const dailyPreview = calculateDailyPreview();
 
   return (
     <div className="space-y-6">
@@ -115,19 +152,42 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-fit">
             <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
                 <Plus size={18} className="text-brand-600" />
-                Add Daily Spend
+                Add Ad Spend
             </h3>
             <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">Date</label>
-                    <input 
-                        type="date" 
-                        required
-                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-brand-500 outline-none text-sm"
-                        value={newAd.date}
-                        onChange={e => setNewAd({...newAd, date: e.target.value})}
-                    />
+                <div className="grid grid-cols-2 gap-3">
+                    <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">From Date</label>
+                        <input 
+                            type="date" 
+                            required
+                            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-brand-500 outline-none text-sm"
+                            value={newAd.startDate}
+                            onChange={e => {
+                                // Auto-update end date if currently earlier
+                                const newStart = e.target.value;
+                                const currentEnd = newAd.endDate;
+                                setNewAd({
+                                    ...newAd, 
+                                    startDate: newStart, 
+                                    endDate: currentEnd < newStart ? newStart : currentEnd
+                                });
+                            }}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">To Date</label>
+                        <input 
+                            type="date" 
+                            required
+                            min={newAd.startDate}
+                            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-brand-500 outline-none text-sm"
+                            value={newAd.endDate}
+                            onChange={e => setNewAd({...newAd, endDate: e.target.value})}
+                        />
+                    </div>
                 </div>
+
                 <div>
                     <label className="block text-xs font-medium text-slate-700 mb-1">Platform</label>
                     <select 
@@ -141,7 +201,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
                     </select>
                 </div>
                 <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">Amount (PKR)</label>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">Total Amount (PKR)</label>
                     <input 
                         type="number" 
                         required
@@ -150,6 +210,12 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
                         value={newAd.amount}
                         onChange={e => setNewAd({...newAd, amount: e.target.value})}
                     />
+                    {dailyPreview && (
+                        <p className="text-xs text-slate-500 mt-1 flex items-center gap-1 bg-slate-50 p-1.5 rounded">
+                             <CalendarRange size={12} />
+                             Splitting into <strong>{formatCurrency(dailyPreview)}</strong> / day
+                        </p>
+                    )}
                 </div>
                 <div>
                     <label className="block text-xs font-medium text-slate-700 mb-1">Attributed To (Optional)</label>
