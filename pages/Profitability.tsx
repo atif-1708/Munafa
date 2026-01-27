@@ -119,14 +119,14 @@ const ProfitabilityRow = ({
                     </span>
                 </td>
 
-                {/* 7. Ads */}
-                <td className="px-1 py-3 text-right text-purple-600 tabular-nums">
-                    {item.ad_spend_allocation > 0 ? formatCurrency(item.ad_spend_allocation) : '-'}
-                </td>
-
-                {/* 8. Gross */}
+                {/* 7. Gross Profit (Moved before Ads) */}
                 <td className="px-1 py-3 text-right font-medium text-slate-600 tabular-nums hidden lg:table-cell">
                     {formatCurrency(item.gross_profit)}
+                </td>
+
+                {/* 8. Ads (Moved after Gross) */}
+                <td className="px-1 py-3 text-right text-purple-600 tabular-nums">
+                    {item.ad_spend_allocation > 0 ? formatCurrency(item.ad_spend_allocation) : '-'}
                 </td>
 
                 {/* 9. Net Profit */}
@@ -315,13 +315,21 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
 
   // Helper Calculation for Detail View
   const getCPRData = (item: ProductPerformance) => {
-      const delivered = item.units_sold;
-      const cpr = delivered > 0 ? item.ad_spend_allocation / delivered : 0;
-      // Profit Before Ads = Net Profit + Ad Spend
-      const profitBeforeAds = item.net_profit + item.ad_spend_allocation;
-      const breakEvenCPR = delivered > 0 ? profitBeforeAds / delivered : 0;
+      // CHANGED: CPR now uses Total Orders (Dispatched) as denominator, not just Delivered
+      const totalOrders = item.units_sold + item.units_returned + item.units_in_transit;
+      
+      const cpr = totalOrders > 0 ? item.ad_spend_allocation / totalOrders : 0;
+      
+      // Profit Before Ads = Net Profit + Ad Spend + Stock Stuck (Gross Profit) - Stock Stuck?
+      // Actually Gross Profit = Net Profit + Stock Stuck + Ads.
+      // So Net = Gross - Ads - Stock.
+      // We want break even Ads where Net = 0.
+      // 0 = Gross - Ads - Stock => Ads = Gross - Stock.
+      
+      const profitAvailableForAds = item.gross_profit - item.cash_in_stock;
+      const breakEvenCPR = totalOrders > 0 ? profitAvailableForAds / totalOrders : 0;
 
-      return { cpr, breakEvenCPR, delivered };
+      return { cpr, breakEvenCPR, totalOrders };
   };
 
   return (
@@ -389,8 +397,9 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                 <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider">Rev</th>
                 <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider hidden sm:table-cell">COGS</th>
                 <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider hidden md:table-cell">Stock</th>
-                <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider">Ads</th>
+                {/* Reordered: Gross before Ads */}
                 <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider hidden lg:table-cell">Gross</th>
+                <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider">Ads</th>
                 <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider">Net Profit</th>
                 <th className="px-2 py-3 font-semibold text-slate-700 text-center w-[50px]"></th>
               </tr>
@@ -538,8 +547,8 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                 
                                 {/* CPR Section */}
                                 {(() => {
-                                    const { cpr, breakEvenCPR, delivered } = getCPRData(selectedItem);
-                                    if (delivered === 0 && selectedItem.ad_spend_allocation === 0) return null;
+                                    const { cpr, breakEvenCPR, totalOrders } = getCPRData(selectedItem);
+                                    if (totalOrders === 0 && selectedItem.ad_spend_allocation === 0) return null;
                                     
                                     return (
                                         <div className="mt-6 pt-4 border-t border-slate-100 grid grid-cols-2 gap-4">
@@ -549,9 +558,9 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                                     <p className="text-xs text-slate-500 uppercase font-bold">Cost Per Result</p>
                                                 </div>
                                                 <p className="text-lg font-bold text-purple-600">
-                                                    {delivered > 0 ? formatCurrency(cpr) : (selectedItem.ad_spend_allocation > 0 ? '∞' : formatCurrency(0))}
+                                                    {totalOrders > 0 ? formatCurrency(cpr) : (selectedItem.ad_spend_allocation > 0 ? '∞' : formatCurrency(0))}
                                                 </p>
-                                                <p className="text-[10px] text-slate-400">Ad Spend / Delivered Order</p>
+                                                <p className="text-[10px] text-slate-400">Ads / Dispatched Order</p>
                                             </div>
                                             <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
                                                 <div className="flex items-center gap-2 mb-1">
@@ -559,7 +568,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                                     <p className="text-xs text-slate-500 uppercase font-bold">Break-Even CPR</p>
                                                 </div>
                                                 <p className="text-lg font-bold text-slate-700">
-                                                    {delivered > 0 ? formatCurrency(breakEvenCPR) : '-'}
+                                                    {totalOrders > 0 ? formatCurrency(breakEvenCPR) : '-'}
                                                 </p>
                                                 <p className="text-[10px] text-slate-400">Max Allowable CPA</p>
                                             </div>
