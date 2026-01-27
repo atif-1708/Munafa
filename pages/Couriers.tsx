@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Order } from '../types';
 import { calculateCourierPerformance, formatCurrency } from '../services/calculator';
-import { Truck, AlertCircle, CheckCircle2, Banknote, Calendar, Package } from 'lucide-react';
+import { Truck, AlertCircle, CheckCircle2, Banknote, Calendar, Package, Clock } from 'lucide-react';
 
 interface CouriersProps {
   orders: Order[];
@@ -89,14 +89,35 @@ const Couriers: React.FC<CouriersProps> = ({ orders }) => {
                   <span className="text-slate-500 flex items-center gap-2">
                     <CheckCircle2 size={14} /> Delivered
                   </span>
-                  <span className="font-medium">{courier.delivered}</span>
+                  <div className="text-right">
+                    <span className="font-medium">{courier.delivered}</span>
+                  </div>
                 </div>
+
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-slate-500 flex items-center gap-2">
+                    <Clock size={14} /> In Transit
+                  </span>
+                  <div className="text-right">
+                    <span className="font-medium block">{courier.in_transit}</span>
+                    <span className="text-[10px] text-slate-400">
+                        {courier.total_orders > 0 ? ((courier.in_transit / courier.total_orders) * 100).toFixed(1) : 0}%
+                    </span>
+                  </div>
+                </div>
+
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-slate-500 flex items-center gap-2">
                     <AlertCircle size={14} /> Returned (RTO)
                   </span>
-                  <span className="font-medium text-red-600">{courier.rto}</span>
+                  <div className="text-right">
+                    <span className="font-medium text-red-600 block">{courier.rto}</span>
+                    <span className="text-[10px] text-slate-400">
+                        {courier.total_orders > 0 ? ((courier.rto / courier.total_orders) * 100).toFixed(1) : 0}%
+                    </span>
+                  </div>
                 </div>
+                
                 <div className="w-full bg-slate-100 h-1.5 rounded-full mt-2">
                     <div 
                         className={`h-1.5 rounded-full ${courier.delivery_rate >= 80 ? 'bg-green-500' : 'bg-orange-500'}`} 

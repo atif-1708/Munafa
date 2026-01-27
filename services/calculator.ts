@@ -136,6 +136,7 @@ export interface CourierStats {
   total_orders: number;
   delivered: number;
   rto: number;
+  in_transit: number;
   delivery_rate: number;
   cash_pending: number;
   shipping_spend: number;
@@ -146,7 +147,7 @@ export const calculateCourierPerformance = (orders: Order[]): CourierStats[] => 
 
   Object.values(CourierName).forEach(name => {
     stats[name] = { 
-      name, total_orders: 0, delivered: 0, rto: 0, 
+      name, total_orders: 0, delivered: 0, rto: 0, in_transit: 0,
       delivery_rate: 0, cash_pending: 0, shipping_spend: 0 
     };
   });
@@ -165,6 +166,8 @@ export const calculateCourierPerformance = (orders: Order[]): CourierStats[] => 
       }
     } else if (order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED) {
       s.rto++;
+    } else if (order.status === OrderStatus.IN_TRANSIT) {
+      s.in_transit++;
     }
   });
 
