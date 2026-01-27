@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { AdSpend, Product } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { BarChart3, Plus, Trash2 } from 'lucide-react';
+import { BarChart3, Plus, Trash2, Layers } from 'lucide-react';
 
 interface MarketingProps {
   adSpend: AdSpend[];
@@ -23,11 +23,21 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
       product_id: ''
   });
 
+  // Extract unique groups
+  const groups = useMemo(() => {
+      const uniqueGroups = new Map();
+      products.forEach(p => {
+          if (p.group_id && p.group_name) {
+              uniqueGroups.set(p.group_id, p.group_name);
+          }
+      });
+      return Array.from(uniqueGroups.entries()).map(([id, name]) => ({ id, name }));
+  }, [products]);
+
   const generateUUID = () => {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
         return crypto.randomUUID();
     }
-    // Polyfill for environments without secure crypto
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
         var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
         return v.toString(16);
@@ -57,7 +67,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Marketing & Ad Spend</h2>
-          <p className="text-slate-500 text-sm">Track daily spend and attribute it to products for ROAS analysis.</p>
+          <p className="text-slate-500 text-sm">Track daily spend and attribute it to products or groups.</p>
         </div>
       </div>
 
@@ -103,18 +113,27 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
                     />
                 </div>
                 <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">Attributed Product (Optional)</label>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">Attributed To (Optional)</label>
                     <select 
                         className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-brand-500 outline-none text-sm"
                         value={newAd.product_id}
                         onChange={e => setNewAd({...newAd, product_id: e.target.value})}
                     >
                         <option value="">-- General Store Spend --</option>
-                        {products.map(p => (
-                            <option key={p.id} value={p.id}>{p.title} ({p.sku})</option>
-                        ))}
+                        {groups.length > 0 && (
+                            <optgroup label="Product Groups">
+                                {groups.map(g => (
+                                    <option key={g.id} value={g.id}>{g.name} (Group)</option>
+                                ))}
+                            </optgroup>
+                        )}
+                        <optgroup label="Individual Variants">
+                            {products.map(p => (
+                                <option key={p.id} value={p.id}>{p.title}</option>
+                            ))}
+                        </optgroup>
                     </select>
-                    <p className="text-xs text-slate-400 mt-1">Select if this campaign was for a specific product.</p>
+                    <p className="text-xs text-slate-400 mt-1">Select a Group to aggregate costs for all variants.</p>
                 </div>
                 <button type="submit" className="w-full bg-slate-900 text-white py-2 rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors">
                     Add Expense
@@ -133,7 +152,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
                         <tr>
                             <th className="px-6 py-3 font-semibold text-slate-700">Date</th>
                             <th className="px-6 py-3 font-semibold text-slate-700">Platform</th>
-                            <th className="px-6 py-3 font-semibold text-slate-700">Product</th>
+                            <th className="px-6 py-3 font-semibold text-slate-700">Attribution</th>
                             <th className="px-6 py-3 font-semibold text-slate-700">Amount</th>
                             <th className="px-6 py-3 font-semibold text-slate-700">Action</th>
                         </tr>
@@ -144,6 +163,8 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
                         )}
                         {sortedAds.map(ad => {
                             const product = products.find(p => p.id === ad.product_id);
+                            const group = groups.find(g => g.id === ad.product_id);
+                            
                             return (
                                 <tr key={ad.id} className="hover:bg-slate-50">
                                     <td className="px-6 py-3 text-slate-600">{ad.date}</td>
@@ -156,7 +177,11 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
                                         </span>
                                     </td>
                                     <td className="px-6 py-3 text-slate-600 text-xs">
-                                        {product ? (
+                                        {group ? (
+                                             <span className="font-bold text-indigo-700 flex items-center gap-1">
+                                                 <Layers size={12} /> {group.name}
+                                             </span>
+                                        ) : product ? (
                                             <div className="truncate max-w-[150px]">{product.title}</div>
                                         ) : (
                                             <span className="text-slate-400 italic">General</span>

@@ -1,5 +1,15 @@
+
 import { Order, AdSpend, DashboardMetrics, OrderStatus, PaymentStatus, CourierName, Product } from '../types';
 import { COURIER_RATES } from '../constants';
+
+export const formatCurrency = (amount: number): string => {
+  return new Intl.NumberFormat('en-PK', {
+    style: 'currency',
+    currency: 'PKR',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(amount);
+};
 
 export const calculateMetrics = (orders: Order[], adSpend: AdSpend[]): DashboardMetrics => {
   let gross_revenue = 0;
@@ -164,11 +174,14 @@ export interface ProductPerformance {
   id: string;
   title: string;
   sku: string;
+  group_id?: string | null;
+  group_name?: string | null;
   units_sold: number;
   units_returned: number;
   units_in_transit: number; // New field
   gross_revenue: number;
   cogs_total: number;
+  gross_profit: number; // New field: Revenue - COGS
   cash_in_stock: number; // New field: Value of stock currently in network
   shipping_cost_allocation: number; // Share of Forward Shipping + RTO Penalty
   ad_spend_allocation: number;
@@ -185,17 +198,22 @@ export const calculateProductPerformance = (
 
   // 1. Initialize
   products.forEach(p => {
-    // Sum relevant ads
+    // Sum relevant ads (DIRECT MATCH ONLY - Group ads handled in Profitability.tsx view)
     const relevantAds = adSpend.filter(a => a.product_id === p.id);
     const totalAdSpend = relevantAds.reduce((sum, a) => sum + a.amount_spent, 0);
+    
+    // Key by Fingerprint (preferred) or SKU
+    const lookupKey = p.variant_fingerprint || p.sku;
 
-    perf[p.sku] = { // Key by SKU to aggregate same items
+    perf[lookupKey] = {
       id: p.id, title: p.title, sku: p.sku, 
+      group_id: p.group_id, group_name: p.group_name,
       units_sold: 0, 
       units_returned: 0,
       units_in_transit: 0,
       gross_revenue: 0, 
       cogs_total: 0,
+      gross_profit: 0,
       cash_in_stock: 0,
       shipping_cost_allocation: 0,
       ad_spend_allocation: totalAdSpend,
@@ -222,18 +240,21 @@ export const calculateProductPerformance = (
     const shippingPerItem = totalOrderShippingCost / itemCount;
 
     order.items.forEach(item => {
-        // Find product to get accurate Historical COGS
-        const productDef = products.find(p => p.sku === item.sku) || products.find(p => p.id === item.product_id);
+        // MATCHING: Fingerprint -> SKU -> ID
+        const productDef = 
+            products.find(p => p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) || 
+            products.find(p => p.sku === item.sku) ||
+            products.find(p => p.id === item.product_id);
         
-        // Lookup key: Priority SKU, fallback ID
-        const key = item.sku || productDef?.sku || item.product_id;
+        // Lookup Key (Consistently use fingerprint if available)
+        const key = item.variant_fingerprint || item.sku || item.product_id;
         
         if (!perf[key]) {
-             // If unknown product found in orders
+             // If unknown product found in orders (Dynamic Creation)
              perf[key] = {
                  id: item.product_id, title: item.product_name, sku: item.sku || 'N/A',
                  units_sold: 0, units_returned: 0, units_in_transit: 0,
-                 gross_revenue: 0, cogs_total: 0, cash_in_stock: 0,
+                 gross_revenue: 0, cogs_total: 0, gross_profit: 0, cash_in_stock: 0,
                  shipping_cost_allocation: 0, ad_spend_allocation: 0, net_profit: 0, rto_rate: 0
              };
         }
@@ -267,6 +288,9 @@ export const calculateProductPerformance = (
 
   return Object.values(perf)
     .map(p => {
+      // Gross Profit = Revenue - Realized COGS - Ad Spend Allocation
+      p.gross_profit = p.gross_revenue - p.cogs_total - p.ad_spend_allocation;
+
       // Net Profit = Revenue - Realized COGS - Cash Stuck in Stock - Shipping - Ads
       // This provides a "Real Cash Flow" view, deducting the cost of inventory stuck in the network.
       p.net_profit = p.gross_revenue - p.cogs_total - p.cash_in_stock - p.shipping_cost_allocation - p.ad_spend_allocation;
@@ -279,13 +303,4 @@ export const calculateProductPerformance = (
       return p;
     })
     .sort((a, b) => b.net_profit - a.net_profit); // Sort by Net Profit descending
-};
-
-export const formatCurrency = (amount: number) => {
-  return new Intl.NumberFormat('en-PK', {
-    style: 'currency',
-    currency: 'PKR',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(amount);
 };

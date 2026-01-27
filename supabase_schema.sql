@@ -30,6 +30,8 @@ create table if not exists products (
   image_url text,
   current_cogs numeric,
   cost_history jsonb,
+  group_id text,
+  group_name text,
   created_at timestamptz default now()
 );
 alter table products enable row level security;

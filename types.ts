@@ -1,3 +1,4 @@
+
 // Database Schema Representations
 
 export enum CourierName {
@@ -30,12 +31,17 @@ export interface Product {
   shopify_id: string;
   title: string;
   sku: string;
+  variant_fingerprint?: string; // Slug generated from title for matching
   image_url: string;
   cost_history: {
     date: string;
     cogs: number; // Cost of Goods Sold
   }[];
   current_cogs: number;
+  
+  // NEW: Grouping Fields
+  group_id?: string | null;
+  group_name?: string | null;
 }
 
 export interface OrderItem {
@@ -44,6 +50,7 @@ export interface OrderItem {
   sale_price: number;
   product_name: string;
   sku?: string;
+  variant_fingerprint?: string; 
   cogs_at_time_of_order: number;
 }
 
@@ -75,8 +82,8 @@ export interface AdSpend {
   date: string;
   platform: 'Facebook' | 'TikTok' | 'Google';
   amount_spent: number;
-  product_id?: string; // ID of the product this ad was for (optional)
-  attributed_orders?: number; // Optional simplified attribution
+  product_id?: string; // ID of the product OR group this ad was for
+  attributed_orders?: number; 
 }
 
 // Dashboard Aggregates

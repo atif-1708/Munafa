@@ -57,12 +57,15 @@ export const getOrders = (products: Product[]): Order[] => {
   const orders: Order[] = [];
   const now = new Date();
   
+  // Ensure we have products to work with
+  const availableProducts = (products && products.length > 0) ? products : getProducts();
+
   for (let i = 0; i < 150; i++) {
     const isRecent = i < 20;
     const orderDate = new Date();
     orderDate.setDate(now.getDate() - Math.floor(Math.random() * 30));
     
-    const product = products[Math.floor(Math.random() * products.length)];
+    const product = availableProducts[Math.floor(Math.random() * availableProducts.length)];
     const quantity = Math.random() > 0.8 ? 2 : 1;
     const salePrice = (MOCK_PRODUCTS.find(p => p.sku === product.sku)?.price || 1000) * quantity;
     
@@ -114,6 +117,7 @@ export const getOrders = (products: Product[]): Order[] => {
         sale_price: salePrice / quantity,
         product_name: product.title,
         sku: product.sku,
+        variant_fingerprint: product.sku, // Ensure mock data has fingerprint for consistency
         cogs_at_time_of_order: product.current_cogs
       }]
     });

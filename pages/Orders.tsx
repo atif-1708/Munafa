@@ -16,7 +16,7 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
     // 1. Search Filter
     const matchesSearch = o.shopify_order_number.toLowerCase().includes(search.toLowerCase()) || 
                           o.customer_city.toLowerCase().includes(search.toLowerCase()) ||
-                          o.items.some(i => i.sku?.toLowerCase().includes(search.toLowerCase()));
+                          o.items.some(i => i.product_name.toLowerCase().includes(search.toLowerCase()));
     if (!matchesSearch) return false;
 
     // 2. Date Range Filter
@@ -72,7 +72,7 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
             <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
             <input 
               type="text" 
-              placeholder="Search Order #, City, SKU..." 
+              placeholder="Search Order #, City, Product..." 
               className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -104,7 +104,7 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50 border-b border-gray-200">
               <tr>
-                <th className="px-6 py-4 font-semibold text-slate-700">Order & SKU</th>
+                <th className="px-6 py-4 font-semibold text-slate-700">Order</th>
                 <th className="px-6 py-4 font-semibold text-slate-700">Date</th>
                 <th className="px-6 py-4 font-semibold text-slate-700">City</th>
                 <th className="px-6 py-4 font-semibold text-slate-700">Status</th>
@@ -123,8 +123,8 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
                 <tr key={order.id} className="hover:bg-slate-50 transition-colors">
                   <td className="px-6 py-4">
                     <div className="font-medium text-slate-900">{order.shopify_order_number}</div>
-                    <div className="text-xs text-slate-500 font-mono mt-1">
-                      {order.items.map(i => i.sku || 'No SKU').join(', ')}
+                    <div className="text-xs text-slate-500 mt-1 truncate max-w-[200px]" title={order.items.map(i => i.product_name).join(', ')}>
+                      {order.items.map(i => i.product_name).join(', ')}
                     </div>
                   </td>
                   <td className="px-6 py-4 text-slate-600">

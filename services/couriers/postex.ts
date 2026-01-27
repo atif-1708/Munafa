@@ -1,6 +1,6 @@
 import { CourierAdapter } from './adapter';
 import { IntegrationConfig, TrackingUpdate, OrderStatus, Order, CourierName, PaymentStatus } from '../../types';
-import { getOrders } from '../mockData'; // Import mock generator for simulation mode
+import { getOrders, getProducts } from '../mockData'; // Import mock generator for simulation mode
 
 export class PostExAdapter implements CourierAdapter {
   name = CourierName.POSTEX;
@@ -53,6 +53,15 @@ export class PostExAdapter implements CourierAdapter {
   private mapPaymentStatus(status: OrderStatus, rawTransactionStatus: string): PaymentStatus {
     if (status !== OrderStatus.DELIVERED) return PaymentStatus.UNPAID;
     return PaymentStatus.UNPAID;
+  }
+
+  private createFingerprint(input: string): string {
+      if (!input) return 'unknown-item';
+      return input
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, '-') // Replace special chars with dash
+        .replace(/^-+|-+$/g, '');    // Remove leading/trailing dashes
   }
 
   // Page 17: Order Tracking API
@@ -169,13 +178,10 @@ export class PostExAdapter implements CourierAdapter {
     if (config.api_token.startsWith('demo_')) {
         await new Promise(r => setTimeout(r, 1200));
         // Reuse the mock data generator but filter for PostEx only to be realistic
-        const mockOrders = getOrders([]); 
+        const mockOrders = getOrders(getProducts()); 
         return mockOrders.map(o => ({...o, courier: CourierName.POSTEX}));
     }
 
-    // REDUCED DATE RANGE: 
-    // The free CORS proxy limits responses to 1MB. 
-    // Reduced from 30 days to 7 days to ensure payload size stays under this limit.
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 7); 
@@ -183,8 +189,8 @@ export class PostExAdapter implements CourierAdapter {
     const formatDate = (d: Date) => d.toISOString().split('T')[0]; // yyyy-mm-dd
 
     const params = {
-        orderStatusID: 0, // Try uppercase ID (per PDF)
-        orderStatusId: 0, // Try camelCase Id (per Server Log)
+        orderStatusID: 0, 
+        orderStatusId: 0,
         startDate: formatDate(startDate),
         endDate: formatDate(endDate)
     };
@@ -199,16 +205,13 @@ export class PostExAdapter implements CourierAdapter {
         });
 
         if (!response.ok) {
-            // Handle Proxy Errors specially
             if (response.status === 403) {
                  const errorText = await response.text();
                  if (errorText.includes('proxy files larger than')) {
-                     throw new Error(`Data too large for proxy. The date range was automatically reduced, but the response is still over 1MB. Please try 'demo_123' key for simulation.`);
+                     throw new Error(`Data too large for proxy. Please try 'demo_123' key for simulation.`);
                  }
             }
-            const errorText = await response.text();
-            console.warn(`PostEx Fetch Failed: ${response.status} - ${errorText}`);
-            throw new Error(`Failed to fetch from PostEx (${response.status}). Details: ${errorText}`);
+            throw new Error(`Failed to fetch from PostEx (${response.status}).`);
         }
 
         const json = await response.json();
@@ -218,6 +221,41 @@ export class PostExAdapter implements CourierAdapter {
             const status = this.mapStatus(po.transactionStatus);
             const amountStr = String(po.invoicePayment || '0').replace(/,/g, '');
             const amount = parseFloat(amountStr) || 0;
+            
+            // --- FINGERPRINTING LOGIC ---
+            // We do not look for SKU. We fingerprint the description to find unique variants.
+            let items: any[] = [];
+            
+            if (po.orderItems && Array.isArray(po.orderItems) && po.orderItems.length > 0) {
+                items = po.orderItems.map((item: any) => {
+                    const rawName = item.productName || item.productSKU || 'Unknown';
+                    const fingerprint = this.createFingerprint(rawName);
+                    
+                    return {
+                        product_id: 'unknown',
+                        quantity: parseInt(item.quantity) || 1,
+                        sale_price: parseFloat(item.price) || (amount / po.orderItems.length),
+                        product_name: rawName,
+                        sku: fingerprint, // We use fingerprint as SKU
+                        variant_fingerprint: fingerprint,
+                        cogs_at_time_of_order: 0
+                    };
+                });
+            } else {
+                // Fallback to Order Detail / Ref
+                const rawName = po.orderDetail || po.productName || po.orderRefNumber || 'General Item';
+                const fingerprint = this.createFingerprint(rawName);
+
+                items = [{
+                    product_id: 'unknown',
+                    quantity: 1,
+                    sale_price: amount,
+                    product_name: rawName,
+                    sku: fingerprint, // Use fingerprint as SKU for system consistency
+                    variant_fingerprint: fingerprint,
+                    cogs_at_time_of_order: 0 
+                }];
+            }
             
             return {
                 id: po.trackingNumber || Math.random().toString(),
@@ -236,14 +274,7 @@ export class PostExAdapter implements CourierAdapter {
                 rto_penalty: status === OrderStatus.RETURNED ? 90 : 0,
                 packaging_cost: 45,
                 
-                items: [{
-                    product_id: 'unknown',
-                    quantity: 1,
-                    sale_price: amount,
-                    product_name: 'Product Item',
-                    sku: 'N/A', 
-                    cogs_at_time_of_order: amount * 0.4 
-                }]
+                items: items
             };
         });
 
