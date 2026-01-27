@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
 import Orders from './pages/Orders';
@@ -404,6 +404,11 @@ const App: React.FC = () => {
     }
     setAuthLoading(false);
   };
+  
+  // Calculate missing costs
+  const missingCostCount = useMemo(() => {
+      return products.filter(p => p.current_cogs === 0).length;
+  }, [products]);
 
   if (authLoading) return <div className="h-screen flex items-center justify-center bg-slate-50"><Loader2 className="animate-spin text-brand-600" size={40} /></div>;
 
@@ -435,7 +440,11 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 flex font-sans">
-      <Sidebar currentPage={currentPage} setPage={setCurrentPage} />
+      <Sidebar 
+          currentPage={currentPage} 
+          setPage={setCurrentPage} 
+          inventoryAlertCount={missingCostCount} 
+      />
       <main className="flex-1 ml-64 p-8">
         <div className="max-w-7xl mx-auto">
           {/* ... (Error & Config State logic same as before) ... */}

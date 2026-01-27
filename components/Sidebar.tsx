@@ -4,9 +4,10 @@ import { LayoutDashboard, ShoppingBag, Truck, BarChart3, Settings, TrendingUp, P
 interface SidebarProps {
   currentPage: string;
   setPage: (page: string) => void;
+  inventoryAlertCount?: number;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ currentPage, setPage }) => {
+const Sidebar: React.FC<SidebarProps> = ({ currentPage, setPage, inventoryAlertCount = 0 }) => {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'inventory', label: 'Inventory & Costs', icon: PackageSearch },
@@ -30,14 +31,23 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setPage }) => {
           <button
             key={item.id}
             onClick={() => setPage(item.id)}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${
+            className={`w-full flex items-center justify-between px-4 py-3 rounded-lg transition-all duration-200 ${
               currentPage === item.id 
                 ? 'bg-brand-600 text-white shadow-lg shadow-brand-900/50' 
                 : 'text-slate-400 hover:bg-slate-800 hover:text-white'
             }`}
           >
-            <item.icon size={20} />
-            <span className="font-medium text-sm">{item.label}</span>
+            <div className="flex items-center gap-3">
+                <item.icon size={20} />
+                <span className="font-medium text-sm">{item.label}</span>
+            </div>
+            
+            {/* Inventory Alert Badge */}
+            {item.id === 'inventory' && inventoryAlertCount > 0 && (
+                <div className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse shadow-sm shadow-red-900/50">
+                    {inventoryAlertCount}
+                </div>
+            )}
           </button>
         ))}
       </nav>
