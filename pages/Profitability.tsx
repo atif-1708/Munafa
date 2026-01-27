@@ -35,7 +35,7 @@ const ProfitabilityRow = ({
     const totalDispatched = item.units_sold + item.units_returned + item.units_in_transit;
     const deliveredRate = totalDispatched > 0 ? (item.units_sold / totalDispatched) * 100 : 0;
     
-    // Background logic: Groups are white, Children are slate-50 to differentiate hierarchy
+    // Background logic
     const bgClass = isChild ? 'bg-slate-50' : 'bg-white';
     const hoverClass = isChild ? 'hover:bg-slate-100' : 'hover:bg-gray-50';
 
@@ -53,107 +53,99 @@ const ProfitabilityRow = ({
                     }
                 }}
             >
-                {/* 1. Product (Sticky Left - Optional, typically Name is sticky but we'll stick to just right for now to save space on mobile) */}
-                <td className="px-6 py-4 min-w-[280px]">
-                    <div className="flex items-center gap-3" style={{ paddingLeft: isChild ? '24px' : '0px' }}>
+                {/* 1. Product Name */}
+                <td className="pl-3 pr-2 py-3 w-[25%] max-w-[200px]">
+                    <div className="flex items-center gap-2" style={{ paddingLeft: isChild ? '16px' : '0px' }}>
                         {/* Icon / Indent */}
-                        <div className="shrink-0 flex items-center justify-center w-8">
+                        <div className="shrink-0 flex items-center justify-center w-5">
                             {isChild ? (
-                                <CornerDownRight size={16} className="text-slate-400" />
+                                <CornerDownRight size={14} className="text-slate-400" />
                             ) : isGroup ? (
                                 <button className="text-slate-400 hover:text-indigo-600 transition-colors">
-                                    {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                                    {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                 </button>
                             ) : (
-                                <div className="w-8 h-8 rounded bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-500">
-                                    <Package size={16} />
+                                <div className="hidden sm:flex w-6 h-6 rounded bg-slate-100 border border-slate-200 items-center justify-center text-slate-500">
+                                    <Package size={12} />
                                 </div>
                             )}
                         </div>
 
-                        {/* Title & Info */}
-                        <div className="overflow-hidden">
-                            <div className={`truncate font-medium ${isGroup ? 'text-indigo-900 text-base' : 'text-slate-900 text-sm'}`} title={item.title}>
+                        {/* Title Only - No SKU */}
+                        <div className="overflow-hidden min-w-0">
+                            <div className={`truncate font-medium leading-tight ${isGroup ? 'text-indigo-900' : 'text-slate-700'}`} title={item.title}>
                                 {item.title}
                             </div>
-                            {item.sku === 'GROUP' ? (
-                                <div className="text-xs text-indigo-500 font-bold uppercase tracking-wide flex items-center gap-1 mt-0.5">
-                                    <Layers size={10} /> Collection ({item.variants?.length || 0})
+                            {item.sku === 'GROUP' && (
+                                <div className="text-[10px] text-indigo-500 font-bold uppercase tracking-wide flex items-center gap-1 mt-0.5">
+                                    <Layers size={8} /> Group ({item.variants?.length || 0})
                                 </div>
-                            ) : (
-                                <div className="text-xs text-slate-400 font-mono mt-0.5">{item.sku}</div>
                             )}
                         </div>
                     </div>
                 </td>
 
                 {/* 2. Delivered */}
-                <td className="px-6 py-4 text-center tabular-nums">
+                <td className="px-1 py-3 text-center tabular-nums">
                     <div className="font-medium text-slate-700">{item.units_sold}</div>
-                    <div className={`text-[10px] font-medium ${deliveredRate < 70 ? 'text-orange-500' : 'text-green-600'}`}>
-                        {deliveredRate.toFixed(0)}% Del.
+                    <div className={`text-[10px] ${deliveredRate < 70 ? 'text-orange-500' : 'text-green-600'}`}>
+                        {deliveredRate.toFixed(0)}%
                     </div>
                 </td>
 
                 {/* 3. Returned */}
-                <td className="px-6 py-4 text-center tabular-nums">
-                    <div className={`font-medium ${item.units_returned > 0 ? 'text-slate-700' : 'text-slate-300'}`}>
+                <td className="px-1 py-3 text-center tabular-nums">
+                    <div className={`${item.units_returned > 0 ? 'text-slate-700 font-medium' : 'text-slate-300'}`}>
                          {item.units_returned}
                     </div>
-                    {item.rto_rate > 0 && (
-                        <div className={`text-[10px] font-medium ${item.rto_rate > 15 ? 'text-red-600' : 'text-slate-400'}`}>
-                            {item.rto_rate.toFixed(1)}% RTO
-                        </div>
-                    )}
                 </td>
 
                 {/* 4. Revenue */}
-                <td className="px-6 py-4 text-right font-medium text-slate-700 tabular-nums bg-slate-50/30">
+                <td className="px-1 py-3 text-right font-medium text-slate-700 tabular-nums">
                     {formatCurrency(item.gross_revenue)}
                 </td>
 
                 {/* 5. COGS */}
-                <td className="px-6 py-4 text-right text-slate-500 tabular-nums">
+                <td className="px-1 py-3 text-right text-slate-500 tabular-nums hidden sm:table-cell">
                     {formatCurrency(item.cogs_total)}
                 </td>
 
-                {/* 6. Cash Stuck (Stock in Network) */}
-                <td className="px-6 py-4 text-right tabular-nums">
-                    <span className={`${item.cash_in_stock > 0 ? 'text-indigo-600 font-medium' : 'text-slate-300'}`}>
+                {/* 6. Cash Stuck */}
+                <td className="px-1 py-3 text-right tabular-nums hidden md:table-cell">
+                    <span className={`${item.cash_in_stock > 0 ? 'text-indigo-600' : 'text-slate-300'}`}>
                         {formatCurrency(item.cash_in_stock)}
                     </span>
                 </td>
 
-                {/* 7. Ad Spend */}
-                <td className="px-6 py-4 text-right text-purple-600 tabular-nums">
-                    {item.ad_spend_allocation > 0 ? formatCurrency(item.ad_spend_allocation) : <span className="text-slate-300">-</span>}
+                {/* 7. Ads */}
+                <td className="px-1 py-3 text-right text-purple-600 tabular-nums">
+                    {item.ad_spend_allocation > 0 ? formatCurrency(item.ad_spend_allocation) : '-'}
                 </td>
 
-                {/* 8. Gross Profit */}
-                <td className="px-6 py-4 text-right font-medium text-slate-700 tabular-nums bg-slate-50/30">
+                {/* 8. Gross */}
+                <td className="px-1 py-3 text-right font-medium text-slate-600 tabular-nums hidden lg:table-cell">
                     {formatCurrency(item.gross_profit)}
                 </td>
 
                 {/* 9. Net Profit */}
-                <td className="px-6 py-4 text-right tabular-nums">
-                    <div className={`font-bold text-base ${isProfitable ? 'text-emerald-600' : 'text-red-600'}`}>
+                <td className="px-1 py-3 text-right tabular-nums">
+                    <div className={`font-bold ${isProfitable ? 'text-emerald-600' : 'text-red-600'}`}>
                         {formatCurrency(item.net_profit)}
                     </div>
                     {item.gross_revenue > 0 && (
-                        <div className={`text-[10px] font-medium ${isProfitable ? 'text-emerald-500' : 'text-red-400'}`}>
-                            {((item.net_profit / item.gross_revenue) * 100).toFixed(0)}% Margin
+                        <div className={`text-[10px] ${isProfitable ? 'text-emerald-500' : 'text-red-400'}`}>
+                            {((item.net_profit / item.gross_revenue) * 100).toFixed(0)}%
                         </div>
                     )}
                 </td>
 
-                {/* 10. Action - Sticky Right */}
-                <td className={`px-4 py-4 text-center sticky right-0 z-10 border-l border-slate-100 shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.05)] ${bgClass}`}>
+                {/* 10. View */}
+                <td className="px-2 py-3 text-center w-[50px]">
                     <button 
                         onClick={(e) => { e.stopPropagation(); onViewDetails(item); }}
-                        className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:text-brand-600 hover:border-brand-200 hover:bg-brand-50 transition-all shadow-sm bg-white mx-auto"
-                        title="View Full Analysis"
+                        className="w-6 h-6 flex items-center justify-center rounded border border-slate-200 text-slate-400 hover:text-brand-600 hover:border-brand-200 hover:bg-brand-50 transition-all shadow-sm bg-white mx-auto"
                     >
-                        <ArrowUpRight size={16} />
+                        <ArrowUpRight size={14} />
                     </button>
                 </td>
             </tr>
@@ -177,13 +169,22 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
 
   const variantData = useMemo(() => calculateProductPerformance(orders, products, adSpend), [orders, products, adSpend]);
 
-  // Group Aggregation Logic
+  // Group Aggregation & Filtering Logic
   const data = useMemo(() => {
     const groups: Record<string, GroupedProductPerformance> = {};
     const standalones: GroupedProductPerformance[] = [];
 
+    // Helper: Filter out "Booked" or "Unbooked" only items.
+    // We only want items that have been dispatched (In Transit, Sold, Returned) OR have money spent on Ads.
+    const isActiveItem = (item: ProductPerformance) => {
+        const totalDispatched = item.units_sold + item.units_returned + item.units_in_transit;
+        return totalDispatched > 0 || item.ad_spend_allocation > 0;
+    };
+
     // 1. Aggregate Variants
     variantData.forEach(item => {
+        if (!isActiveItem(item)) return; // FILTER HERE
+
         if (item.group_id && item.group_name) {
             if (!groups[item.group_id]) {
                 groups[item.group_id] = {
@@ -253,41 +254,35 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
   };
 
   return (
-    <div className="space-y-6 relative h-full">
+    <div className="space-y-4 relative h-full">
       <div className="flex justify-between items-end">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Profitability Matrix</h2>
-          <p className="text-slate-500 text-sm mt-1">Deep dive into unit economics per SKU and Group.</p>
+          <p className="text-slate-500 text-sm mt-1">Unit economics for active products.</p>
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
-        {/* Scroll Container */}
-        <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent pb-2">
-          <table className="w-full text-left text-sm border-collapse">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th className="px-6 py-4 font-semibold text-slate-700 text-xs uppercase tracking-wider min-w-[280px]">Product / Group</th>
-                <th className="px-6 py-4 font-semibold text-slate-700 text-xs uppercase tracking-wider text-center min-w-[100px]">Delivered</th>
-                <th className="px-6 py-4 font-semibold text-slate-700 text-xs uppercase tracking-wider text-center min-w-[100px]">Returned</th>
-                <th className="px-6 py-4 font-semibold text-slate-700 text-xs uppercase tracking-wider text-right min-w-[120px]">Revenue</th>
-                <th className="px-6 py-4 font-semibold text-slate-700 text-xs uppercase tracking-wider text-right min-w-[120px]">COGS</th>
-                <th className="px-6 py-4 font-semibold text-slate-700 text-xs uppercase tracking-wider text-right min-w-[120px]">Cash Stuck</th>
-                <th className="px-6 py-4 font-semibold text-slate-700 text-xs uppercase tracking-wider text-right min-w-[120px]">Ads</th>
-                <th className="px-6 py-4 font-semibold text-slate-700 text-xs uppercase tracking-wider text-right min-w-[120px]">Gross Profit</th>
-                <th className="px-6 py-4 font-semibold text-slate-700 text-xs uppercase tracking-wider text-right min-w-[140px]">Net Profit</th>
-                
-                {/* Sticky Header for Action Column */}
-                <th className="px-4 py-4 font-semibold text-slate-700 text-xs uppercase tracking-wider text-center sticky right-0 bg-slate-50 z-10 border-l border-slate-200 shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.05)] w-[80px]">
-                    View
-                </th>
+                <th className="pl-3 pr-2 py-3 font-semibold text-slate-700 w-[25%] uppercase tracking-wider">Product</th>
+                <th className="px-1 py-3 font-semibold text-slate-700 text-center uppercase tracking-wider">Del.</th>
+                <th className="px-1 py-3 font-semibold text-slate-700 text-center uppercase tracking-wider">Ret.</th>
+                <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider">Rev</th>
+                <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider hidden sm:table-cell">COGS</th>
+                <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider hidden md:table-cell">Stock</th>
+                <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider">Ads</th>
+                <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider hidden lg:table-cell">Gross</th>
+                <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider">Net Profit</th>
+                <th className="px-2 py-3 font-semibold text-slate-700 text-center w-[50px]"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {data.length === 0 ? (
                   <tr>
                       <td colSpan={10} className="px-6 py-12 text-center text-slate-400 italic">
-                          No order data available to analyze yet.
+                          No active dispatched orders or ad spend found.
                       </td>
                   </tr>
               ) : (
@@ -303,7 +298,6 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
               )}
             </tbody>
           </table>
-        </div>
       </div>
 
       {/* Detail Modal */}
