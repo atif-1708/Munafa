@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
-import { Order, ShopifyOrder, Product } from '../types';
-import { AlertCircle, CheckCircle2, PackageX, TrendingUp, Search, ArrowRight, AlertTriangle, Package } from 'lucide-react';
+import { Order, ShopifyOrder, Product, OrderStatus } from '../types';
+import { AlertCircle, CheckCircle2, PackageX, TrendingUp, Search, ArrowRight, AlertTriangle, Package, Truck, RotateCcw } from 'lucide-react';
 import { formatCurrency } from '../services/calculator';
 
 interface ReconciliationProps {
@@ -15,7 +15,6 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
     let totalShopify = 0;
     let totalCancelled = 0;
     let totalDispatched = 0;
-    let mismatched = 0;
     
     // Map for fast lookup of courier orders by Order #
     // Normalize: Remove # and whitespace
@@ -32,7 +31,10 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
         img: string,
         demand: number, 
         dispatched: number, 
-        cancelled: number
+        cancelled: number,
+        delivered: number,
+        returned: number,
+        in_transit: number
     }>();
 
     // Helper to generate fingerprint
@@ -68,7 +70,10 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                     img: productDef?.image_url || '',
                     demand: 0,
                     dispatched: 0,
-                    cancelled: 0
+                    cancelled: 0,
+                    delivered: 0,
+                    returned: 0,
+                    in_transit: 0
                 });
             }
 
@@ -79,8 +84,19 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                 pStat.cancelled += item.quantity;
             } else if (isDispatched) {
                 // We assume if order is dispatched, all items in it were dispatched (simple logic)
-                // Ideally we check courier items, but mapping line-items 1:1 is hard without SKUs in courier data
                 pStat.dispatched += item.quantity; 
+
+                // Detailed Status Breakdown from Courier Order
+                if (courierOrder) {
+                    if (courierOrder.status === OrderStatus.DELIVERED) {
+                        pStat.delivered += item.quantity;
+                    } else if (courierOrder.status === OrderStatus.RETURNED || courierOrder.status === OrderStatus.RTO_INITIATED) {
+                        pStat.returned += item.quantity;
+                    } else {
+                        // Covers IN_TRANSIT, BOOKED, PENDING (if considered dispatched)
+                        pStat.in_transit += item.quantity;
+                    }
+                }
             }
         });
     });
@@ -192,17 +208,27 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
         {/* Product Level Reconciliation */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
             <div className="p-6 border-b border-slate-200">
-                <h3 className="font-bold text-slate-800">Item-Level Dispatch Ratios</h3>
-                <p className="text-xs text-slate-500">Identify which products are facing fulfillment issues or stockouts.</p>
+                <h3 className="font-bold text-slate-800">Item-Level Status Breakdown</h3>
+                <p className="text-xs text-slate-500">Track fulfillment performance per product SKU.</p>
             </div>
             <table className="w-full text-left text-sm">
                 <thead className="bg-slate-50 border-b border-slate-200">
                     <tr>
-                        <th className="px-6 py-4 font-semibold text-slate-700">Product</th>
-                        <th className="px-6 py-4 font-semibold text-slate-700 text-center">Total Demand</th>
-                        <th className="px-6 py-4 font-semibold text-slate-700 text-center">Cancelled</th>
-                        <th className="px-6 py-4 font-semibold text-slate-700 text-center">Net Valid</th>
-                        <th className="px-6 py-4 font-semibold text-slate-700 text-center text-emerald-700">Dispatched</th>
+                        <th className="px-6 py-4 font-semibold text-slate-700 w-[30%]">Product</th>
+                        <th className="px-2 py-4 font-semibold text-slate-700 text-center">Net Demand</th>
+                        <th className="px-2 py-4 font-semibold text-slate-700 text-center text-emerald-700">Dispatched</th>
+                        
+                        {/* Status Columns */}
+                        <th className="px-2 py-4 font-semibold text-slate-700 text-center text-xs uppercase tracking-wider bg-slate-100/50 border-l border-slate-200">
+                            <span className="flex items-center justify-center gap-1"><CheckCircle2 size={12} className="text-green-600" /> Deliv.</span>
+                        </th>
+                        <th className="px-2 py-4 font-semibold text-slate-700 text-center text-xs uppercase tracking-wider bg-slate-100/50">
+                            <span className="flex items-center justify-center gap-1"><RotateCcw size={12} className="text-red-500" /> RTO</span>
+                        </th>
+                        <th className="px-2 py-4 font-semibold text-slate-700 text-center text-xs uppercase tracking-wider bg-slate-100/50 border-r border-slate-200">
+                            <span className="flex items-center justify-center gap-1"><Truck size={12} className="text-blue-500" /> Transit</span>
+                        </th>
+
                         <th className="px-6 py-4 font-semibold text-slate-700 text-right">Dispatch %</th>
                     </tr>
                 </thead>
@@ -220,15 +246,26 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                                             {p.img ? <img src={p.img} alt="" className="w-full h-full object-cover rounded" /> : <Package size={16} className="text-slate-400" />}
                                         </div>
                                         <div>
-                                            <div className="font-medium text-slate-900">{p.name}</div>
+                                            <div className="font-medium text-slate-900 line-clamp-1" title={p.name}>{p.name}</div>
                                             <div className="text-xs text-slate-500">{p.sku}</div>
+                                            {p.cancelled > 0 && <span className="text-[10px] text-red-400">({p.cancelled} cancelled)</span>}
                                         </div>
                                     </div>
                                 </td>
-                                <td className="px-6 py-4 text-center font-medium">{p.demand}</td>
-                                <td className="px-6 py-4 text-center text-red-400">{p.cancelled > 0 ? `-${p.cancelled}` : '-'}</td>
-                                <td className="px-6 py-4 text-center font-bold text-blue-600">{netDemand}</td>
-                                <td className="px-6 py-4 text-center font-bold text-emerald-600">{p.dispatched}</td>
+                                <td className="px-2 py-4 text-center font-bold text-blue-600">{netDemand}</td>
+                                <td className="px-2 py-4 text-center font-bold text-emerald-600">{p.dispatched}</td>
+                                
+                                {/* Status Breakdown Data */}
+                                <td className="px-2 py-4 text-center bg-slate-50/50 border-l border-slate-100 text-green-700 font-medium">
+                                    {p.delivered}
+                                </td>
+                                <td className="px-2 py-4 text-center bg-slate-50/50 text-red-600 font-medium">
+                                    {p.returned}
+                                </td>
+                                <td className="px-2 py-4 text-center bg-slate-50/50 border-r border-slate-100 text-blue-600 font-medium">
+                                    {p.in_transit}
+                                </td>
+
                                 <td className="px-6 py-4 text-right">
                                     <span className={`px-2 py-1 rounded font-bold text-xs ${isLow ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
                                         {ratio.toFixed(0)}%
