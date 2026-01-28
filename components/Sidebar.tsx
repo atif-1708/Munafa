@@ -1,5 +1,6 @@
 import React from 'react';
-import { LayoutDashboard, ShoppingBag, Truck, BarChart3, Settings, TrendingUp, Plug, PackageSearch, GitCompare } from 'lucide-react';
+import { LayoutDashboard, ShoppingBag, Truck, BarChart3, Settings, TrendingUp, Plug, PackageSearch, GitCompare, LogOut } from 'lucide-react';
+import { supabase } from '../services/supabase';
 
 interface SidebarProps {
   currentPage: string;
@@ -19,6 +20,11 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setPage, inventoryAlertC
     { id: 'integrations', label: 'Integrations', icon: Plug },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
+
+  const handleLogout = async () => {
+      await supabase.auth.signOut();
+      window.location.reload();
+  };
 
   return (
     <div className="w-64 bg-slate-900 text-white h-screen fixed left-0 top-0 flex flex-col border-r border-slate-800 z-50">
@@ -45,7 +51,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setPage, inventoryAlertC
             
             {/* Inventory Alert Badge */}
             {item.id === 'inventory' && inventoryAlertCount > 0 && (
-                <div className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse shadow-sm shadow-red-900/50">
+                <div className="bg-red-50 text-white text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse shadow-sm shadow-red-900/50">
                     {inventoryAlertCount}
                 </div>
             )}
@@ -54,14 +60,23 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setPage, inventoryAlertC
       </nav>
 
       <div className="p-4 border-t border-slate-800">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold">
-            MS
-          </div>
-          <div>
-            <p className="text-sm font-medium">My Store</p>
-            <p className="text-xs text-slate-500">Standard Plan</p>
-          </div>
+        <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold">
+                MS
+              </div>
+              <div>
+                <p className="text-sm font-medium">My Store</p>
+                <p className="text-xs text-slate-500">Standard Plan</p>
+              </div>
+            </div>
+            <button 
+                onClick={handleLogout}
+                className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-slate-800 transition-colors"
+                title="Logout"
+            >
+                <LogOut size={18} />
+            </button>
         </div>
       </div>
     </div>

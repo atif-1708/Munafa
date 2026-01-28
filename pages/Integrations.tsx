@@ -3,7 +3,7 @@ import { CourierName, IntegrationConfig } from '../types';
 import { PostExAdapter } from '../services/couriers/postex';
 import { ShopifyAdapter } from '../services/shopify';
 import { supabase } from '../services/supabase';
-import { Plug, CheckCircle2, XCircle, AlertTriangle, Key, Save, Globe, HelpCircle, X, ArrowLeftRight, Loader2, LayoutDashboard, Store, ExternalLink, RefreshCw, Copy } from 'lucide-react';
+import { Plug, CheckCircle2, XCircle, AlertTriangle, Key, Save, Globe, HelpCircle, X, ArrowLeftRight, Loader2, LayoutDashboard, Store, ExternalLink, RefreshCw, Copy, Trash2 } from 'lucide-react';
 
 interface IntegrationsProps {
     onConfigUpdate?: () => void;
@@ -173,7 +173,11 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     const config = configOverride || configs[courier];
     
     // 1. Update Local State & Storage
-    const updatedConfig = { ...config, is_active: true };
+    // We assume if configOverride is passed with is_active=false, we save that
+    // otherwise we default to true if we are saving (which usually means connecting)
+    const isActive = configOverride ? configOverride.is_active : true;
+    const updatedConfig = { ...config, is_active: isActive };
+    
     setConfigs(prev => {
         const next = { ...prev, [courier]: updatedConfig };
         localStorage.setItem('munafa_api_configs', JSON.stringify(next));
@@ -183,8 +187,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     // 2. Try DB Save
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
-        // IMPORTANT: Destructure to remove 'id' if it's empty/invalid string.
-        // If 'id' is empty string, Postgres will throw "invalid input syntax for type uuid"
         const { id, ...rest } = updatedConfig;
         
         const payload = {
@@ -192,10 +194,9 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
             courier: courier,
             api_token: rest.api_token,
             base_url: rest.base_url,
-            is_active: true
+            is_active: isActive
         };
 
-        // Upsert based on unique constraint (user_id, courier)
         const { error } = await supabase
             .from('integration_configs')
             .upsert(payload, { onConflict: 'user_id, courier' }); 
@@ -246,6 +247,23 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
 
     setConnectionStatus(prev => ({ ...prev, [courier]: success ? 'success' : 'failed' }));
     setTestingConnection(null);
+  };
+
+  const handleDisconnect = async (courier: string) => {
+    if (!window.confirm("Are you sure you want to disconnect? This will stop data syncing.")) return;
+
+    const current = configs[courier];
+    const disconnectedConfig: IntegrationConfig = {
+        ...current,
+        api_token: '',
+        base_url: '',
+        is_active: false
+    };
+
+    setConfigs(prev => ({ ...prev, [courier]: disconnectedConfig }));
+    setConnectionStatus(prev => ({ ...prev, [courier]: null }));
+    
+    await saveConfig(courier, disconnectedConfig);
   };
 
   const Step = ({ num, text }: { num: number, text: string }) => (
@@ -302,20 +320,22 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
 
             <div className="space-y-4">
                 {/* Auth Method Toggle */}
-                <div className="flex p-1 bg-slate-100 rounded-lg">
-                    <button 
-                        onClick={() => setAuthMethod('oauth')}
-                        className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${authMethod === 'oauth' ? 'bg-white shadow-sm text-brand-600' : 'text-slate-500'}`}
-                    >
-                        OAuth (Partner App)
-                    </button>
-                    <button 
-                        onClick={() => setAuthMethod('token')}
-                        className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${authMethod === 'token' ? 'bg-white shadow-sm text-brand-600' : 'text-slate-500'}`}
-                    >
-                        Access Token (Manual)
-                    </button>
-                </div>
+                {!configs['Shopify'].is_active && (
+                    <div className="flex p-1 bg-slate-100 rounded-lg">
+                        <button 
+                            onClick={() => setAuthMethod('oauth')}
+                            className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${authMethod === 'oauth' ? 'bg-white shadow-sm text-brand-600' : 'text-slate-500'}`}
+                        >
+                            OAuth (Partner App)
+                        </button>
+                        <button 
+                            onClick={() => setAuthMethod('token')}
+                            className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${authMethod === 'token' ? 'bg-white shadow-sm text-brand-600' : 'text-slate-500'}`}
+                        >
+                            Access Token (Manual)
+                        </button>
+                    </div>
+                )}
 
                 <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Store URL</label>
@@ -327,100 +347,110 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                             className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none text-sm font-mono"
                             value={configs['Shopify'].base_url}
                             onChange={(e) => handleInputChange('Shopify', 'base_url', e.target.value)}
+                            disabled={configs['Shopify'].is_active}
                         />
                     </div>
                 </div>
 
-                {authMethod === 'token' ? (
-                    <div>
-                        <div className="flex justify-between items-center mb-1">
-                            <label className="block text-sm font-medium text-slate-700">Admin Access Token</label>
-                            <button 
-                                onClick={() => setShowShopifyGuide(true)}
-                                className="text-xs text-brand-600 font-medium hover:underline flex items-center gap-1"
-                            >
-                                <HelpCircle size={12} /> How do I get this?
-                            </button>
-                        </div>
-                        <div className="relative">
-                            <Key className="absolute left-3 top-2.5 text-slate-400" size={16} />
-                            <input 
-                                type="password"
-                                placeholder="shpat_xxxxxxxxxxxxxxxx"
-                                className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none text-sm font-mono"
-                                value={configs['Shopify'].api_token}
-                                onChange={(e) => handleInputChange('Shopify', 'api_token', e.target.value)}
-                            />
-                        </div>
-                    </div>
+                {configs['Shopify'].is_active ? (
+                     <div className="p-4 bg-green-50 rounded-lg border border-green-100 text-center space-y-3">
+                         <div className="flex items-center justify-center gap-2 text-green-700 font-bold">
+                             <CheckCircle2 size={20} /> Integration Active
+                         </div>
+                         <p className="text-xs text-green-600">
+                             Your store is successfully connected. We are syncing orders automatically.
+                         </p>
+                         <button 
+                            onClick={() => handleDisconnect('Shopify')}
+                            className="text-xs text-red-500 hover:text-red-700 hover:underline flex items-center justify-center gap-1 w-full pt-2 border-t border-green-100"
+                         >
+                             <Trash2 size={12} /> Disconnect
+                         </button>
+                     </div>
                 ) : (
-                    <div className="space-y-3 p-4 bg-slate-50 rounded-lg border border-slate-100">
-                        {/* WARNING BOX FOR WHITELISTING */}
-                        <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-xs">
-                            <div className="flex items-center gap-2 font-bold text-yellow-800 mb-1">
-                                <AlertTriangle size={14} />
-                                <span>Config Required</span>
-                            </div>
-                            <p className="text-yellow-700 mb-2">
-                                To avoid "invalid_request", add this exact URL to <strong>Allowed redirection URL(s)</strong> in Partner Dashboard &rarr; App Setup.
-                            </p>
-                            <div className="relative">
-                                <code className="block w-full bg-white border border-yellow-300 p-2 rounded text-slate-600 font-mono break-all pr-8">
-                                    {redirectUri}
-                                </code>
-                                <button 
-                                    className="absolute right-2 top-2 text-slate-400 hover:text-slate-600"
-                                    onClick={() => navigator.clipboard.writeText(redirectUri)}
-                                    title="Copy URL"
-                                >
-                                    <Copy size={14} />
-                                </button>
-                            </div>
-                        </div>
-
-                        <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Client ID (API Key)</label>
-                            <input 
-                                type="text"
-                                className="w-full px-3 py-1.5 border rounded text-sm font-mono"
-                                value={oauthCreds.clientId}
-                                onChange={e => setOauthCreds({...oauthCreds, clientId: e.target.value})}
-                                placeholder="From Partner Dashboard"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Client Secret</label>
-                            <input 
-                                type="password"
-                                className="w-full px-3 py-1.5 border rounded text-sm font-mono"
-                                value={oauthCreds.clientSecret}
-                                onChange={e => setOauthCreds({...oauthCreds, clientSecret: e.target.value})}
-                                placeholder="Start with shpss_..."
-                            />
-                        </div>
-                        
-                        {isExchangingToken ? (
-                            <div className="flex items-center justify-center gap-2 text-brand-600 text-sm py-2">
-                                <Loader2 className="animate-spin" size={16} /> Connecting...
-                            </div>
-                        ) : configs['Shopify'].api_token && configs['Shopify'].is_active ? (
-                            <div className="text-center py-2">
-                                <span className="text-xs font-bold text-green-600 flex items-center justify-center gap-1">
-                                    <CheckCircle2 size={14} /> Token Generated Successfully
-                                </span>
+                    <>
+                        {authMethod === 'token' ? (
+                            <div>
+                                <div className="flex justify-between items-center mb-1">
+                                    <label className="block text-sm font-medium text-slate-700">Admin Access Token</label>
+                                    <button 
+                                        onClick={() => setShowShopifyGuide(true)}
+                                        className="text-xs text-brand-600 font-medium hover:underline flex items-center gap-1"
+                                    >
+                                        <HelpCircle size={12} /> How do I get this?
+                                    </button>
+                                </div>
+                                <div className="relative">
+                                    <Key className="absolute left-3 top-2.5 text-slate-400" size={16} />
+                                    <input 
+                                        type="password"
+                                        placeholder="shpat_xxxxxxxxxxxxxxxx"
+                                        className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none text-sm font-mono"
+                                        value={configs['Shopify'].api_token}
+                                        onChange={(e) => handleInputChange('Shopify', 'api_token', e.target.value)}
+                                    />
+                                </div>
                             </div>
                         ) : (
-                            <button 
-                                onClick={startOAuthFlow}
-                                className="w-full bg-slate-900 text-white py-2 rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors flex items-center justify-center gap-2"
-                            >
-                                <ExternalLink size={16} /> Connect via Shopify
-                            </button>
+                            <div className="space-y-3 p-4 bg-slate-50 rounded-lg border border-slate-100">
+                                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-xs">
+                                    <div className="flex items-center gap-2 font-bold text-yellow-800 mb-1">
+                                        <AlertTriangle size={14} />
+                                        <span>Config Required</span>
+                                    </div>
+                                    <p className="text-yellow-700 mb-2">
+                                        To avoid "invalid_request", add this exact URL to <strong>Allowed redirection URL(s)</strong> in Partner Dashboard &rarr; App Setup.
+                                    </p>
+                                    <div className="relative">
+                                        <code className="block w-full bg-white border border-yellow-300 p-2 rounded text-slate-600 font-mono break-all pr-8">
+                                            {redirectUri}
+                                        </code>
+                                        <button 
+                                            className="absolute right-2 top-2 text-slate-400 hover:text-slate-600"
+                                            onClick={() => navigator.clipboard.writeText(redirectUri)}
+                                            title="Copy URL"
+                                        >
+                                            <Copy size={14} />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Client ID (API Key)</label>
+                                    <input 
+                                        type="text"
+                                        className="w-full px-3 py-1.5 border rounded text-sm font-mono"
+                                        value={oauthCreds.clientId}
+                                        onChange={e => setOauthCreds({...oauthCreds, clientId: e.target.value})}
+                                        placeholder="From Partner Dashboard"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Client Secret</label>
+                                    <input 
+                                        type="password"
+                                        className="w-full px-3 py-1.5 border rounded text-sm font-mono"
+                                        value={oauthCreds.clientSecret}
+                                        onChange={e => setOauthCreds({...oauthCreds, clientSecret: e.target.value})}
+                                        placeholder="Start with shpss_..."
+                                    />
+                                </div>
+                                
+                                {isExchangingToken ? (
+                                    <div className="flex items-center justify-center gap-2 text-brand-600 text-sm py-2">
+                                        <Loader2 className="animate-spin" size={16} /> Connecting...
+                                    </div>
+                                ) : (
+                                    <button 
+                                        onClick={startOAuthFlow}
+                                        className="w-full bg-slate-900 text-white py-2 rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors flex items-center justify-center gap-2"
+                                    >
+                                        <ExternalLink size={16} /> Connect via Shopify
+                                    </button>
+                                )}
+                            </div>
                         )}
-                        <p className="text-[10px] text-slate-400 text-center leading-tight">
-                            Note: Opens in a <strong>new tab</strong>.
-                        </p>
-                    </div>
+                    </>
                 )}
 
                 {connectionStatus['Shopify'] === 'failed' && (
@@ -440,7 +470,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                 )}
             </div>
 
-            {authMethod === 'token' && (
+            {authMethod === 'token' && !configs['Shopify'].is_active && (
                 <div className="mt-6 pt-4 border-t border-slate-100 flex justify-end gap-2">
                     <button 
                         onClick={() => handleConnect('Shopify')}
@@ -482,10 +512,25 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                             className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 outline-none text-sm font-mono"
                             value={configs[CourierName.POSTEX].api_token}
                             onChange={(e) => handleInputChange(CourierName.POSTEX, 'api_token', e.target.value)}
+                            disabled={configs[CourierName.POSTEX].is_active}
                         />
                     </div>
                     <p className="text-xs text-slate-400 mt-1">Found in PostEx Portal {'>'} Settings {'>'} API Integration</p>
                 </div>
+
+                {configs[CourierName.POSTEX].is_active && (
+                     <div className="p-4 bg-green-50 rounded-lg border border-green-100 text-center space-y-3">
+                         <div className="flex items-center justify-center gap-2 text-green-700 font-bold">
+                             <CheckCircle2 size={20} /> Integration Active
+                         </div>
+                         <button 
+                            onClick={() => handleDisconnect(CourierName.POSTEX)}
+                            className="text-xs text-red-500 hover:text-red-700 hover:underline flex items-center justify-center gap-1 w-full pt-2 border-t border-green-100"
+                         >
+                             <Trash2 size={12} /> Disconnect
+                         </button>
+                     </div>
+                )}
 
                 {connectionStatus[CourierName.POSTEX] === 'failed' && (
                     <div className="flex flex-col gap-2 text-red-600 bg-red-50 p-3 rounded-lg text-xs">
@@ -512,23 +557,25 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                 )}
             </div>
 
-            <div className="mt-6 pt-4 border-t border-slate-100 flex justify-end gap-2">
-                {connectionStatus[CourierName.POSTEX] === 'failed' && (
+            {!configs[CourierName.POSTEX].is_active && (
+                <div className="mt-6 pt-4 border-t border-slate-100 flex justify-end gap-2">
+                    {connectionStatus[CourierName.POSTEX] === 'failed' && (
+                        <button 
+                            onClick={() => handleConnect(CourierName.POSTEX, true)}
+                            className="flex items-center gap-2 bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg hover:bg-slate-50 transition-all text-sm font-medium"
+                        >
+                            <Save size={16} /> Force Save
+                        </button>
+                    )}
                     <button 
-                        onClick={() => handleConnect(CourierName.POSTEX, true)}
-                        className="flex items-center gap-2 bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg hover:bg-slate-50 transition-all text-sm font-medium"
+                        onClick={() => handleConnect(CourierName.POSTEX)}
+                        disabled={testingConnection === CourierName.POSTEX}
+                        className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg hover:bg-slate-800 transition-all text-sm font-medium disabled:opacity-50"
                     >
-                        <Save size={16} /> Force Save
+                        {testingConnection === CourierName.POSTEX ? 'Verifying...' : <><Plug size={16} /> Connect Account</>}
                     </button>
-                )}
-                <button 
-                    onClick={() => handleConnect(CourierName.POSTEX)}
-                    disabled={testingConnection === CourierName.POSTEX}
-                    className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg hover:bg-slate-800 transition-all text-sm font-medium disabled:opacity-50"
-                >
-                    {testingConnection === CourierName.POSTEX ? 'Verifying...' : <><Plug size={16} /> Connect Account</>}
-                </button>
-            </div>
+                </div>
+            )}
         </div>
       </div>
 
