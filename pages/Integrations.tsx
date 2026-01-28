@@ -20,7 +20,8 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   const [dbError, setDbError] = useState<string | null>(null);
   
   // OAuth State
-  const [authMethod, setAuthMethod] = useState<'token' | 'oauth'>('oauth');
+  // Default to 'token' as it is the standard for Private/Custom apps
+  const [authMethod, setAuthMethod] = useState<'token' | 'oauth'>('token');
   const [oauthCreds, setOauthCreds] = useState({ clientId: '', clientSecret: '' });
   const [isExchangingToken, setIsExchangingToken] = useState(false);
   
@@ -29,7 +30,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
 
   // Guide Modal State
   const [showShopifyGuide, setShowShopifyGuide] = useState(false);
-  const [guideTab, setGuideTab] = useState<'admin' | 'partner'>('partner');
+  const [guideTab, setGuideTab] = useState<'admin' | 'partner'>('admin');
 
   // Load Configs Helper
   const loadConfigs = async () => {
@@ -353,16 +354,16 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                 {!configs['Shopify'].is_active && (
                     <div className="flex p-1 bg-slate-100 rounded-lg">
                         <button 
-                            onClick={() => setAuthMethod('oauth')}
-                            className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${authMethod === 'oauth' ? 'bg-white shadow-sm text-brand-600' : 'text-slate-500'}`}
-                        >
-                            OAuth (Partner App)
-                        </button>
-                        <button 
                             onClick={() => setAuthMethod('token')}
                             className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${authMethod === 'token' ? 'bg-white shadow-sm text-brand-600' : 'text-slate-500'}`}
                         >
-                            Access Token (Manual)
+                            Access Token (Recommended)
+                        </button>
+                        <button 
+                            onClick={() => setAuthMethod('oauth')}
+                            className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${authMethod === 'oauth' ? 'bg-white shadow-sm text-brand-600' : 'text-slate-500'}`}
+                        >
+                            OAuth
                         </button>
                     </div>
                 )}
