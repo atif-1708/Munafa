@@ -31,34 +31,62 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   const [showShopifyGuide, setShowShopifyGuide] = useState(false);
   const [guideTab, setGuideTab] = useState<'admin' | 'partner'>('partner');
 
-  // Load from Supabase & Check for OAuth Callback
+  // Load Configs Helper
+  const loadConfigs = async () => {
+        setLoading(true);
+        const { data: { user } } = await supabase.auth.getUser();
+        
+        // 1. Load from DB if User Exists
+        if (user) {
+            const { data, error } = await supabase
+                .from('integration_configs')
+                .select('*')
+                .eq('user_id', user.id);
+
+            if (error) {
+                console.error("Failed to load configs:", error);
+                setDbError("Failed to load saved configurations.");
+            } else if (data) {
+                setConfigs(prev => {
+                    const newConfigs = { ...prev };
+                    data.forEach((conf: any) => {
+                        newConfigs[conf.courier] = conf;
+                    });
+                    return newConfigs;
+                });
+            }
+        } 
+        
+        // 2. Load from LocalStorage (Fallback / Guest Mode)
+        const localData = localStorage.getItem('munafa_api_configs');
+        if (localData) {
+             const parsed = JSON.parse(localData);
+             setConfigs(prev => {
+                 const newConfigs = { ...prev };
+                 // Only overwrite if not already loaded from DB or if DB is empty for that key
+                 Object.keys(parsed).forEach(key => {
+                     if (!newConfigs[key] || !newConfigs[key].is_active) {
+                         newConfigs[key] = parsed[key];
+                     }
+                 });
+                 return newConfigs;
+             });
+        }
+
+        setLoading(false);
+  };
+
+  // Initial Load & OAuth Code Check
   useEffect(() => {
     const init = async () => {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
+        await loadConfigs();
 
-        // 1. Load Saved Configs
-        const { data } = await supabase
-            .from('integration_configs')
-            .select('*')
-            .eq('user_id', user.id);
-
-        if (data) {
-            const newConfigs = { ...configs };
-            data.forEach((conf: any) => {
-                newConfigs[conf.courier] = conf;
-            });
-            setConfigs(newConfigs);
-        }
-        setLoading(false);
-
-        // 2. Check for OAuth Code in URL
+        // Check for OAuth Code in URL
         const params = new URLSearchParams(window.location.search);
         const code = params.get('code');
         const shop = params.get('shop');
         
         if (code && shop) {
-            // Restore creds from storage to complete the exchange
             const storedCreds = localStorage.getItem('shopify_oauth_temp');
             if (storedCreds) {
                 const { clientId, clientSecret } = JSON.parse(storedCreds);
@@ -75,7 +103,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   const handleTokenExchange = async (shop: string, code: string, clientId: string, clientSecret: string) => {
       setIsExchangingToken(true);
       try {
-          // Use Proxy to bypass CORS for the token exchange POST request
           const proxyUrl = 'https://corsproxy.io/?';
           const tokenUrl = `https://${shop}/admin/oauth/access_token`;
           const fullUrl = `${proxyUrl}${encodeURIComponent(tokenUrl)}`;
@@ -92,19 +119,16 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
 
           const data = await response.json();
           if (data.access_token) {
-              // Success! Update State & Save
               const updatedConfig = {
                   ...configs['Shopify'],
                   base_url: shop,
                   api_token: data.access_token,
-                  courier: 'Shopify', // ensure consistent key
+                  courier: 'Shopify',
                   is_active: true
               };
               
               setConfigs(prev => ({ ...prev, 'Shopify': updatedConfig }));
-              
-              // Auto Save
-              await saveToSupabase('Shopify', updatedConfig);
+              await saveConfig(updatedConfig.courier, updatedConfig);
               setConnectionStatus(prev => ({ ...prev, 'Shopify': 'success' }));
           } else {
               throw new Error(JSON.stringify(data));
@@ -127,16 +151,12 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
           return;
       }
 
-      // Save creds temporarily for the callback
       localStorage.setItem('shopify_oauth_temp', JSON.stringify(oauthCreds));
 
       const scopes = 'read_orders,read_products,read_customers';
       const nonce = Math.random().toString(36).substring(7);
-
-      // Important: redirect_uri must match exactly what is in Partner Dashboard
       const authUrl = `https://${shopUrl}/admin/oauth/authorize?client_id=${oauthCreds.clientId}&scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${nonce}`;
       
-      // FIX: Open in new tab to avoid 'refused to connect' iframe errors
       window.open(authUrl, '_blank');
   };
 
@@ -147,39 +167,43 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     }));
   };
 
-  const saveToSupabase = async (courier: string, configOverride?: IntegrationConfig) => {
+  // Unified Save Function (DB + LocalStorage)
+  const saveConfig = async (courier: string, configOverride?: IntegrationConfig) => {
     setDbError(null);
     const config = configOverride || configs[courier];
+    
+    // 1. Update Local State & Storage
+    const updatedConfig = { ...config, is_active: true };
+    setConfigs(prev => {
+        const next = { ...prev, [courier]: updatedConfig };
+        localStorage.setItem('munafa_api_configs', JSON.stringify(next));
+        return next;
+    });
+
+    // 2. Try DB Save
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
+        // Upsert with explicit handling
         const { error } = await supabase
             .from('integration_configs')
             .upsert({
                 user_id: user.id,
-                courier: courier,
+                courier: courier, // "Shopify" or "PostEx"
                 api_token: config.api_token,
                 base_url: config.base_url,
                 is_active: true
-            }, { onConflict: 'user_id, courier' });
+            }, { onConflict: 'user_id, courier' }); // Composite key
         
         if (error) {
             console.error("Supabase Save Error:", error);
-            setDbError(`DB Save Failed: ${error.message} (${error.code})`);
+            setDbError(`Warning: Saved locally, but DB sync failed (${error.message})`);
             return false;
         }
-        
-        // Update local state to reflect active
-        setConfigs(prev => ({
-            ...prev,
-            [courier]: { ...prev[courier], is_active: true }
-        }));
-
-        // Notify Parent App to Reload
-        if (onConfigUpdate) onConfigUpdate();
-
-        return true;
     }
-    return false;
+
+    // 3. Trigger App Refresh
+    if (onConfigUpdate) onConfigUpdate();
+    return true;
   };
 
   const handleConnect = async (courier: string, force = false) => {
@@ -191,9 +215,10 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     let success = false;
 
     if (force) {
-        success = await saveToSupabase(courier);
-        if (!success) {
-            setConnectionStatus(prev => ({ ...prev, [courier]: 'failed' }));
+        success = await saveConfig(courier);
+        if (!success && !dbError) {
+             // If save returned false but no specific DB error, generic fail
+             setConnectionStatus(prev => ({ ...prev, [courier]: 'failed' }));
         }
     } else {
         try {
@@ -206,7 +231,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
             }
 
             if (success) {
-                await saveToSupabase(courier);
+                await saveConfig(courier);
             }
         } catch (e) {
             console.error("Test failed", e);
