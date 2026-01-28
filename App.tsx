@@ -8,9 +8,9 @@ import Integrations from './pages/Integrations';
 import Settings from './pages/Settings';
 import Inventory from './pages/Inventory';
 import Marketing from './pages/Marketing';
-import Reconciliation from './pages/Reconciliation'; // NEW Import
+import Reconciliation from './pages/Reconciliation'; 
 import { PostExAdapter } from './services/couriers/postex';
-import { ShopifyAdapter } from './services/shopify'; // NEW Import
+import { ShopifyAdapter } from './services/shopify'; 
 import { Order, Product, AdSpend, CourierName, IntegrationConfig, OrderStatus, ShopifyOrder } from './types';
 import { Loader2, AlertTriangle, LogIn, UserPlus, ShieldCheck, RefreshCw, Box } from 'lucide-react';
 import { supabase } from './services/supabase';
@@ -35,7 +35,7 @@ const App: React.FC = () => {
   
   // App Data State
   const [orders, setOrders] = useState<Order[]>([]);
-  const [shopifyOrders, setShopifyOrders] = useState<ShopifyOrder[]>([]); // NEW State
+  const [shopifyOrders, setShopifyOrders] = useState<ShopifyOrder[]>([]); 
   const [products, setProducts] = useState<Product[]>([]);
   const [adSpend, setAdSpend] = useState<AdSpend[]>([]);
   const [isConfigured, setIsConfigured] = useState(false);
@@ -187,25 +187,52 @@ const App: React.FC = () => {
             }
         }
 
-        // D. Fetch Integrations & Orders
+        // D. Fetch Integrations & Orders (AUTO REPAIR LOGIC START)
         let postExConfig: IntegrationConfig | undefined;
         let shopifyConfig: IntegrationConfig | undefined;
         let anyActiveConfig = false;
 
+        let dbConfigs: any[] | null = null;
         if (!isDemoMode) {
-            const { data: configData } = await supabase.from('integration_configs').select('*').eq('user_id', user.id);
-            if (configData && configData.length > 0) {
-                 anyActiveConfig = configData.some(c => c.is_active);
-                 postExConfig = configData.find(c => c.courier === CourierName.POSTEX && c.is_active);
-                 shopifyConfig = configData.find(c => c.courier === 'Shopify' && c.is_active);
-            }
-        } else {
+            const { data } = await supabase.from('integration_configs').select('*').eq('user_id', user.id);
+            dbConfigs = data;
+        }
+
+        // Strategy: Prefer DB, Fallback to LocalStorage, Repair DB if needed
+        if (dbConfigs && dbConfigs.length > 0) {
+             // DB Hit
+             anyActiveConfig = dbConfigs.some(c => c.is_active);
+             postExConfig = dbConfigs.find(c => c.courier === CourierName.POSTEX && c.is_active);
+             shopifyConfig = dbConfigs.find(c => c.courier === 'Shopify' && c.is_active);
+        } 
+        
+        // If no active config found in DB (or demo mode), check Local Storage
+        if (!anyActiveConfig) {
             const localConfigs = localStorage.getItem('munafa_api_configs');
             if (localConfigs) {
-                const configs = JSON.parse(localConfigs);
-                anyActiveConfig = Object.values(configs).some((c: any) => c.is_active);
-                postExConfig = configs[CourierName.POSTEX];
-                shopifyConfig = configs['Shopify'];
+                const parsed = JSON.parse(localConfigs);
+                anyActiveConfig = Object.values(parsed).some((c: any) => c.is_active);
+                
+                if (anyActiveConfig) {
+                    postExConfig = parsed[CourierName.POSTEX]?.is_active ? parsed[CourierName.POSTEX] : undefined;
+                    shopifyConfig = parsed['Shopify']?.is_active ? parsed['Shopify'] : undefined;
+
+                    // AUTO-REPAIR: We have local data but DB was empty/missing. Sync it up now.
+                    if (!isDemoMode && user.id) {
+                        console.log("Auto-Repairing: Syncing local config to Supabase...");
+                        const updates = [];
+                        if (postExConfig) updates.push({ user_id: user.id, ...postExConfig, courier: CourierName.POSTEX });
+                        if (shopifyConfig) updates.push({ user_id: user.id, ...shopifyConfig, courier: 'Shopify' });
+                        
+                        if (updates.length > 0) {
+                            // Fire and forget - don't await to block UI
+                            supabase.from('integration_configs').upsert(updates, { onConflict: 'user_id, courier' }).then(({ error }) => {
+                                if (error) console.error("Auto-Repair Failed:", error);
+                                else console.log("Auto-Repair Success: Configs synced to DB");
+                            });
+                        }
+                    }
+                }
             }
         }
 
@@ -393,7 +420,6 @@ const App: React.FC = () => {
   if (authLoading) return <div className="h-screen flex items-center justify-center bg-slate-50"><Loader2 className="animate-spin text-brand-600" size={40} /></div>;
 
   if (!session && !isDemoMode) {
-     // ... (Existing Login UI code omitted for brevity as it remains identical)
      return (
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
             <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md border border-slate-200">
