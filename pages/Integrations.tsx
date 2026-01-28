@@ -9,8 +9,17 @@ import {
 
 // Helper to get Env Vars safely
 const getEnv = (key: string) => {
-    // @ts-ignore
-    return import.meta.env[key] || '';
+    try {
+        // Check for Vite's import.meta.env
+        // @ts-ignore
+        if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
+            // @ts-ignore
+            return import.meta.env[key];
+        }
+    } catch (e) {
+        // Ignore
+    }
+    return '';
 };
 
 // UI Metadata for Couriers
