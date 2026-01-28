@@ -78,6 +78,33 @@ export interface Order {
   items: OrderItem[];
 }
 
+// --- NEW: Shopify Order Interfaces ---
+export interface ShopifyLineItem {
+  id: number;
+  title: string;
+  quantity: number;
+  sku: string;
+  price: string;
+  variant_id: number;
+  product_id: number;
+}
+
+export interface ShopifyOrder {
+  id: number;
+  name: string; // e.g. #1024
+  created_at: string;
+  financial_status: string; // paid, pending, voided
+  fulfillment_status: string | null; // fulfilled, null, partial
+  cancel_reason: string | null; // customer, inventory, fraud
+  total_price: string;
+  line_items: ShopifyLineItem[];
+  customer?: {
+      first_name: string;
+      city: string;
+  };
+}
+// -------------------------------------
+
 // Marketing Data
 export interface AdSpend {
   id: string;
@@ -116,7 +143,7 @@ export interface DashboardMetrics {
 
 export interface IntegrationConfig {
   id: string;
-  courier: CourierName;
+  courier: string; // Changed from enum to string to support 'Shopify'
   api_token: string;
   merchant_id?: string; // Some couriers need AccountID + Token
   username?: string;
@@ -130,5 +157,5 @@ export interface TrackingUpdate {
   status: OrderStatus;
   raw_status_text: string;
   courier_timestamp: string;
-  balance_payable?: number; // Some couriers return the cash balance for this order
+  balance_payable?: number; // Some couriers return the balance for this order
 }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, ShoppingBag, Truck, BarChart3, Settings, TrendingUp, Plug, PackageSearch } from 'lucide-react';
+import { LayoutDashboard, ShoppingBag, Truck, BarChart3, Settings, TrendingUp, Plug, PackageSearch, GitCompare } from 'lucide-react';
 
 interface SidebarProps {
   currentPage: string;
@@ -10,6 +10,7 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({ currentPage, setPage, inventoryAlertCount = 0 }) => {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'reconciliation', label: 'Reconciliation', icon: GitCompare },
     { id: 'inventory', label: 'Inventory & Costs', icon: PackageSearch },
     { id: 'orders', label: 'Orders & RTO', icon: ShoppingBag },
     { id: 'couriers', label: 'Courier Performance', icon: Truck },
