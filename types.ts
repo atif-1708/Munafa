@@ -1,4 +1,5 @@
 
+
 // Database Schema Representations
 
 export enum CourierName {
@@ -141,15 +142,35 @@ export interface DashboardMetrics {
 
 // --- Integrations ---
 
-export interface IntegrationConfig {
+export interface SalesChannel {
   id: string;
-  courier: string; // Changed from enum to string to support 'Shopify'
+  platform: 'Shopify' | 'WooCommerce';
+  store_url: string;
+  access_token: string;
+  scope?: string;
+  is_active: boolean;
+  last_sync_at?: string;
+}
+
+export interface CourierConfig {
+  id: string;
+  courier_id: string; // CourierName
   api_token: string;
   merchant_id?: string; // Some couriers need AccountID + Token
   username?: string;
   password?: string;
   is_active: boolean;
   base_url?: string; // Optional override
+}
+
+export interface IntegrationConfig {
+  id: string;
+  provider_id: string;
+  api_token: string;
+  is_active: boolean;
+  merchant_id?: string;
+  username?: string;
+  password?: string;
 }
 
 export interface TrackingUpdate {

@@ -10,7 +10,7 @@ create table if not exists profiles (
 );
 alter table profiles enable row level security;
 
--- Drop policies if they exist to avoid errors on re-run
+-- Policies for profiles
 drop policy if exists "Users can view own profile" on profiles;
 create policy "Users can view own profile" on profiles for select using ( auth.uid() = id );
 
@@ -21,7 +21,6 @@ drop policy if exists "Users can insert own profile" on profiles;
 create policy "Users can insert own profile" on profiles for insert with check ( auth.uid() = id );
 
 -- 2. Products Table
--- ID is text to support external IDs (like Shopify GIDs or Courier IDs)
 create table if not exists products (
   id text primary key, 
   user_id uuid references auth.users on delete cascade not null,
@@ -47,7 +46,7 @@ create table if not exists ad_spend (
   date date not null,
   platform text not null,
   amount_spent numeric not null,
-  product_id text, -- References products(id) but loosely
+  product_id text,
   attributed_orders numeric,
   created_at timestamptz default now()
 );
@@ -56,11 +55,29 @@ alter table ad_spend enable row level security;
 drop policy if exists "Users can all own ad_spend" on ad_spend;
 create policy "Users can all own ad_spend" on ad_spend for all using ( auth.uid() = user_id );
 
--- 4. Integration Configs Table
-create table if not exists integration_configs (
+-- 4. SALES CHANNELS TABLE (NEW: For Shopify, WooCommerce, etc)
+create table if not exists sales_channels (
   id uuid default uuid_generate_v4() primary key,
   user_id uuid references auth.users on delete cascade not null,
-  courier text not null,
+  platform text not null check (platform in ('Shopify', 'WooCommerce')),
+  store_url text not null,
+  access_token text, -- OAuth Token
+  scope text,
+  is_active boolean default true,
+  last_sync_at timestamptz,
+  created_at timestamptz default now(),
+  unique(user_id, platform) -- Limit 1 per platform per user for now
+);
+alter table sales_channels enable row level security;
+
+drop policy if exists "Users can manage own sales channels" on sales_channels;
+create policy "Users can manage own sales channels" on sales_channels for all using ( auth.uid() = user_id );
+
+-- 5. COURIER CONFIGS TABLE (NEW: Replaces integration_configs for Logistics)
+create table if not exists courier_configs (
+  id uuid default uuid_generate_v4() primary key,
+  user_id uuid references auth.users on delete cascade not null,
+  courier_id text not null, -- 'Trax', 'PostEx', 'Leopards'
   api_token text,
   merchant_id text,
   username text,
@@ -68,20 +85,20 @@ create table if not exists integration_configs (
   base_url text,
   is_active boolean default false,
   created_at timestamptz default now(),
-  unique(user_id, courier)
+  unique(user_id, courier_id)
 );
-alter table integration_configs enable row level security;
+alter table courier_configs enable row level security;
 
-drop policy if exists "Users can all own configs" on integration_configs;
-create policy "Users can all own configs" on integration_configs for all using ( auth.uid() = user_id );
+drop policy if exists "Users can manage own courier configs" on courier_configs;
+create policy "Users can manage own courier configs" on courier_configs for all using ( auth.uid() = user_id );
 
--- 5. App Settings Table
+-- 6. App Settings Table
 create table if not exists app_settings (
   user_id uuid references auth.users on delete cascade primary key,
   packaging_cost numeric default 0,
-  overhead_cost numeric default 0, -- NEW: Fixed cost per dispatched order
-  courier_tax_rate numeric default 0, -- NEW: Tax % on delivered sales
-  ads_tax_rate numeric default 0, -- NEW: Tax % on Ad Spend (GST/VAT)
+  overhead_cost numeric default 0,
+  courier_tax_rate numeric default 0,
+  ads_tax_rate numeric default 0,
   courier_rates jsonb default '{}'::jsonb,
   created_at timestamptz default now()
 );

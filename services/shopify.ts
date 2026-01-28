@@ -1,4 +1,5 @@
-import { IntegrationConfig, ShopifyOrder } from '../types';
+
+import { SalesChannel, ShopifyOrder } from '../types';
 
 export class ShopifyAdapter {
   // Use a CORS proxy because Shopify Admin API doesn't support CORS from browser
@@ -11,31 +12,11 @@ export class ShopifyAdapter {
     return `${this.PROXY_URL}${encodeURIComponent(fullUrl)}`;
   }
 
-  async testConnection(config: IntegrationConfig): Promise<boolean> {
-    if (!config.base_url || !config.api_token) return false;
-    // Simulation Mode
-    if (config.api_token.startsWith('demo_')) return true;
-
-    try {
-      const response = await fetch(this.getUrl(config.base_url, 'shop.json'), {
-        method: 'GET',
-        headers: {
-          'X-Shopify-Access-Token': config.api_token,
-          'Content-Type': 'application/json',
-        }
-      });
-      return response.ok;
-    } catch (e) {
-      console.error("Shopify Connection Test Failed", e);
-      return false;
-    }
-  }
-
-  async fetchOrders(config: IntegrationConfig): Promise<ShopifyOrder[]> {
-    if (!config.base_url || !config.api_token) return [];
+  async fetchOrders(config: SalesChannel): Promise<ShopifyOrder[]> {
+    if (!config.store_url || !config.access_token) return [];
     
     // Simulation Mode
-    if (config.api_token.startsWith('demo_')) {
+    if (config.access_token.startsWith('demo_')) {
         return this.getMockOrders();
     }
 
@@ -47,10 +28,10 @@ export class ShopifyAdapter {
       
       const endpoint = `orders.json?status=any&limit=250&created_at_min=${twoMonthsAgo.toISOString()}&fields=id,name,created_at,financial_status,fulfillment_status,cancel_reason,total_price,line_items,customer`;
       
-      const response = await fetch(this.getUrl(config.base_url, endpoint), {
+      const response = await fetch(this.getUrl(config.store_url, endpoint), {
         method: 'GET',
         headers: {
-          'X-Shopify-Access-Token': config.api_token,
+          'X-Shopify-Access-Token': config.access_token,
           'Content-Type': 'application/json',
         }
       });

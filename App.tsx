@@ -11,12 +11,11 @@ import Marketing from './pages/Marketing';
 import Reconciliation from './pages/Reconciliation'; 
 import { PostExAdapter } from './services/couriers/postex';
 import { ShopifyAdapter } from './services/shopify'; 
-import { Order, Product, AdSpend, CourierName, IntegrationConfig, OrderStatus, ShopifyOrder } from './types';
-import { Loader2, AlertTriangle, LogIn, UserPlus, ShieldCheck, RefreshCw, Box } from 'lucide-react';
+import { Order, Product, AdSpend, CourierName, SalesChannel, CourierConfig, OrderStatus, ShopifyOrder } from './types';
+import { Loader2 } from 'lucide-react';
 import { supabase } from './services/supabase';
-import { calculateMetrics, getCostAtDate } from './services/calculator';
+import { getCostAtDate } from './services/calculator';
 import { COURIER_RATES, PACKAGING_COST_AVG } from './constants';
-import { getOrders, getProducts } from './services/mockData';
 
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
@@ -104,20 +103,9 @@ const App: React.FC = () => {
 
         // 0. Ensure Profile Exists & Fetch Branding
         if (!isDemoMode && user.id !== 'demo-user') {
-            const { data: profile, error: fetchError } = await supabase
-                .from('profiles')
-                .select('store_name')
-                .eq('id', user.id)
-                .single();
-            
-            if (profile) {
-                setStoreName(profile.store_name || 'My Store');
-            } else if (!profile && !fetchError) {
-                 await supabase.from('profiles').insert([{ id: user.id, store_name: 'My Store' }]);
-            } else if (fetchError && fetchError.code === 'PGRST116') {
-                 // Profile doesn't exist, create it
-                 await supabase.from('profiles').insert([{ id: user.id, store_name: 'My Store' }]);
-            }
+            const { data: profile } = await supabase.from('profiles').select('store_name').eq('id', user.id).single();
+            if (profile) setStoreName(profile.store_name || 'My Store');
+            else await supabase.from('profiles').insert([{ id: user.id, store_name: 'My Store' }]);
         }
 
         // A. Fetch Settings
@@ -140,22 +128,14 @@ const App: React.FC = () => {
                     adsTaxRate: settingsData.ads_tax_rate || 0
                 };
             }
-        } else {
-            const localSettings = localStorage.getItem('munafa_settings');
-            if (localSettings) fetchedSettings = JSON.parse(localSettings);
         }
         setSettings(fetchedSettings);
 
         // B. Fetch SAVED Products (Database Source of Truth)
         let savedProducts: Product[] = [];
         if (!isDemoMode) {
-            const { data: productData } = await supabase
-                .from('products')
-                .select('*')
-                .eq('user_id', user.id);
-            
+            const { data: productData } = await supabase.from('products').select('*').eq('user_id', user.id);
             if (productData) {
-                // Map DB snake_case to Product interface
                 savedProducts = productData.map((p: any) => ({
                     id: p.id,
                     shopify_id: p.shopify_id || '',
@@ -173,12 +153,7 @@ const App: React.FC = () => {
 
         // C. Fetch Ad Spend
         if (!isDemoMode) {
-            const { data: adData, error: adError } = await supabase
-                .from('ad_spend')
-                .select('*')
-                .eq('user_id', user.id)
-                .order('date', { ascending: false });
-            
+            const { data: adData } = await supabase.from('ad_spend').select('*').eq('user_id', user.id).order('date', { ascending: false });
             if (adData) {
                 setAdSpend(adData.map((a: any) => ({
                     id: a.id,
@@ -191,68 +166,37 @@ const App: React.FC = () => {
             }
         }
 
-        // D. Fetch Integrations (Hybrid Strategy: DB + Local + Auto-Repair)
-        let postExConfig: IntegrationConfig | undefined;
-        let shopifyConfig: IntegrationConfig | undefined;
-        let anyActiveConfig = false;
-
-        const dbConfigsMap = new Map<string, IntegrationConfig>();
+        // D. Fetch Integrations (SEPARATED TABLES)
+        let postExConfig: CourierConfig | undefined;
+        let shopifyConfig: SalesChannel | undefined;
         
-        // 1. Get DB Configs
         if (!isDemoMode) {
-             const { data } = await supabase.from('integration_configs').select('*').eq('user_id', user.id);
-             if (data) {
-                 data.forEach((c: any) => {
-                     if (c.is_active) dbConfigsMap.set(c.courier, c);
-                 });
-             }
-        }
+             // 1. Fetch Sales Channels
+             const { data: salesData } = await supabase
+                .from('sales_channels')
+                .select('*')
+                .eq('user_id', user.id)
+                .eq('is_active', true)
+                .eq('platform', 'Shopify')
+                .single();
+             
+             if (salesData) shopifyConfig = salesData;
 
-        // 2. Get Local Configs
-        const localConfigsMap = new Map<string, IntegrationConfig>();
-        const localData = localStorage.getItem('munafa_api_configs');
-        if (localData) {
-             const parsed = JSON.parse(localData);
-             Object.values(parsed).forEach((c: any) => {
-                 if (c.is_active) localConfigsMap.set(c.courier, c);
-             });
-        }
-
-        // 3. Merge: Database takes precedence, but fallback to Local if DB missing specific item
-        postExConfig = dbConfigsMap.get(CourierName.POSTEX) || localConfigsMap.get(CourierName.POSTEX);
-        shopifyConfig = dbConfigsMap.get('Shopify') || localConfigsMap.get('Shopify');
-        
-        anyActiveConfig = !!postExConfig || !!shopifyConfig;
-
-        // 4. Auto-Repair: If we found it Locally but it was MISSING in DB, sync it now.
-        if (!isDemoMode && user.id) {
-            const updates = [];
+             // 2. Fetch Courier Configs
+             const { data: courierData } = await supabase
+                .from('courier_configs')
+                .select('*')
+                .eq('user_id', user.id)
+                .eq('is_active', true);
             
-            // Check PostEx mismatch
-            if (localConfigsMap.has(CourierName.POSTEX) && !dbConfigsMap.has(CourierName.POSTEX)) {
-                 const config = localConfigsMap.get(CourierName.POSTEX)!;
-                 // Remove potentially invalid local ID to let DB generate one
-                 const { id, ...rest } = config; 
-                 updates.push({ user_id: user.id, courier: CourierName.POSTEX, ...rest, is_active: true });
-            }
-            
-            // Check Shopify mismatch
-            if (localConfigsMap.has('Shopify') && !dbConfigsMap.has('Shopify')) {
-                 const config = localConfigsMap.get('Shopify')!;
-                 // Remove potentially invalid local ID
-                 const { id, ...rest } = config;
-                 updates.push({ user_id: user.id, courier: 'Shopify', ...rest, is_active: true });
-            }
-            
-            if (updates.length > 0) {
-                 console.log("Auto-Repairing: Syncing missing configs to Supabase...");
-                 supabase.from('integration_configs').upsert(updates, { onConflict: 'user_id, courier' })
-                    .then(({ error }) => {
-                        if (error) console.error("Auto-Repair Failed:", error);
-                        else console.log("Auto-Repair Success");
-                    });
+            if (courierData) {
+                postExConfig = courierData.find((c: any) => c.courier_id === CourierName.POSTEX);
+                // Can map others here like Trax, TCS
             }
         }
+
+        // Check if anything is configured
+        const anyActiveConfig = !!postExConfig || !!shopifyConfig;
 
         if (!anyActiveConfig) {
             setLoading(false);
@@ -265,34 +209,34 @@ const App: React.FC = () => {
         const finalProducts = [...savedProducts];
         const seenFingerprints = new Set(savedProducts.map(p => p.variant_fingerprint || p.sku));
 
-        // NEW: Fetch Shopify Orders if configured
-        if (shopifyConfig && shopifyConfig.is_active) {
+        // E. Fetch Shopify Data
+        if (shopifyConfig) {
             const shopifyAdapter = new ShopifyAdapter();
             const rawShopifyOrders = await shopifyAdapter.fetchOrders(shopifyConfig);
             setShopifyOrders(rawShopifyOrders);
-            
-            // Update Store Name if available from Shopify
-            // Note: ShopifyAdapter.fetchOrders doesn't return store info, but we could add it.
-            // For now, we rely on what we have.
         }
 
-        // E. Fetch Live Orders
-        if (postExConfig && postExConfig.is_active) {
+        // F. Fetch Live Orders from Courier
+        if (postExConfig) {
+            // PostEx Adapter expects an IntegrationConfig-like structure. 
+            // We map CourierConfig to it.
+            const adapterConfig = {
+                id: postExConfig.id,
+                provider_id: CourierName.POSTEX, // Legacy field support for adapter
+                api_token: postExConfig.api_token,
+                is_active: true
+            };
+
             const postExAdapter = new PostExAdapter();
-            const rawOrders = await postExAdapter.fetchRecentOrders(postExConfig);
+            const rawOrders = await postExAdapter.fetchRecentOrders(adapterConfig);
 
             // Merge Logic: Detect new products based on FINGERPRINT
             rawOrders.forEach(o => {
-                const isRelevantForInventory = 
-                    o.status !== OrderStatus.PENDING && 
-                    o.status !== OrderStatus.BOOKED && 
-                    o.status !== OrderStatus.CANCELLED;
-
+                const isRelevantForInventory = o.status !== OrderStatus.PENDING && o.status !== OrderStatus.BOOKED && o.status !== OrderStatus.CANCELLED;
                 if (!isRelevantForInventory) return;
 
                 o.items.forEach(item => {
                     const fingerprint = item.variant_fingerprint || item.sku || 'unknown';
-                    
                     if (!seenFingerprints.has(fingerprint)) {
                         seenFingerprints.add(fingerprint);
                         const uniqueId = (item.product_id && item.product_id !== 'unknown') ? item.product_id : fingerprint;
@@ -314,10 +258,7 @@ const App: React.FC = () => {
                 const rateCard = fetchedSettings.rates[order.courier] || fetchedSettings.rates[CourierName.POSTEX];
                 const isRto = order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED;
                 const updatedItems = order.items.map(item => {
-                    const productDef = finalProducts.find(p => 
-                        (p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) || 
-                        p.sku === item.sku
-                    );
+                    const productDef = finalProducts.find(p => (p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) || p.sku === item.sku);
                     const historicalCogs = productDef ? getCostAtDate(productDef, order.created_at) : 0;
                     return { ...item, cogs_at_time_of_order: historicalCogs };
                 });
@@ -337,10 +278,9 @@ const App: React.FC = () => {
 
             setProducts(finalProducts);
             setOrders(processedOrders);
-
         } else {
             setOrders([]);
-            setProducts(finalProducts); // Ensure we use updated list even if no courier orders
+            setProducts(finalProducts);
         }
 
       } catch (err: any) {
@@ -379,7 +319,6 @@ const App: React.FC = () => {
                 group_id: p.group_id,
                 group_name: p.group_name
             }));
-
             const { error } = await supabase.from('products').upsert(upsertData);
             if (error) console.error("Failed to save product:", error);
         } catch (e) { console.error("DB Error:", e); }
@@ -398,8 +337,7 @@ const App: React.FC = () => {
                 amount_spent: entry.amount_spent,
                 product_id: entry.product_id || null
             }));
-            const { error } = await supabase.from('ad_spend').insert(dbPayload);
-            if (error) console.error('Error saving ad spend:', error);
+            await supabase.from('ad_spend').insert(dbPayload);
         } catch (e) { console.error("DB Error:", e); }
     }
   };
@@ -424,20 +362,14 @@ const App: React.FC = () => {
         if (error) {
             setAuthMessage({ type: 'error', text: error.message });
         } else {
-            setAuthMessage({ 
-                type: 'success', 
-                text: "Account created! Please check your email to confirm your account before logging in." 
-            });
+            setAuthMessage({ type: 'success', text: "Account created! Please check your email." });
             setAuthMode('login');
         }
     }
     setAuthLoading(false);
   };
   
-  // Calculate missing costs
-  const missingCostCount = useMemo(() => {
-      return products.filter(p => p.current_cogs === 0).length;
-  }, [products]);
+  const missingCostCount = useMemo(() => products.filter(p => p.current_cogs === 0).length, [products]);
 
   if (authLoading) return <div className="h-screen flex items-center justify-center bg-slate-50"><Loader2 className="animate-spin text-brand-600" size={40} /></div>;
 
@@ -460,7 +392,6 @@ const App: React.FC = () => {
                     <button type="submit" className="w-full bg-brand-600 text-white py-2 rounded-lg">{authMode === 'login' ? 'Log In' : 'Create Account'}</button>
                 </form>
                 <div className="mt-6 border-t border-slate-100 pt-4 text-center">
-                    <p className="text-xs text-slate-400 mb-2">Want to try it out first?</p>
                     <button onClick={() => setIsDemoMode(true)} className="text-brand-600 text-sm hover:underline font-medium">Continue as Guest</button>
                 </div>
             </div>
