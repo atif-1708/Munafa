@@ -362,7 +362,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                 <span>Config Required</span>
                             </div>
                             <p className="text-yellow-700 mb-2">
-                                To avoid "invalid_request", add this exact URL to <strong>Allowed redirection URL(s)</strong> in Partner Dashboard -> App Setup.
+                                To avoid "invalid_request", add this exact URL to <strong>Allowed redirection URL(s)</strong> in Partner Dashboard &rarr; App Setup.
                             </p>
                             <div className="relative">
                                 <code className="block w-full bg-white border border-yellow-300 p-2 rounded text-slate-600 font-mono break-all pr-8">
