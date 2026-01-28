@@ -16,7 +16,7 @@ import { Loader2, AlertTriangle, LogIn, UserPlus, ShieldCheck, RefreshCw, Box } 
 import { supabase } from './services/supabase';
 import { calculateMetrics, getCostAtDate } from './services/calculator';
 import { COURIER_RATES, PACKAGING_COST_AVG } from './constants';
-import { getOrders, getAdSpend } from './services/mockData';
+import { getOrders, getProducts } from './services/mockData';
 
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
@@ -39,6 +39,7 @@ const App: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [adSpend, setAdSpend] = useState<AdSpend[]>([]);
   const [isConfigured, setIsConfigured] = useState(false);
+  const [storeName, setStoreName] = useState('My Store');
   
   // Settings State
   const [settings, setSettings] = useState({
@@ -101,17 +102,20 @@ const App: React.FC = () => {
       try {
         const user = session?.user || { id: 'demo-user' };
 
-        // 0. Ensure Profile Exists
+        // 0. Ensure Profile Exists & Fetch Branding
         if (!isDemoMode && user.id !== 'demo-user') {
             const { data: profile, error: fetchError } = await supabase
                 .from('profiles')
-                .select('id')
+                .select('store_name')
                 .eq('id', user.id)
                 .single();
             
-            if (!profile && !fetchError) {
+            if (profile) {
+                setStoreName(profile.store_name || 'My Store');
+            } else if (!profile && !fetchError) {
                  await supabase.from('profiles').insert([{ id: user.id, store_name: 'My Store' }]);
             } else if (fetchError && fetchError.code === 'PGRST116') {
+                 // Profile doesn't exist, create it
                  await supabase.from('profiles').insert([{ id: user.id, store_name: 'My Store' }]);
             }
         }
@@ -266,6 +270,10 @@ const App: React.FC = () => {
             const shopifyAdapter = new ShopifyAdapter();
             const rawShopifyOrders = await shopifyAdapter.fetchOrders(shopifyConfig);
             setShopifyOrders(rawShopifyOrders);
+            
+            // Update Store Name if available from Shopify
+            // Note: ShopifyAdapter.fetchOrders doesn't return store info, but we could add it.
+            // For now, we rely on what we have.
         }
 
         // E. Fetch Live Orders
@@ -438,8 +446,8 @@ const App: React.FC = () => {
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
             <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md border border-slate-200">
                 <div className="text-center mb-6">
-                    <h1 className="text-3xl font-bold text-brand-600 tracking-tight">MunafaBakhsh Karobaar</h1>
-                    <p className="text-slate-500 mt-2">Profit Intelligence for Pakistan</p>
+                    <h1 className="text-3xl font-bold text-brand-600 tracking-tight">MunafaBakhsh</h1>
+                    <p className="text-slate-500 mt-2">eCommerce Profit Intelligence</p>
                 </div>
                 <div className="flex bg-slate-100 p-1 rounded-lg mb-6">
                     <button onClick={() => { setAuthMode('login'); setAuthMessage(null); }} className={`flex-1 py-2 text-sm font-medium rounded-md ${authMode === 'login' ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Log In</button>
@@ -451,7 +459,10 @@ const App: React.FC = () => {
                     {authMessage && <div className={`p-3 rounded-lg text-sm ${authMessage.type === 'error' ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>{authMessage.text}</div>}
                     <button type="submit" className="w-full bg-brand-600 text-white py-2 rounded-lg">{authMode === 'login' ? 'Log In' : 'Create Account'}</button>
                 </form>
-                <button onClick={() => setIsDemoMode(true)} className="w-full text-slate-500 text-sm mt-6 hover:underline">Continue as Guest</button>
+                <div className="mt-6 border-t border-slate-100 pt-4 text-center">
+                    <p className="text-xs text-slate-400 mb-2">Want to try it out first?</p>
+                    <button onClick={() => setIsDemoMode(true)} className="text-brand-600 text-sm hover:underline font-medium">Continue as Guest</button>
+                </div>
             </div>
         </div>
     );
@@ -465,6 +476,8 @@ const App: React.FC = () => {
           currentPage={currentPage} 
           setPage={setCurrentPage} 
           inventoryAlertCount={missingCostCount} 
+          storeName={storeName}
+          email={session?.user?.email || 'Guest User'}
       />
       <main className="flex-1 ml-64 p-8">
         <div className="max-w-7xl mx-auto">
@@ -482,10 +495,20 @@ const App: React.FC = () => {
               </>
           )}
           {!isConfigured && currentPage !== 'integrations' && (
-             <div className="bg-white p-8 rounded-xl border border-slate-200 text-center py-16">
-                <Loader2 size={32} className="mx-auto text-slate-400 mb-4" />
-                <h2 className="text-xl font-bold">Connect Courier</h2>
-                <button onClick={() => setCurrentPage('integrations')} className="mt-4 bg-brand-600 text-white px-6 py-2 rounded-lg">Go to Integrations</button>
+             <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
+                <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-xl max-w-md w-full">
+                    <div className="w-16 h-16 bg-brand-50 rounded-full flex items-center justify-center mx-auto mb-6">
+                        <Loader2 size={32} className="text-brand-600" />
+                    </div>
+                    <h2 className="text-2xl font-bold text-slate-900 mb-2">Welcome to MunafaBakhsh</h2>
+                    <p className="text-slate-500 mb-8">To start tracking your profits, please connect your Shopify store and courier accounts.</p>
+                    <button 
+                        onClick={() => setCurrentPage('integrations')} 
+                        className="w-full bg-brand-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-brand-700 transition-colors shadow-lg shadow-brand-900/20"
+                    >
+                        Connect Integrations
+                    </button>
+                </div>
              </div>
           )}
         </div>

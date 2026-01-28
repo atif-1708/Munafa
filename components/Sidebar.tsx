@@ -6,9 +6,17 @@ interface SidebarProps {
   currentPage: string;
   setPage: (page: string) => void;
   inventoryAlertCount?: number;
+  storeName?: string;
+  email?: string;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ currentPage, setPage, inventoryAlertCount = 0 }) => {
+const Sidebar: React.FC<SidebarProps> = ({ 
+    currentPage, 
+    setPage, 
+    inventoryAlertCount = 0,
+    storeName = 'My Store',
+    email = 'user@example.com' 
+}) => {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'reconciliation', label: 'Reconciliation', icon: GitCompare },
@@ -61,13 +69,13 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setPage, inventoryAlertC
 
       <div className="p-4 border-t border-slate-800">
         <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold">
-                MS
+            <div className="flex items-center gap-3 overflow-hidden">
+              <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold shrink-0">
+                {storeName.substring(0,2).toUpperCase()}
               </div>
-              <div>
-                <p className="text-sm font-medium">My Store</p>
-                <p className="text-xs text-slate-500">Standard Plan</p>
+              <div className="min-w-0">
+                <p className="text-sm font-medium truncate">{storeName}</p>
+                <p className="text-xs text-slate-500 truncate">{email}</p>
               </div>
             </div>
             <button 
