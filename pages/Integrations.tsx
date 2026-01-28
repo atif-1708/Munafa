@@ -4,7 +4,7 @@ import { PostExAdapter } from '../services/couriers/postex';
 import { supabase } from '../services/supabase';
 import { 
     CheckCircle2, AlertTriangle, Key, Globe, Loader2, Store, ArrowRight, 
-    RefreshCw, ShieldCheck, Link, Truck, Package, Info 
+    RefreshCw, ShieldCheck, Link, Truck, Package, Info, Lock 
 } from 'lucide-react';
 
 // Helper to get Env Vars safely
@@ -71,6 +71,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
 
   const [loading, setLoading] = useState(true);
   const [testingConnection, setTestingConnection] = useState<string | null>(null);
+  const [useManualToken, setUseManualToken] = useState(false);
   
   // OAuth Configuration (Platform Level)
   const ENV_CLIENT_ID = getEnv('VITE_SHOPIFY_API_KEY');
@@ -165,6 +166,11 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
               })
           });
 
+          if (!response.ok) {
+              const text = await response.text();
+              throw new Error(`Shopify Error: ${text}`);
+          }
+
           const data = await response.json();
           if (data.access_token) {
               const updatedConfig: SalesChannel = {
@@ -180,9 +186,9 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
           } else {
               throw new Error("Invalid response from Shopify. Token missing.");
           }
-      } catch (error) {
+      } catch (error: any) {
           console.error("OAuth Exchange Failed", error);
-          setErrorMessage("Connection failed. Please ensure your Shopify App Credentials are correct.");
+          setErrorMessage(`Connection failed: ${error.message || 'Unknown error'}`);
       } finally {
           setIsExchangingToken(false);
       }
@@ -209,6 +215,36 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
       window.location.href = authUrl; 
   };
 
+  const handleManualConnect = async () => {
+      if (!shopifyConfig.store_url || !shopifyConfig.access_token) {
+          setErrorMessage("Please enter both Store URL and Access Token");
+          return;
+      }
+
+      // STRICT SANITIZATION
+      let shopUrl = shopifyConfig.store_url.trim();
+      shopUrl = shopUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      
+      // Auto-append myshopify if missing (User convenience)
+      if (shopUrl.indexOf('.') === -1 && shopUrl.length > 0) {
+          shopUrl += '.myshopify.com';
+      }
+
+      // Trim Token (Critical for copy-paste)
+      const token = shopifyConfig.access_token.trim();
+
+      const updatedConfig: SalesChannel = {
+          ...shopifyConfig,
+          store_url: shopUrl,
+          access_token: token,
+          is_active: true,
+          platform: 'Shopify'
+      };
+      
+      setShopifyConfig(updatedConfig);
+      await saveSalesChannel(updatedConfig);
+  };
+
   const handleCourierInputChange = (courierId: string, value: string) => {
     setCourierConfigs(prev => ({
         ...prev,
@@ -218,6 +254,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
 
   // Save to 'sales_channels' table
   const saveSalesChannel = async (config: SalesChannel) => {
+      setErrorMessage(null);
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) return;
 
@@ -234,8 +271,12 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
         .from('sales_channels')
         .upsert(payload, { onConflict: 'user_id, platform' });
 
-      if (error) console.error("Sales Channel Save Error:", error);
-      if (onConfigUpdate) onConfigUpdate();
+      if (error) {
+          console.error("Sales Channel Save Error:", error);
+          setErrorMessage("Database Save Failed: " + error.message);
+      } else {
+          if (onConfigUpdate) onConfigUpdate();
+      }
   };
 
   // Save to 'integration_configs' table (Using OLD table name for Couriers)
@@ -332,11 +373,11 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
         </button>
       </div>
 
-      {!isPlatformConfigured && (
+      {!isPlatformConfigured && !shopifyConfig.is_active && (
            <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex gap-3 text-sm text-amber-800">
                <AlertTriangle className="shrink-0 text-amber-600" size={20} />
                <div>
-                   <strong>Admin Configuration Required:</strong> The platform owner must configure the Shopify API Credentials in the environment variables (<code>VITE_SHOPIFY_API_KEY</code>).
+                   <strong>Note:</strong> Auto-connect is not configured. Please use the Manual Connection method below.
                </div>
            </div>
       )}
@@ -395,37 +436,91 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                        </div>
                   ) : (
                       <div className="space-y-4">
-                          <div>
-                              <label className="block text-sm font-bold text-slate-700 mb-2">Store URL</label>
-                              <div className="relative group">
-                                  <Globe className="absolute left-4 top-3.5 text-slate-400 group-focus-within:text-green-600 transition-colors" size={18} />
-                                  <input 
-                                      type="text"
-                                      placeholder="your-brand.myshopify.com"
-                                      className="w-full pl-11 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-all"
-                                      value={shopifyConfig.store_url || ''}
-                                      onChange={(e) => setShopifyConfig({...shopifyConfig, store_url: e.target.value})}
-                                      onKeyDown={(e) => e.key === 'Enter' && startOAuthFlow()}
-                                  />
-                              </div>
-                          </div>
+                          {!useManualToken ? (
+                              <>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-2">Store URL</label>
+                                    <div className="relative group">
+                                        <Globe className="absolute left-4 top-3.5 text-slate-400 group-focus-within:text-green-600 transition-colors" size={18} />
+                                        <input 
+                                            type="text"
+                                            placeholder="your-brand.myshopify.com"
+                                            className="w-full pl-11 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-all"
+                                            value={shopifyConfig.store_url || ''}
+                                            onChange={(e) => setShopifyConfig({...shopifyConfig, store_url: e.target.value})}
+                                            onKeyDown={(e) => e.key === 'Enter' && startOAuthFlow()}
+                                        />
+                                    </div>
+                                </div>
 
-                          {isExchangingToken ? (
-                               <button disabled className="w-full bg-slate-100 text-slate-500 py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 cursor-not-allowed">
-                                   <Loader2 className="animate-spin" size={18} /> Verifying Connection...
-                               </button>
+                                {isExchangingToken ? (
+                                    <button disabled className="w-full bg-slate-100 text-slate-500 py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 cursor-not-allowed">
+                                        <Loader2 className="animate-spin" size={18} /> Verifying Connection...
+                                    </button>
+                                ) : (
+                                    <button 
+                                        onClick={startOAuthFlow}
+                                        disabled={!shopifyConfig.store_url || !isPlatformConfigured}
+                                        className="w-full bg-slate-900 text-white py-3.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                    >
+                                        Connect Shopify <ArrowRight size={16} />
+                                    </button>
+                                )}
+                                <div className="text-center">
+                                     <button onClick={() => setUseManualToken(true)} className="text-xs text-slate-500 underline hover:text-slate-800">
+                                         Having trouble? Connect manually with Access Token
+                                     </button>
+                                </div>
+                              </>
                           ) : (
-                              <button 
-                                  onClick={startOAuthFlow}
-                                  disabled={!shopifyConfig.store_url || !isPlatformConfigured}
-                                  className="w-full bg-slate-900 text-white py-3.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                              >
-                                  Connect Shopify <ArrowRight size={16} />
-                              </button>
+                              <>
+                                <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 text-sm text-slate-600 mb-2">
+                                    <strong className="text-slate-800 block mb-1">How to get Access Token:</strong>
+                                    1. Go to Shopify Admin &rarr; Settings &rarr; Apps & sales channels.<br/>
+                                    2. Click <strong>Develop apps</strong> &rarr; Create an app.<br/>
+                                    3. Configure Admin API scopes (read_orders, read_products).<br/>
+                                    4. Install app and copy the <strong>Admin API access token</strong>.
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-2">Store URL</label>
+                                    <div className="relative group">
+                                        <Globe className="absolute left-4 top-3.5 text-slate-400 group-focus-within:text-green-600 transition-colors" size={18} />
+                                        <input 
+                                            type="text"
+                                            placeholder="your-brand.myshopify.com"
+                                            className="w-full pl-11 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-all"
+                                            value={shopifyConfig.store_url || ''}
+                                            onChange={(e) => setShopifyConfig({...shopifyConfig, store_url: e.target.value})}
+                                        />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-2">Admin API Access Token</label>
+                                    <div className="relative group">
+                                        <Lock className="absolute left-4 top-3.5 text-slate-400 group-focus-within:text-green-600 transition-colors" size={18} />
+                                        <input 
+                                            type="password"
+                                            placeholder="shpat_xxxxxxxxxxxxxxxxxxxxxxxx"
+                                            className="w-full pl-11 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-all"
+                                            value={shopifyConfig.access_token || ''}
+                                            onChange={(e) => setShopifyConfig({...shopifyConfig, access_token: e.target.value})}
+                                        />
+                                    </div>
+                                </div>
+                                <button 
+                                    onClick={handleManualConnect}
+                                    disabled={!shopifyConfig.store_url || !shopifyConfig.access_token}
+                                    className="w-full bg-slate-900 text-white py-3.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                >
+                                    Save Connection <ArrowRight size={16} />
+                                </button>
+                                <div className="text-center">
+                                     <button onClick={() => setUseManualToken(false)} className="text-xs text-slate-500 underline hover:text-slate-800">
+                                         Back to Auto Connect
+                                     </button>
+                                </div>
+                              </>
                           )}
-                          <div className="flex items-center gap-2 justify-center text-xs text-slate-400">
-                              <ShieldCheck size={14} /> Official Partner API
-                          </div>
                       </div>
                   )}
               </div>
