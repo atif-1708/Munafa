@@ -3,7 +3,7 @@ import { CourierName, IntegrationConfig } from '../types';
 import { PostExAdapter } from '../services/couriers/postex';
 import { ShopifyAdapter } from '../services/shopify';
 import { supabase } from '../services/supabase';
-import { Plug, CheckCircle2, XCircle, AlertTriangle, Key, Save, Globe, HelpCircle, X, ArrowLeftRight, Loader2, LayoutDashboard, Store, ExternalLink, RefreshCw } from 'lucide-react';
+import { Plug, CheckCircle2, XCircle, AlertTriangle, Key, Save, Globe, HelpCircle, X, ArrowLeftRight, Loader2, LayoutDashboard, Store, ExternalLink, RefreshCw, Copy } from 'lucide-react';
 
 interface IntegrationsProps {
     onConfigUpdate?: () => void;
@@ -24,6 +24,9 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   const [oauthCreds, setOauthCreds] = useState({ clientId: '', clientSecret: '' });
   const [isExchangingToken, setIsExchangingToken] = useState(false);
   
+  // Calculate Redirect URI dynamically based on current environment
+  const redirectUri = typeof window !== 'undefined' ? (window.location.origin + window.location.pathname) : '';
+
   // Guide Modal State
   const [showShopifyGuide, setShowShopifyGuide] = useState(false);
   const [guideTab, setGuideTab] = useState<'admin' | 'partner'>('partner');
@@ -127,11 +130,11 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
       // Save creds temporarily for the callback
       localStorage.setItem('shopify_oauth_temp', JSON.stringify(oauthCreds));
 
-      const redirectUri = window.location.origin + window.location.pathname;
       const scopes = 'read_orders,read_products,read_customers';
       const nonce = Math.random().toString(36).substring(7);
 
-      const authUrl = `https://${shopUrl}/admin/oauth/authorize?client_id=${oauthCreds.clientId}&scope=${scopes}&redirect_uri=${redirectUri}&state=${nonce}`;
+      // Important: redirect_uri must match exactly what is in Partner Dashboard
+      const authUrl = `https://${shopUrl}/admin/oauth/authorize?client_id=${oauthCreds.clientId}&scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${nonce}`;
       
       // FIX: Open in new tab to avoid 'refused to connect' iframe errors
       window.open(authUrl, '_blank');
@@ -322,6 +325,29 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                     </div>
                 ) : (
                     <div className="space-y-3 p-4 bg-slate-50 rounded-lg border border-slate-100">
+                        {/* WARNING BOX FOR WHITELISTING */}
+                        <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-xs">
+                            <div className="flex items-center gap-2 font-bold text-yellow-800 mb-1">
+                                <AlertTriangle size={14} />
+                                <span>Config Required</span>
+                            </div>
+                            <p className="text-yellow-700 mb-2">
+                                To avoid "invalid_request", add this exact URL to <strong>Allowed redirection URL(s)</strong> in Partner Dashboard -> App Setup.
+                            </p>
+                            <div className="relative">
+                                <code className="block w-full bg-white border border-yellow-300 p-2 rounded text-slate-600 font-mono break-all pr-8">
+                                    {redirectUri}
+                                </code>
+                                <button 
+                                    className="absolute right-2 top-2 text-slate-400 hover:text-slate-600"
+                                    onClick={() => navigator.clipboard.writeText(redirectUri)}
+                                    title="Copy URL"
+                                >
+                                    <Copy size={14} />
+                                </button>
+                            </div>
+                        </div>
+
                         <div>
                             <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Client ID (API Key)</label>
                             <input 
@@ -362,8 +388,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                             </button>
                         )}
                         <p className="text-[10px] text-slate-400 text-center leading-tight">
-                            Note: Opens in a <strong>new tab</strong> to avoid 'Refused to Connect' errors.<br/>
-                            Redirect URI: <code className="bg-slate-200 px-1 rounded">{window.location.origin + window.location.pathname}</code>
+                            Note: Opens in a <strong>new tab</strong>.
                         </p>
                     </div>
                 )}
