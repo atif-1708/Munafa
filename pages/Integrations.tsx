@@ -34,23 +34,28 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   // Load Configs Helper
   const loadConfigs = async () => {
         setLoading(true);
-        const { data: { user } } = await supabase.auth.getUser();
+        // Use getSession for faster local check
+        const { data: { session } } = await supabase.auth.getSession();
         
         // 1. Load from DB if User Exists
-        if (user) {
+        if (session?.user) {
             const { data, error } = await supabase
                 .from('integration_configs')
                 .select('*')
-                .eq('user_id', user.id);
+                .eq('user_id', session.user.id);
 
             if (error) {
                 console.error("Failed to load configs:", error);
-                setDbError("Failed to load saved configurations.");
+                setDbError("Failed to load saved configurations from database.");
             } else if (data) {
                 setConfigs(prev => {
                     const newConfigs = { ...prev };
                     data.forEach((conf: any) => {
-                        newConfigs[conf.courier] = conf;
+                        newConfigs[conf.courier] = {
+                            ...newConfigs[conf.courier], // keep defaults
+                            ...conf, // overwrite with db data
+                            is_active: conf.is_active // ensure boolean
+                        };
                     });
                     return newConfigs;
                 });
@@ -58,14 +63,16 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
         } 
         
         // 2. Load from LocalStorage (Fallback / Guest Mode)
+        // We only merge local storage if the specific courier is NOT in the DB/State yet
         const localData = localStorage.getItem('munafa_api_configs');
         if (localData) {
              const parsed = JSON.parse(localData);
              setConfigs(prev => {
                  const newConfigs = { ...prev };
-                 // Only overwrite if not already loaded from DB or if DB is empty for that key
                  Object.keys(parsed).forEach(key => {
-                     if (!newConfigs[key] || !newConfigs[key].is_active) {
+                     // Only use local data if we don't have an active DB config for this courier
+                     // OR if we are in guest mode (no session)
+                     if (!session?.user || !newConfigs[key] || !newConfigs[key].is_active) {
                          newConfigs[key] = parsed[key];
                      }
                  });
@@ -127,9 +134,18 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                   is_active: true
               };
               
+              // 1. Update State
               setConfigs(prev => ({ ...prev, 'Shopify': updatedConfig }));
-              await saveConfig(updatedConfig.courier, updatedConfig);
-              setConnectionStatus(prev => ({ ...prev, 'Shopify': 'success' }));
+              
+              // 2. IMPORTANT: Await Save to DB to ensure persistence across browsers
+              const saved = await saveConfig(updatedConfig.courier, updatedConfig);
+              
+              if (saved) {
+                setConnectionStatus(prev => ({ ...prev, 'Shopify': 'success' }));
+              } else {
+                setConnectionStatus(prev => ({ ...prev, 'Shopify': 'failed' }));
+                setDbError("Token received but failed to save to Database.");
+              }
           } else {
               throw new Error(JSON.stringify(data));
           }
@@ -172,9 +188,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     setDbError(null);
     const config = configOverride || configs[courier];
     
-    // 1. Update Local State & Storage
-    // We assume if configOverride is passed with is_active=false, we save that
-    // otherwise we default to true if we are saving (which usually means connecting)
+    // 1. Update Local State & Storage (Immediate UI feedback)
     const isActive = configOverride ? configOverride.is_active : true;
     const updatedConfig = { ...config, is_active: isActive };
     
@@ -185,32 +199,43 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     });
 
     // 2. Try DB Save
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-        const { id, ...rest } = updatedConfig;
+    try {
+        const { data: { session } } = await supabase.auth.getSession();
         
-        const payload = {
-            user_id: user.id,
-            courier: courier,
-            api_token: rest.api_token,
-            base_url: rest.base_url,
-            is_active: isActive
-        };
+        if (session?.user) {
+            const { id, ...rest } = updatedConfig;
+            
+            const payload = {
+                user_id: session.user.id,
+                courier: courier,
+                api_token: rest.api_token,
+                base_url: rest.base_url,
+                is_active: isActive
+            };
 
-        const { error } = await supabase
-            .from('integration_configs')
-            .upsert(payload, { onConflict: 'user_id, courier' }); 
-        
-        if (error) {
-            console.error("Supabase Save Error:", error);
-            setDbError(`Warning: Saved locally, but DB sync failed (${error.message})`);
-            return false;
+            const { error } = await supabase
+                .from('integration_configs')
+                .upsert(payload, { onConflict: 'user_id, courier' }); 
+            
+            if (error) {
+                console.error("Supabase Save Error:", error);
+                setDbError(`Warning: Saved locally, but DB sync failed (${error.message})`);
+                return false;
+            }
+            return true;
+        } else {
+             console.warn("No active session found. Saving locally only.");
+             // Not an error per se, just guest mode, but return false to indicate DB wasn't updated
+             return false;
         }
+    } catch (e: any) {
+        console.error("Save Exception:", e);
+        setDbError(`Error saving to database: ${e.message}`);
+        return false;
+    } finally {
+        // 3. Trigger App Refresh regardless of DB success (since local state updated)
+        if (onConfigUpdate) onConfigUpdate();
     }
-
-    // 3. Trigger App Refresh
-    if (onConfigUpdate) onConfigUpdate();
-    return true;
   };
 
   const handleConnect = async (courier: string, force = false) => {
@@ -224,7 +249,8 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     if (force) {
         success = await saveConfig(courier);
         if (!success && !dbError) {
-             setConnectionStatus(prev => ({ ...prev, [courier]: 'failed' }));
+             // If saveConfig returns false (not saved to DB) but no specific error, 
+             // it might just be guest mode. If it WAS an error, saveConfig sets dbError.
         }
     } else {
         try {
@@ -237,7 +263,11 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
             }
 
             if (success) {
-                await saveConfig(courier);
+                const saved = await saveConfig(courier);
+                if (!saved) {
+                    // It connected, but didn't save to DB. 
+                    // We still treat it as success for the UI, but maybe warn.
+                }
             }
         } catch (e) {
             console.error("Test failed", e);
