@@ -15,19 +15,21 @@ interface GroupedProductPerformance extends ProductPerformance {
     variants?: ProductPerformance[];
 }
 
+interface ProfitabilityRowProps {
+    item: GroupedProductPerformance;
+    expandedGroups: Set<string>;
+    toggleGroup: (id: string) => void;
+    onViewDetails: (item: ProductPerformance) => void;
+    isChild?: boolean;
+}
+
 // --- Extracted Row Component ---
-const ProfitabilityRow = ({ 
+const ProfitabilityRow: React.FC<ProfitabilityRowProps> = ({ 
     item, 
     expandedGroups, 
     toggleGroup, 
     onViewDetails, 
     isChild = false 
-}: { 
-    item: GroupedProductPerformance, 
-    expandedGroups: Set<string>, 
-    toggleGroup: (id: string) => void,
-    onViewDetails: (item: ProductPerformance) => void,
-    isChild?: boolean
 }) => {
     const isProfitable = item.net_profit > 0;
     const isGroup = item.sku === 'GROUP';
@@ -153,7 +155,7 @@ const ProfitabilityRow = ({
             {isExpanded && item.variants && item.variants.map(child => (
                 <ProfitabilityRow 
                     key={child.id} 
-                    item={child} 
+                    item={child as GroupedProductPerformance} 
                     expandedGroups={expandedGroups}
                     toggleGroup={toggleGroup}
                     onViewDetails={onViewDetails}
