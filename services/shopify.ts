@@ -1,4 +1,3 @@
-
 import { SalesChannel, ShopifyOrder } from '../types';
 
 export class ShopifyAdapter {
@@ -6,8 +5,14 @@ export class ShopifyAdapter {
   private readonly PROXY_URL = 'https://corsproxy.io/?';
 
   private getUrl(shopUrl: string, endpoint: string): string {
-    // Ensure shopUrl is clean (e.g. 'mystore.myshopify.com')
-    const cleanUrl = shopUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
+    // 1. Remove protocol and trailing slashes
+    let cleanUrl = shopUrl.replace(/^https?:\/\//, '').replace(/\/$/, '').trim();
+    
+    // 2. Defensive: If user entered just "my-brand" instead of "my-brand.myshopify.com"
+    if (!cleanUrl.includes('.')) {
+        cleanUrl += '.myshopify.com';
+    }
+
     const fullUrl = `https://${cleanUrl}/admin/api/2024-01/${endpoint}`;
     return `${this.PROXY_URL}${encodeURIComponent(fullUrl)}`;
   }
@@ -15,14 +20,16 @@ export class ShopifyAdapter {
   async fetchOrders(config: SalesChannel): Promise<ShopifyOrder[]> {
     if (!config.store_url || !config.access_token) return [];
     
+    // Clean the token to prevent 401s from copy-paste whitespace
+    const accessToken = config.access_token.trim();
+    
     // Simulation Mode
-    if (config.access_token.startsWith('demo_')) {
+    if (accessToken.startsWith('demo_')) {
         return this.getMockOrders();
     }
 
     try {
-      // Fetch last 60 days of orders, any status (open, closed, cancelled)
-      // Limit 250 (max page size)
+      // Fetch last 60 days of orders
       const twoMonthsAgo = new Date();
       twoMonthsAgo.setDate(twoMonthsAgo.getDate() - 60);
       
@@ -31,24 +38,29 @@ export class ShopifyAdapter {
       const response = await fetch(this.getUrl(config.store_url, endpoint), {
         method: 'GET',
         headers: {
-          'X-Shopify-Access-Token': config.access_token,
+          'X-Shopify-Access-Token': accessToken,
           'Content-Type': 'application/json',
         }
       });
 
-      if (!response.ok) throw new Error(`Shopify API Error: ${response.status}`);
+      if (!response.ok) {
+          // Log detailed error for debugging
+          const text = await response.text();
+          console.error(`Shopify API Error (${response.status}): ${text}`);
+          throw new Error(`Shopify API Error: ${response.status}`);
+      }
       
       const json = await response.json();
       return json.orders || [];
 
     } catch (e) {
       console.error("Shopify Fetch Failed", e);
+      // Return empty array to prevent app crash, error is logged
       return [];
     }
   }
 
   private getMockOrders(): ShopifyOrder[] {
-      // Generate some mock data that intentionally has some discrepancies with the courier mock data
       const orders: ShopifyOrder[] = [];
       const now = new Date();
       
@@ -57,7 +69,7 @@ export class ShopifyAdapter {
           date.setDate(now.getDate() - Math.floor(Math.random() * 30));
           
           const isCancelled = Math.random() > 0.9;
-          const isUnfulfilled = !isCancelled && Math.random() > 0.8; // 10% missed orders
+          const isUnfulfilled = !isCancelled && Math.random() > 0.8;
           
           orders.push({
               id: 10000 + i,
