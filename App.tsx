@@ -11,7 +11,7 @@ import Marketing from './pages/Marketing';
 import Reconciliation from './pages/Reconciliation'; 
 import { PostExAdapter } from './services/couriers/postex';
 import { ShopifyAdapter } from './services/shopify'; 
-import { Order, Product, AdSpend, CourierName, SalesChannel, CourierConfig, OrderStatus, ShopifyOrder } from './types';
+import { Order, Product, AdSpend, CourierName, SalesChannel, CourierConfig, OrderStatus, ShopifyOrder, IntegrationConfig } from './types';
 import { Loader2 } from 'lucide-react';
 import { supabase } from './services/supabase';
 import { getCostAtDate } from './services/calculator';
@@ -166,12 +166,12 @@ const App: React.FC = () => {
             }
         }
 
-        // D. Fetch Integrations (SEPARATED TABLES)
-        let postExConfig: CourierConfig | undefined;
+        // D. Fetch Integrations
+        let postExConfig: IntegrationConfig | undefined;
         let shopifyConfig: SalesChannel | undefined;
         
         if (!isDemoMode) {
-             // 1. Fetch Sales Channels
+             // 1. Fetch Sales Channels (New)
              const { data: salesData } = await supabase
                 .from('sales_channels')
                 .select('*')
@@ -182,16 +182,15 @@ const App: React.FC = () => {
              
              if (salesData) shopifyConfig = salesData;
 
-             // 2. Fetch Courier Configs
+             // 2. Fetch Courier Configs (OLD TABLE 'integration_configs')
              const { data: courierData } = await supabase
-                .from('courier_configs')
+                .from('integration_configs')
                 .select('*')
                 .eq('user_id', user.id)
                 .eq('is_active', true);
             
             if (courierData) {
-                postExConfig = courierData.find((c: any) => c.courier_id === CourierName.POSTEX);
-                // Can map others here like Trax, TCS
+                postExConfig = courierData.find((c: any) => c.provider_id === CourierName.POSTEX);
             }
         }
 
@@ -218,17 +217,9 @@ const App: React.FC = () => {
 
         // F. Fetch Live Orders from Courier
         if (postExConfig) {
-            // PostEx Adapter expects an IntegrationConfig-like structure. 
-            // We map CourierConfig to it.
-            const adapterConfig = {
-                id: postExConfig.id,
-                provider_id: CourierName.POSTEX, // Legacy field support for adapter
-                api_token: postExConfig.api_token,
-                is_active: true
-            };
-
+            // Use existing config structure for PostEx
             const postExAdapter = new PostExAdapter();
-            const rawOrders = await postExAdapter.fetchRecentOrders(adapterConfig);
+            const rawOrders = await postExAdapter.fetchRecentOrders(postExConfig);
 
             // Merge Logic: Detect new products based on FINGERPRINT
             rawOrders.forEach(o => {

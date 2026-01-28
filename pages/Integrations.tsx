@@ -88,7 +88,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
         const { data: { session } } = await supabase.auth.getSession();
         
         if (session?.user) {
-            // A. Fetch Sales Channels
+            // A. Fetch Sales Channels (New Table)
             const { data: salesData } = await supabase
                 .from('sales_channels')
                 .select('*')
@@ -100,9 +100,9 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                 setShopifyConfig(salesData);
             }
 
-            // B. Fetch Couriers
+            // B. Fetch Couriers (Use OLD TABLE 'integration_configs' for compatibility)
             const { data: courierData } = await supabase
-                .from('courier_configs')
+                .from('integration_configs') 
                 .select('*')
                 .eq('user_id', session.user.id);
 
@@ -110,8 +110,16 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                 setCourierConfigs(prev => {
                     const newConfigs = { ...prev };
                     courierData.forEach((conf: any) => {
-                        if (newConfigs[conf.courier_id]) {
-                            newConfigs[conf.courier_id] = { ...newConfigs[conf.courier_id], ...conf };
+                        // Map 'provider_id' from DB to 'courier_id' in State
+                        const cName = conf.provider_id as string;
+                        if (newConfigs[cName]) {
+                            newConfigs[cName] = { 
+                                ...newConfigs[cName], 
+                                id: conf.id,
+                                api_token: conf.api_token,
+                                is_active: conf.is_active,
+                                courier_id: cName
+                            };
                         }
                     });
                     return newConfigs;
@@ -142,7 +150,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
       setIsExchangingToken(true);
       setErrorMessage(null);
       try {
-          // Use CORS Proxy for client-side exchange (Note: In strict prod, this should be server-side)
+          // Use CORS Proxy for client-side exchange
           const proxyUrl = 'https://corsproxy.io/?';
           const tokenUrl = `https://${shop}/admin/oauth/access_token`;
           const fullUrl = `${proxyUrl}${encodeURIComponent(tokenUrl)}`;
@@ -230,7 +238,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
       if (onConfigUpdate) onConfigUpdate();
   };
 
-  // Save to 'courier_configs' table
+  // Save to 'integration_configs' table (Using OLD table name for Couriers)
   const saveCourierConfig = async (courierId: string, isActive: boolean) => {
     setErrorMessage(null);
     const config = courierConfigs[courierId];
@@ -244,23 +252,26 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
         if (session?.user) {
             const payload = {
                 user_id: session.user.id,
-                courier_id: courierId,
+                provider_id: courierId, // Map 'courier_id' -> 'provider_id'
                 api_token: config.api_token,
                 is_active: isActive
             };
 
+            // Using 'integration_configs' table
             const { error } = await supabase
-                .from('courier_configs')
-                .upsert(payload, { onConflict: 'user_id, courier_id' }); 
+                .from('integration_configs')
+                .upsert(payload, { onConflict: 'user_id, provider_id' }); 
             
             if (error) {
                 console.error("Supabase Save Error:", error);
+                setErrorMessage("Failed to save to database. " + error.message);
                 return false;
             }
             return true;
         }
         return false;
     } catch (e: any) {
+        console.error(e);
         return false;
     } finally {
         if (onConfigUpdate) onConfigUpdate();
@@ -288,10 +299,11 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     // Special logic for PostEx simulation validation
     if (courierName === CourierName.POSTEX) {
         const adapter = new PostExAdapter();
-        // Construct a temp integration config for the adapter to test
         const tempConfig = { 
-            id: '', provider_id: courierName, 
-            api_token: config.api_token, is_active: true 
+            id: '', 
+            provider_id: courierName, // Adapter expects 'provider_id'
+            api_token: config.api_token, 
+            is_active: true 
         };
         const success = await adapter.testConnection(tempConfig);
         
