@@ -183,16 +183,22 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     // 2. Try DB Save
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
-        // Upsert with explicit handling
+        // IMPORTANT: Destructure to remove 'id' if it's empty/invalid string.
+        // If 'id' is empty string, Postgres will throw "invalid input syntax for type uuid"
+        const { id, ...rest } = updatedConfig;
+        
+        const payload = {
+            user_id: user.id,
+            courier: courier,
+            api_token: rest.api_token,
+            base_url: rest.base_url,
+            is_active: true
+        };
+
+        // Upsert based on unique constraint (user_id, courier)
         const { error } = await supabase
             .from('integration_configs')
-            .upsert({
-                user_id: user.id,
-                courier: courier, // "Shopify" or "PostEx"
-                api_token: config.api_token,
-                base_url: config.base_url,
-                is_active: true
-            }, { onConflict: 'user_id, courier' }); // Composite key
+            .upsert(payload, { onConflict: 'user_id, courier' }); 
         
         if (error) {
             console.error("Supabase Save Error:", error);
@@ -217,7 +223,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     if (force) {
         success = await saveConfig(courier);
         if (!success && !dbError) {
-             // If save returned false but no specific DB error, generic fail
              setConnectionStatus(prev => ({ ...prev, [courier]: 'failed' }));
         }
     } else {

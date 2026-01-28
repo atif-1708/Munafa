@@ -187,52 +187,66 @@ const App: React.FC = () => {
             }
         }
 
-        // D. Fetch Integrations & Orders (AUTO REPAIR LOGIC START)
+        // D. Fetch Integrations (Hybrid Strategy: DB + Local + Auto-Repair)
         let postExConfig: IntegrationConfig | undefined;
         let shopifyConfig: IntegrationConfig | undefined;
         let anyActiveConfig = false;
 
-        let dbConfigs: any[] | null = null;
+        const dbConfigsMap = new Map<string, IntegrationConfig>();
+        
+        // 1. Get DB Configs
         if (!isDemoMode) {
-            const { data } = await supabase.from('integration_configs').select('*').eq('user_id', user.id);
-            dbConfigs = data;
+             const { data } = await supabase.from('integration_configs').select('*').eq('user_id', user.id);
+             if (data) {
+                 data.forEach((c: any) => {
+                     if (c.is_active) dbConfigsMap.set(c.courier, c);
+                 });
+             }
         }
 
-        // Strategy: Prefer DB, Fallback to LocalStorage, Repair DB if needed
-        if (dbConfigs && dbConfigs.length > 0) {
-             // DB Hit
-             anyActiveConfig = dbConfigs.some(c => c.is_active);
-             postExConfig = dbConfigs.find(c => c.courier === CourierName.POSTEX && c.is_active);
-             shopifyConfig = dbConfigs.find(c => c.courier === 'Shopify' && c.is_active);
-        } 
-        
-        // If no active config found in DB (or demo mode), check Local Storage
-        if (!anyActiveConfig) {
-            const localConfigs = localStorage.getItem('munafa_api_configs');
-            if (localConfigs) {
-                const parsed = JSON.parse(localConfigs);
-                anyActiveConfig = Object.values(parsed).some((c: any) => c.is_active);
-                
-                if (anyActiveConfig) {
-                    postExConfig = parsed[CourierName.POSTEX]?.is_active ? parsed[CourierName.POSTEX] : undefined;
-                    shopifyConfig = parsed['Shopify']?.is_active ? parsed['Shopify'] : undefined;
+        // 2. Get Local Configs
+        const localConfigsMap = new Map<string, IntegrationConfig>();
+        const localData = localStorage.getItem('munafa_api_configs');
+        if (localData) {
+             const parsed = JSON.parse(localData);
+             Object.values(parsed).forEach((c: any) => {
+                 if (c.is_active) localConfigsMap.set(c.courier, c);
+             });
+        }
 
-                    // AUTO-REPAIR: We have local data but DB was empty/missing. Sync it up now.
-                    if (!isDemoMode && user.id) {
-                        console.log("Auto-Repairing: Syncing local config to Supabase...");
-                        const updates = [];
-                        if (postExConfig) updates.push({ user_id: user.id, ...postExConfig, courier: CourierName.POSTEX });
-                        if (shopifyConfig) updates.push({ user_id: user.id, ...shopifyConfig, courier: 'Shopify' });
-                        
-                        if (updates.length > 0) {
-                            // Fire and forget - don't await to block UI
-                            supabase.from('integration_configs').upsert(updates, { onConflict: 'user_id, courier' }).then(({ error }) => {
-                                if (error) console.error("Auto-Repair Failed:", error);
-                                else console.log("Auto-Repair Success: Configs synced to DB");
-                            });
-                        }
-                    }
-                }
+        // 3. Merge: Database takes precedence, but fallback to Local if DB missing specific item
+        postExConfig = dbConfigsMap.get(CourierName.POSTEX) || localConfigsMap.get(CourierName.POSTEX);
+        shopifyConfig = dbConfigsMap.get('Shopify') || localConfigsMap.get('Shopify');
+        
+        anyActiveConfig = !!postExConfig || !!shopifyConfig;
+
+        // 4. Auto-Repair: If we found it Locally but it was MISSING in DB, sync it now.
+        if (!isDemoMode && user.id) {
+            const updates = [];
+            
+            // Check PostEx mismatch
+            if (localConfigsMap.has(CourierName.POSTEX) && !dbConfigsMap.has(CourierName.POSTEX)) {
+                 const config = localConfigsMap.get(CourierName.POSTEX)!;
+                 // Remove potentially invalid local ID to let DB generate one
+                 const { id, ...rest } = config; 
+                 updates.push({ user_id: user.id, courier: CourierName.POSTEX, ...rest, is_active: true });
+            }
+            
+            // Check Shopify mismatch
+            if (localConfigsMap.has('Shopify') && !dbConfigsMap.has('Shopify')) {
+                 const config = localConfigsMap.get('Shopify')!;
+                 // Remove potentially invalid local ID
+                 const { id, ...rest } = config;
+                 updates.push({ user_id: user.id, courier: 'Shopify', ...rest, is_active: true });
+            }
+            
+            if (updates.length > 0) {
+                 console.log("Auto-Repairing: Syncing missing configs to Supabase...");
+                 supabase.from('integration_configs').upsert(updates, { onConflict: 'user_id, courier' })
+                    .then(({ error }) => {
+                        if (error) console.error("Auto-Repair Failed:", error);
+                        else console.log("Auto-Repair Success");
+                    });
             }
         }
 
@@ -318,7 +332,7 @@ const App: React.FC = () => {
 
         } else {
             setOrders([]);
-            setProducts(savedProducts);
+            setProducts(finalProducts); // Ensure we use updated list even if no courier orders
         }
 
       } catch (err: any) {
