@@ -165,8 +165,8 @@ const App: React.FC = () => {
                     date: a.date,
                     platform: a.platform,
                     amount_spent: a.amount_spent,
-                    product_id: a.product_id,
-                    attributed_orders: a.attributed_orders
+                    product_id: a.product_id || null
+                    // attributed_orders: a.attributed_orders
                 })));
             }
         }
@@ -414,7 +414,7 @@ const App: React.FC = () => {
                 {currentPage === 'orders' && <Orders orders={orders} />}
                 {currentPage === 'reconciliation' && <Reconciliation shopifyOrders={shopifyOrders} courierOrders={orders} products={products} />}
                 {currentPage === 'couriers' && <Couriers orders={orders} />}
-                {currentPage === 'profitability' && <Profitability orders={orders} products={products} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} shopifyOrders={shopifyOrders} />}
+                {currentPage === 'profitability' && <Profitability orders={orders} products={products} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} />}
                 {currentPage === 'inventory' && <Inventory products={products} onUpdateProducts={handleUpdateProducts} />}
                 {currentPage === 'marketing' && <Marketing adSpend={adSpend} products={products} onAddAdSpend={handleAddAdSpend} onDeleteAdSpend={handleDeleteAdSpend} />}
                 {currentPage === 'integrations' && <Integrations onConfigUpdate={() => setRefreshTrigger(p => p + 1)} />}

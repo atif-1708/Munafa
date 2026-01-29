@@ -228,18 +228,13 @@ export interface ProductPerformance {
   ad_spend_allocation: number;
   net_profit: number;
   rto_rate: number;
-  
-  // NEW: Funnel Metrics
-  shopify_demand: number;
-  confirmed_units: number;
 }
 
 export const calculateProductPerformance = (
     orders: Order[], 
     products: Product[],
     adSpend: AdSpend[] = [],
-    adsTaxRate: number = 0,
-    shopifyOrders: ShopifyOrder[] = [] // Optional pass for demand analysis
+    adsTaxRate: number = 0
 ): ProductPerformance[] => {
   const perf: Record<string, ProductPerformance> = {};
 
@@ -268,9 +263,7 @@ export const calculateProductPerformance = (
       tax_allocation: 0,
       ad_spend_allocation: totalAdSpend,
       net_profit: 0,
-      rto_rate: 0,
-      shopify_demand: 0,
-      confirmed_units: 0
+      rto_rate: 0
     };
   });
 
@@ -310,8 +303,7 @@ export const calculateProductPerformance = (
                  units_sold: 0, units_returned: 0, units_in_transit: 0,
                  gross_revenue: 0, cogs_total: 0, gross_profit: 0, cash_in_stock: 0,
                  shipping_cost_allocation: 0, overhead_allocation: 0, tax_allocation: 0,
-                 ad_spend_allocation: 0, net_profit: 0, rto_rate: 0,
-                 shopify_demand: 0, confirmed_units: 0
+                 ad_spend_allocation: 0, net_profit: 0, rto_rate: 0
              };
         }
         
@@ -347,50 +339,6 @@ export const calculateProductPerformance = (
         }
     });
   });
-
-  // 3. Process Shopify Orders (Demand & Confirmation Analysis)
-  if (shopifyOrders.length > 0) {
-      shopifyOrders.forEach(so => {
-          const isCancelled = so.cancel_reason !== null;
-          
-          so.line_items.forEach(item => {
-              // Generate a fingerprint from title (standardize with Reconciliation logic)
-              const rawFingerprint = item.title.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-              
-              // Try to find the matching product definition
-              const productDef = products.find(p => 
-                  (p.variant_fingerprint === rawFingerprint) || 
-                  (p.sku === item.sku)
-              );
-              
-              // Determine which key this belongs to in 'perf'
-              let key = '';
-              if (productDef) {
-                  key = productDef.variant_fingerprint || productDef.sku;
-              } else {
-                  // Fallback: If not found, check if we initialized it via courier orders using SKU
-                  key = rawFingerprint || item.sku;
-              }
-              
-              if (!perf[key]) {
-                   // Initializer for items only in Shopify (No courier data yet)
-                   perf[key] = {
-                       id: String(item.id), title: item.title, sku: item.sku || 'N/A',
-                       units_sold: 0, units_returned: 0, units_in_transit: 0,
-                       gross_revenue: 0, cogs_total: 0, gross_profit: 0, cash_in_stock: 0,
-                       shipping_cost_allocation: 0, overhead_allocation: 0, tax_allocation: 0,
-                       ad_spend_allocation: 0, net_profit: 0, rto_rate: 0,
-                       shopify_demand: 0, confirmed_units: 0
-                   };
-              }
-              
-              perf[key].shopify_demand += item.quantity;
-              if (!isCancelled) {
-                  perf[key].confirmed_units += item.quantity;
-              }
-          });
-      });
-  }
 
   return Object.values(perf)
     .map(p => {
