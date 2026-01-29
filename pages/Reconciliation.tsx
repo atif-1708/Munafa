@@ -58,7 +58,9 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
         const courierOrder = courierMap.get(key);
         const hasCourierData = courierOrder !== undefined;
 
-        so.line_items.forEach(item => {
+        // ONLY Process the First Item (Main Item) - Ignore secondary items/gifts as per user request
+        if (so.line_items.length > 0) {
+            const item = so.line_items[0];
             const fingerprint = getFingerprint(item.title);
             
             if (!productStats.has(fingerprint)) {
@@ -130,7 +132,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                 tracking: courierOrder ? courierOrder.tracking_number : '-',
                 isMissed: isMissed
             });
-        });
+        }
     });
 
     // Filter by search term if exists
@@ -230,23 +232,42 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
 
                                     {/* Confirmed */}
                                     <td className="px-2 py-4 text-center bg-blue-50/10">
-                                        <span className={`font-semibold ${p.confirmed > 0 ? 'text-blue-700' : 'text-slate-300'}`}>
-                                            {p.confirmed}
-                                        </span>
+                                        <div className="flex flex-col items-center justify-center">
+                                            <span className={`font-semibold ${p.confirmed > 0 ? 'text-blue-700' : 'text-slate-300'}`}>
+                                                {p.confirmed}
+                                            </span>
+                                            {p.confirmed > 0 && (
+                                                <span className="text-[10px] text-blue-400 font-medium mt-0.5">
+                                                    {Math.round((p.confirmed / p.shopifyDemand) * 100)}%
+                                                </span>
+                                            )}
+                                        </div>
                                     </td>
 
                                     {/* Cancelled */}
                                     <td className="px-2 py-4 text-center">
-                                        <span className={`${p.cancelled > 0 ? 'text-slate-500 font-medium' : 'text-slate-200'}`}>
-                                            {p.cancelled}
-                                        </span>
+                                        <div className="flex flex-col items-center justify-center">
+                                            <span className={`${p.cancelled > 0 ? 'text-slate-500 font-medium' : 'text-slate-200'}`}>
+                                                {p.cancelled}
+                                            </span>
+                                            {p.cancelled > 0 && (
+                                                <span className="text-[10px] text-slate-400 font-medium mt-0.5">
+                                                    {Math.round((p.cancelled / p.shopifyDemand) * 100)}%
+                                                </span>
+                                            )}
+                                        </div>
                                     </td>
 
                                     {/* Pending / Leakage */}
                                     <td className="px-2 py-4 text-center bg-red-50/10">
                                         {p.pending > 0 ? (
-                                            <div className="flex items-center justify-center gap-1 text-red-600 font-bold bg-red-50 px-2 py-1 rounded-full text-xs w-fit mx-auto">
-                                                <AlertCircle size={12} /> {p.pending}
+                                            <div className="flex flex-col items-center justify-center gap-1">
+                                                <div className="flex items-center justify-center gap-1 text-red-600 font-bold bg-red-50 px-2 py-0.5 rounded-full text-xs w-fit">
+                                                    <AlertCircle size={12} /> {p.pending}
+                                                </div>
+                                                <span className="text-[10px] text-red-400 font-medium">
+                                                    {Math.round((p.pending / p.shopifyDemand) * 100)}%
+                                                </span>
                                             </div>
                                         ) : (
                                             <span className="text-slate-200">-</span>
