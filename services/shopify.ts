@@ -1,16 +1,9 @@
 import { SalesChannel, ShopifyOrder } from '../types';
 
 export class ShopifyAdapter {
-  // Primary and Backup Proxies to bypass CORS in browser
-  private readonly PROXIES = [
-    'https://corsproxy.io/?',
-    'https://api.allorigins.win/raw?url='
-  ];
-
   async fetchOrders(config: SalesChannel): Promise<ShopifyOrder[]> {
     if (!config.store_url || !config.access_token) return [];
     
-    // Clean the token to prevent 401s from copy-paste whitespace
     const accessToken = config.access_token.trim();
     
     // Simulation Mode
@@ -18,61 +11,80 @@ export class ShopifyAdapter {
         return this.getMockOrders();
     }
 
-    // Fetch last 60 days of orders
     const twoMonthsAgo = new Date();
     twoMonthsAgo.setDate(twoMonthsAgo.getDate() - 60);
     
-    // Clean URL generation
     let cleanUrl = config.store_url.replace(/^https?:\/\//, '').replace(/\/$/, '').trim();
     if (!cleanUrl.includes('.')) cleanUrl += '.myshopify.com';
 
     const endpoint = `orders.json?status=any&limit=250&created_at_min=${twoMonthsAgo.toISOString()}&fields=id,name,created_at,financial_status,fulfillment_status,cancel_reason,total_price,line_items,customer`;
     const targetUrl = `https://${cleanUrl}/admin/api/2024-01/${endpoint}`;
-    const encodedTarget = encodeURIComponent(targetUrl);
 
-    let lastError;
-
-    // Try Proxies in Sequence
-    for (const proxyBase of this.PROXIES) {
-        try {
-            // Construct Proxy URL
-            let fetchUrl = `${proxyBase}${encodedTarget}`;
-            
-            // Add cache buster for allorigins to prevent stale data
-            if (proxyBase.includes('allorigins')) {
-                fetchUrl += `&timestamp=${Date.now()}`;
+    try {
+        const data = await this.fetchWithProxy(targetUrl, {
+            method: 'GET',
+            headers: {
+                'X-Shopify-Access-Token': accessToken,
+                'Content-Type': 'application/json',
             }
-
-            const response = await fetch(fetchUrl, {
-                method: 'GET',
-                headers: {
-                    'X-Shopify-Access-Token': accessToken,
-                    'Content-Type': 'application/json',
-                }
-            });
-
-            if (!response.ok) {
-                const text = await response.text();
-                // If 401/403 (Auth Error), stop trying other proxies as the key is wrong.
-                if (response.status === 401 || response.status === 403) {
-                     console.error(`Shopify Auth Error: ${text}`);
-                     return []; 
-                }
-                throw new Error(`Status ${response.status}`);
-            }
-            
-            const json = await response.json();
-            return json.orders || [];
-
-        } catch (e: any) {
-            console.warn(`Shopify fetch failed via ${proxyBase}`, e);
-            lastError = e;
-            // Continue to next proxy in loop
-        }
+        });
+        return data.orders || [];
+    } catch (e) {
+        console.error("Shopify fetch failed:", e);
+        return [];
     }
+  }
 
-    console.error("All Shopify fetch attempts failed.", lastError);
-    return [];
+  // Robust Fetcher with Vercel API support
+  private async fetchWithProxy(targetUrl: string, options: RequestInit): Promise<any> {
+      // 1. Try Local API (Best for Vercel Production)
+      try {
+          // Check if we are in a browser env where /api might exist
+          const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
+          const res = await fetch(proxyUrl, options);
+          if (res.ok) {
+              // If it returns HTML (like a 404 page for the API route), it's not the API
+              const contentType = res.headers.get('content-type');
+              if (contentType && contentType.includes('application/json')) {
+                  return await res.json();
+              }
+              // If text, check if it's valid JSON
+              const text = await res.text();
+              try { return JSON.parse(text); } catch { /* Not JSON */ }
+          }
+      } catch (e) {
+          // Ignore local api error and fall back
+      }
+
+      // 2. Fallback: Public Proxies (Updated List)
+      // Note: AllOrigins removed as it strips Auth headers usually.
+      const proxies = [
+          'https://corsproxy.io/?', // Standard
+          'https://thingproxy.freeboard.io/fetch/', // Robust
+      ];
+
+      for (const proxyBase of proxies) {
+          try {
+              let fetchUrl = '';
+              // URL Construction Logic
+              if (proxyBase.includes('corsproxy.io')) {
+                   fetchUrl = `${proxyBase}${encodeURIComponent(targetUrl)}`;
+              } else {
+                   fetchUrl = `${proxyBase}${targetUrl}`;
+              }
+
+              const res = await fetch(fetchUrl, options);
+              if (!res.ok) {
+                  // Specific check: If 403/401, the key might be wrong, or proxy blocked
+                  if (res.status === 401) throw new Error("Unauthorized");
+                  continue; 
+              }
+              return await res.json();
+          } catch (e) {
+              console.warn(`Proxy ${proxyBase} failed`, e);
+          }
+      }
+      throw new Error("All proxies failed");
   }
 
   private getMockOrders(): ShopifyOrder[] {

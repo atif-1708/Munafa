@@ -5,14 +5,7 @@ import { getOrders, getProducts } from '../mockData';
 export class PostExAdapter implements CourierAdapter {
   name = CourierName.POSTEX;
   private readonly BASE_URL = 'https://api.postex.pk/services/integration/api';
-  
-  // List of proxies to try
-  private readonly PROXIES = [
-    'https://corsproxy.io/?',
-    'https://api.allorigins.win/raw?url='
-  ];
 
-  // Robust Fetcher that tries multiple proxies
   private async fetchWithFallback(endpoint: string, options: RequestInit, params?: Record<string, string | number>): Promise<any> {
     let url = `${this.BASE_URL}${endpoint}`;
     
@@ -24,24 +17,43 @@ export class PostExAdapter implements CourierAdapter {
         url += `?${query}`;
     }
 
-    const encodedTarget = encodeURIComponent(url);
+    // 1. Try Local API (Vercel)
+    try {
+        const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+        const res = await fetch(proxyUrl, options);
+        if (res.ok) {
+             const contentType = res.headers.get('content-type');
+             if (contentType && contentType.includes('application/json')) {
+                 return await res.json();
+             }
+        }
+    } catch (e) {
+        // Ignore and fallback
+    }
+
+    // 2. Public Proxies
+    const proxies = [
+        'https://corsproxy.io/?',
+        'https://thingproxy.freeboard.io/fetch/', 
+    ];
+
     let lastError;
 
-    for (const proxyBase of this.PROXIES) {
+    for (const proxyBase of proxies) {
         try {
-            let fetchUrl = `${proxyBase}${encodedTarget}`;
-             // Add cache buster for allorigins
-            if (proxyBase.includes('allorigins')) {
-                fetchUrl += `&timestamp=${Date.now()}`;
-            }
+            let fetchUrl = '';
+             if (proxyBase.includes('corsproxy.io')) {
+                   fetchUrl = `${proxyBase}${encodeURIComponent(url)}`;
+              } else {
+                   fetchUrl = `${proxyBase}${url}`;
+              }
 
             const response = await fetch(fetchUrl, options);
 
             if (!response.ok) {
-                 // Special handling for Proxy Errors (403 often means size limit on proxy)
                  if (response.status === 403) {
                      const text = await response.text();
-                     if (text.includes('proxy files larger')) throw new Error('Proxy Limit Exceeded');
+                     if (text.includes('proxy')) throw new Error('Proxy Limit Exceeded');
                  }
                  throw new Error(`HTTP ${response.status}`);
             }
