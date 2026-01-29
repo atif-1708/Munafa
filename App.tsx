@@ -405,7 +405,7 @@ const App: React.FC = () => {
         <div className="max-w-7xl mx-auto">
           {(isConfigured || currentPage === 'integrations') && (
               <>
-                {currentPage === 'dashboard' && <Dashboard orders={orders} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} />}
+                {currentPage === 'dashboard' && <Dashboard orders={orders} shopifyOrders={shopifyOrders} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} />}
                 {currentPage === 'orders' && <Orders orders={orders} />}
                 {currentPage === 'reconciliation' && <Reconciliation shopifyOrders={shopifyOrders} courierOrders={orders} products={products} />}
                 {currentPage === 'couriers' && <Couriers orders={orders} />}

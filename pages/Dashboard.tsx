@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Order, AdSpend, DashboardMetrics, OrderStatus } from '../types';
+import { Order, AdSpend, DashboardMetrics, OrderStatus, ShopifyOrder } from '../types';
 import { calculateMetrics, formatCurrency } from '../services/calculator';
 import KPICard from '../components/KPICard';
 import ProfitChart from '../components/ProfitChart';
@@ -10,11 +10,12 @@ import {
 
 interface DashboardProps {
   orders: Order[];
+  shopifyOrders?: ShopifyOrder[];
   adSpend: AdSpend[];
   adsTaxRate?: number;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend, adsTaxRate = 0 }) => {
+const Dashboard: React.FC<DashboardProps> = ({ orders, shopifyOrders = [], adSpend, adsTaxRate = 0 }) => {
   // Default to Last 30 Days
   const [dateRange, setDateRange] = useState(() => {
     const end = new Date();
@@ -38,35 +39,43 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend, adsTaxRate = 0 }
         const d = new Date(o.created_at);
         return d >= start && d <= end;
       }),
+      shopifyOrders: shopifyOrders.filter(o => {
+          const d = new Date(o.created_at);
+          return d >= start && d <= end;
+      }),
       adSpend: adSpend.filter(a => {
         const d = new Date(a.date);
         return d >= start && d <= end;
       })
     };
-  }, [orders, adSpend, dateRange]);
+  }, [orders, shopifyOrders, adSpend, dateRange]);
 
   const metrics: DashboardMetrics = useMemo(() => calculateMetrics(filteredData.orders, filteredData.adSpend, adsTaxRate), [filteredData, adsTaxRate]);
 
-  // Shopify Order Flow Metrics
+  // Shopify Order Flow Metrics (Based on Raw Shopify Data)
   const shopifyMetrics = useMemo(() => {
-      const total = filteredData.orders.length;
+      const total = filteredData.shopifyOrders.length;
       let pending = 0;
       let cancelled = 0;
       let confirmed = 0;
 
-      filteredData.orders.forEach(o => {
-          if (o.status === OrderStatus.PENDING) {
-              pending++;
-          } else if (o.status === OrderStatus.CANCELLED) {
+      filteredData.shopifyOrders.forEach(o => {
+          const isCancelled = o.cancel_reason !== null;
+          // In Shopify: fulfilled = confirmed/processed. null = unfulfilled/pending.
+          const isFulfilled = o.fulfillment_status === 'fulfilled' || o.fulfillment_status === 'partial';
+          
+          if (isCancelled) {
               cancelled++;
-          } else {
-              // Any status other than Pending or Cancelled implies it was Confirmed/Booked
+          } else if (isFulfilled) {
               confirmed++;
+          } else {
+              // Not cancelled, Not fulfilled -> Pending Action
+              pending++;
           }
       });
 
       return { total, pending, cancelled, confirmed };
-  }, [filteredData.orders]);
+  }, [filteredData.shopifyOrders]);
 
   // Transform data for chart based on selected range
   const chartData = useMemo(() => {
@@ -130,9 +139,14 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend, adsTaxRate = 0 }
     return Object.values(days);
   }, [filteredData, dateRange, adsTaxRate]);
 
-  const calculatePercentage = (count: number, total: number = metrics.dispatched_orders) => {
+  const calculatePercentage = (count: number, total: number = shopifyMetrics.total) => {
       if (total === 0) return '0%';
       return `${((count / total) * 100).toFixed(1)}%`;
+  };
+
+  const calculateOpsPercentage = (count: number, total: number = metrics.dispatched_orders) => {
+    if (total === 0) return '0%';
+    return `${((count / total) * 100).toFixed(1)}%`;
   };
 
   return (
@@ -252,21 +266,21 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend, adsTaxRate = 0 }
             <KPICard 
               title="Confirmed" 
               value={shopifyMetrics.confirmed.toString()} 
-              subValue={`${calculatePercentage(shopifyMetrics.confirmed, shopifyMetrics.total)} Processing`}
+              subValue={`${calculatePercentage(shopifyMetrics.confirmed)} Fulfilled`}
               icon={CheckSquare} 
               color="blue"
             />
             <KPICard 
               title="Pending" 
               value={shopifyMetrics.pending.toString()} 
-              subValue={`${calculatePercentage(shopifyMetrics.pending, shopifyMetrics.total)} Action Needed`}
+              subValue={`${calculatePercentage(shopifyMetrics.pending)} Unfulfilled`}
               icon={Clock} 
               color="yellow"
             />
              <KPICard 
               title="Cancelled" 
               value={shopifyMetrics.cancelled.toString()} 
-              subValue={`${calculatePercentage(shopifyMetrics.cancelled, shopifyMetrics.total)} Rate`}
+              subValue={`${calculatePercentage(shopifyMetrics.cancelled)} Rate`}
               icon={XCircle} 
               color="red"
             />
@@ -291,14 +305,14 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend, adsTaxRate = 0 }
             <KPICard 
               title="Delivered" 
               value={metrics.delivered_orders.toString()} 
-              subValue={`${calculatePercentage(metrics.delivered_orders)} Success`}
+              subValue={`${calculateOpsPercentage(metrics.delivered_orders)} Success`}
               icon={CheckCircle} 
               color="green"
             />
              <KPICard 
               title="In Transit" 
               value={metrics.in_transit_orders.toString()} 
-              subValue={`${calculatePercentage(metrics.in_transit_orders)} Active`}
+              subValue={`${calculateOpsPercentage(metrics.in_transit_orders)} Active`}
               icon={Clock} 
               color="blue"
             />
