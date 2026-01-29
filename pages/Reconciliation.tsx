@@ -23,6 +23,17 @@ interface OrderDetail {
 const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierOrders, products }) => {
   const [expandedFingerprint, setExpandedFingerprint] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // Date Range State (Default: Last 30 Days)
+  const [dateRange, setDateRange] = useState(() => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - 30);
+    return {
+      start: start.toISOString().split('T')[0],
+      end: end.toISOString().split('T')[0]
+    };
+  });
 
   // 1. Build Reconciliation Stats
   const stats = useMemo(() => {
@@ -51,7 +62,17 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
 
     const getFingerprint = (text: string) => text.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-');
 
+    // Date Filtering Constants
+    const start = new Date(dateRange.start);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(dateRange.end);
+    end.setHours(23, 59, 59, 999);
+
     shopifyOrders.forEach(so => {
+        // Date Filter Check
+        const orderDate = new Date(so.created_at);
+        if (orderDate < start || orderDate > end) return;
+
         const isShopifyCancelled = so.cancel_reason !== null;
         
         const key = so.name.replace('#', '').trim();
@@ -143,7 +164,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
     }
 
     return results.sort((a,b) => b.shopifyDemand - a.shopifyDemand);
-  }, [shopifyOrders, courierOrders, products, searchTerm]);
+  }, [shopifyOrders, courierOrders, products, searchTerm, dateRange]);
 
   const toggleRow = (fingerprint: string) => {
       if (expandedFingerprint === fingerprint) setExpandedFingerprint(null);
@@ -157,15 +178,35 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                 <h2 className="text-2xl font-bold text-slate-900">Reconciliation</h2>
                 <p className="text-slate-500 text-sm">Compare Shopify demand vs Courier fulfillment per product.</p>
             </div>
-            <div className="relative w-full md:w-64">
-                <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
-                <input 
-                    type="text" 
-                    placeholder="Search Product..." 
-                    className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-slate-500"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                />
+            
+            <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+                <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-300 shadow-sm text-sm">
+                    <Calendar size={16} className="text-slate-500" />
+                    <input 
+                      type="date" 
+                      value={dateRange.start}
+                      onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+                      className="text-slate-700 bg-transparent border-none focus:ring-0 outline-none w-28 font-medium cursor-pointer"
+                    />
+                    <span className="text-slate-400">to</span>
+                    <input 
+                      type="date" 
+                      value={dateRange.end}
+                      onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+                      className="text-slate-700 bg-transparent border-none focus:ring-0 outline-none w-28 font-medium cursor-pointer"
+                    />
+                </div>
+
+                <div className="relative flex-1 sm:w-64">
+                    <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
+                    <input 
+                        type="text" 
+                        placeholder="Search Product..." 
+                        className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-slate-500 shadow-sm"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                </div>
             </div>
         </div>
 
@@ -366,7 +407,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                     {stats.length === 0 && (
                         <tr>
                             <td colSpan={9} className="px-6 py-12 text-center text-slate-400">
-                                No data available for reconciliation.
+                                No data available for the selected period.
                             </td>
                         </tr>
                     )}

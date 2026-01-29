@@ -17,22 +17,51 @@ export class ShopifyAdapter {
     let cleanUrl = config.store_url.replace(/^https?:\/\//, '').replace(/\/$/, '').trim();
     if (!cleanUrl.includes('.')) cleanUrl += '.myshopify.com';
 
-    const endpoint = `orders.json?status=any&limit=250&created_at_min=${twoMonthsAgo.toISOString()}&fields=id,name,created_at,financial_status,fulfillment_status,cancel_reason,total_price,line_items,customer`;
-    const targetUrl = `https://${cleanUrl}/admin/api/2024-01/${endpoint}`;
+    let allOrders: ShopifyOrder[] = [];
+    let sinceId = 0;
+    let hasMore = true;
 
-    try {
-        const data = await this.fetchWithProxy(targetUrl, {
-            method: 'GET',
-            headers: {
-                'X-Shopify-Access-Token': accessToken,
-                'Content-Type': 'application/json',
+    // Pagination Loop: Fetch until no more pages
+    while (hasMore) {
+        // Use 'since_id' for pagination (Standard Shopify REST pattern for efficient traversal)
+        const endpoint = `orders.json?status=any&limit=250&created_at_min=${twoMonthsAgo.toISOString()}&since_id=${sinceId}&fields=id,name,created_at,financial_status,fulfillment_status,cancel_reason,total_price,line_items,customer`;
+        const targetUrl = `https://${cleanUrl}/admin/api/2024-01/${endpoint}`;
+
+        try {
+            const data = await this.fetchWithProxy(targetUrl, {
+                method: 'GET',
+                headers: {
+                    'X-Shopify-Access-Token': accessToken,
+                    'Content-Type': 'application/json',
+                }
+            });
+            
+            const batch = data.orders || [];
+            
+            if (batch.length > 0) {
+                allOrders = [...allOrders, ...batch];
+                // Update cursor to the ID of the last item fetched
+                sinceId = batch[batch.length - 1].id;
             }
-        });
-        return data.orders || [];
-    } catch (e) {
-        console.error("Shopify fetch failed:", e);
-        return [];
+
+            // If we got fewer than the limit, we've reached the end
+            if (batch.length < 250) {
+                hasMore = false;
+            }
+            
+            // Safety break for massive stores (optional cap at e.g., 50k orders if needed, but 2 months is usually safe)
+            if (allOrders.length > 20000) { 
+                console.warn("Hit safety limit of 20,000 orders for sync.");
+                hasMore = false; 
+            }
+
+        } catch (e) {
+            console.error("Shopify sync error on page:", e);
+            hasMore = false; // Stop syncing on error to prevent infinite loops
+        }
     }
+
+    return allOrders;
   }
 
   // Robust Fetcher with Vercel API support
