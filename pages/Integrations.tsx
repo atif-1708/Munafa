@@ -6,7 +6,7 @@ import { FacebookService } from '../services/facebook';
 import { supabase } from '../services/supabase';
 import { 
     CheckCircle2, AlertTriangle, Key, Globe, Loader2, Store, ArrowRight, 
-    RefreshCw, ShieldCheck, Link, Truck, Package, Info, Lock, Settings, ExternalLink, Facebook 
+    RefreshCw, ShieldCheck, Link, Truck, Package, Info, Lock, Settings, ExternalLink, Facebook, HelpCircle 
 } from 'lucide-react';
 
 // Helper to get Env Vars safely
@@ -72,7 +72,9 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   const [fbConfig, setFbConfig] = useState<MarketingConfig>({
       id: '', platform: 'Facebook', access_token: '', is_active: false
   });
+  const [fbManualToken, setFbManualToken] = useState('');
   const [availableAdAccounts, setAvailableAdAccounts] = useState<{id: string, name: string}[]>([]);
+  const [isVerifyingFb, setIsVerifyingFb] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [testingConnection, setTestingConnection] = useState<string | null>(null);
@@ -332,17 +334,52 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     setTestingConnection(null);
   };
 
-  // --- Facebook Integration Handlers ---
+  // --- Facebook Integration Handlers (Real) ---
 
-  const handleFacebookConnect = async () => {
-      // In a real app, this redirects to Facebook OAuth
-      // For Demo/Dev, we simulate a successful token retrieval
-      const demoToken = "demo_EAAG..."; 
+  const handleVerifyFbToken = async () => {
+      if (!fbManualToken || fbManualToken.length < 10) {
+          setErrorMessage("Please enter a valid Facebook Access Token.");
+          return;
+      }
+
+      setIsVerifyingFb(true);
+      setErrorMessage(null);
+
+      try {
+          const svc = new FacebookService();
+          const accounts = await svc.getAdAccounts(fbManualToken);
+          
+          if (accounts.length === 0) {
+              setErrorMessage("Token valid, but no Ad Accounts found. Check permissions.");
+          } else {
+              setAvailableAdAccounts(accounts);
+              setFbConfig(prev => ({ 
+                  ...prev, 
+                  access_token: fbManualToken, 
+                  platform: 'Facebook',
+                  is_active: false // Not active until saved
+              }));
+          }
+      } catch (e: any) {
+          console.error(e);
+          setErrorMessage("Failed to verify token: " + (e.message || "Unknown Error"));
+      } finally {
+          setIsVerifyingFb(false);
+      }
+  };
+
+  const handleSaveFbConfig = async () => {
+      if (!fbConfig.ad_account_id) {
+          setErrorMessage("Please select an Ad Account to track.");
+          return;
+      }
+      
+      setIsVerifyingFb(true);
       const newConfig: MarketingConfig = {
           ...fbConfig,
-          access_token: demoToken,
           is_active: true
       };
+      
       setFbConfig(newConfig);
       
       const { data: { session } } = await supabase.auth.getSession();
@@ -350,30 +387,21 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
          await supabase.from('marketing_configs').upsert({
              user_id: session.user.id,
              platform: 'Facebook',
-             access_token: demoToken,
+             access_token: newConfig.access_token,
+             ad_account_id: newConfig.ad_account_id,
              is_active: true
          }, { onConflict: 'user_id, platform' });
       }
 
-      // Fetch Accounts
-      const svc = new FacebookService();
-      const accounts = await svc.getAdAccounts(demoToken);
-      setAvailableAdAccounts(accounts);
-      if(onConfigUpdate) onConfigUpdate();
-  };
-
-  const saveAdAccount = async (accountId: string) => {
-      const newConfig = { ...fbConfig, ad_account_id: accountId };
-      setFbConfig(newConfig);
-      const { data: { session } } = await supabase.auth.getSession();
-      if(session?.user) {
-         await supabase.from('marketing_configs').update({ ad_account_id: accountId }).eq('user_id', session.user.id).eq('platform', 'Facebook');
-      }
+      setIsVerifyingFb(false);
       if(onConfigUpdate) onConfigUpdate();
   };
 
   const disconnectFacebook = async () => {
+      if(!window.confirm("Disconnect Facebook? Ad tracking will stop.")) return;
+      
       setFbConfig({ id: '', platform: 'Facebook', access_token: '', is_active: false, ad_account_id: '' });
+      setFbManualToken('');
       setAvailableAdAccounts([]);
       const { data: { session } } = await supabase.auth.getSession();
       if(session?.user) {
@@ -557,21 +585,9 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                    <Settings size={20} />
                                </div>
                                <div className="flex-1 min-w-0">
-                                   <label className="text-xs text-slate-500 font-bold uppercase mb-1 block">Selected Ad Account</label>
-                                   {availableAdAccounts.length > 0 ? (
-                                       <select 
-                                         className="w-full bg-white border-none p-0 font-medium text-slate-900 focus:ring-0 cursor-pointer"
-                                         value={fbConfig.ad_account_id || ''}
-                                         onChange={(e) => saveAdAccount(e.target.value)}
-                                       >
-                                           <option value="">-- Select Account --</option>
-                                           {availableAdAccounts.map(acc => (
-                                               <option key={acc.id} value={acc.id}>{acc.name} ({acc.id})</option>
-                                           ))}
-                                       </select>
-                                   ) : (
-                                       <p className="text-sm text-slate-400 italic">No ad accounts found.</p>
-                                   )}
+                                   <label className="text-xs text-slate-500 font-bold uppercase mb-1 block">Connected Account</label>
+                                   <p className="text-sm font-bold text-slate-900">{fbConfig.ad_account_id}</p>
+                                   <p className="text-xs text-slate-400 mt-1 truncate">Token: {fbConfig.access_token?.substring(0,10)}...</p>
                                </div>
                            </div>
                            <button onClick={disconnectFacebook} className="text-sm text-red-600 hover:text-red-700 hover:underline">
@@ -580,15 +596,73 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                        </div>
                   ) : (
                        <div className="space-y-4">
-                           <p className="text-sm text-slate-600 leading-relaxed">
-                               Connect your Meta Business Account to automatically pull daily ad spend per campaign. You will be able to map campaigns to specific products in the <strong>Ad Spend</strong> tab.
-                           </p>
-                           <button 
-                                onClick={handleFacebookConnect}
-                                className="w-full bg-[#1877F2] text-white py-3.5 rounded-xl text-sm font-bold hover:bg-[#166fe5] transition-all flex items-center justify-center gap-2"
-                            >
-                                <Facebook size={18} /> Connect with Facebook
-                            </button>
+                           <div className="bg-blue-50 p-4 rounded-lg text-sm text-blue-800 flex gap-2">
+                               <Info className="shrink-0 text-blue-600" size={18} />
+                               <p>
+                                   Use a <strong>System User Access Token</strong> (recommended) or Graph API token with <code>ads_read</code> and <code>read_insights</code> permissions.
+                               </p>
+                           </div>
+
+                           {!availableAdAccounts.length ? (
+                               <>
+                                   <div>
+                                       <label className="block text-sm font-bold text-slate-700 mb-2">Access Token</label>
+                                       <div className="relative">
+                                           <Key className="absolute left-4 top-3.5 text-slate-400" size={18} />
+                                           <input 
+                                               type="password"
+                                               placeholder="EAAG..."
+                                               className="w-full pl-11 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                                               value={fbManualToken}
+                                               onChange={(e) => setFbManualToken(e.target.value)}
+                                           />
+                                       </div>
+                                   </div>
+                                   <button 
+                                        onClick={handleVerifyFbToken}
+                                        disabled={isVerifyingFb || !fbManualToken}
+                                        className="w-full bg-slate-900 text-white py-3.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                    >
+                                        {isVerifyingFb ? <Loader2 className="animate-spin" size={16} /> : <ShieldCheck size={16} />}
+                                        Verify & Fetch Accounts
+                                    </button>
+                               </>
+                           ) : (
+                               <>
+                                   <div className="bg-green-50 text-green-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2">
+                                       <CheckCircle2 size={16} /> Token Verified
+                                   </div>
+                                   <div>
+                                       <label className="block text-sm font-bold text-slate-700 mb-2">Select Ad Account</label>
+                                       <select 
+                                           className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                                           value={fbConfig.ad_account_id || ''}
+                                           onChange={(e) => setFbConfig({...fbConfig, ad_account_id: e.target.value})}
+                                       >
+                                           <option value="">-- Select Account --</option>
+                                           {availableAdAccounts.map(acc => (
+                                               <option key={acc.id} value={acc.id}>{acc.name} ({acc.id})</option>
+                                           ))}
+                                       </select>
+                                   </div>
+                                   <div className="flex gap-3">
+                                       <button 
+                                            onClick={() => { setAvailableAdAccounts([]); setFbConfig({...fbConfig, ad_account_id: ''}); }}
+                                            className="flex-1 px-4 py-3 border border-slate-300 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50"
+                                        >
+                                            Back
+                                        </button>
+                                        <button 
+                                            onClick={handleSaveFbConfig}
+                                            disabled={isVerifyingFb || !fbConfig.ad_account_id}
+                                            className="flex-2 w-full bg-[#1877F2] text-white py-3.5 rounded-xl text-sm font-bold hover:bg-[#166fe5] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                        >
+                                            {isVerifyingFb ? <Loader2 className="animate-spin" size={16} /> : <Facebook size={16} />}
+                                            Save Configuration
+                                        </button>
+                                   </div>
+                               </>
+                           )}
                        </div>
                   )}
               </div>
