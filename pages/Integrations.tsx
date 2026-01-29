@@ -4,7 +4,7 @@ import { PostExAdapter } from '../services/couriers/postex';
 import { supabase } from '../services/supabase';
 import { 
     CheckCircle2, AlertTriangle, Key, Globe, Loader2, Store, ArrowRight, 
-    RefreshCw, ShieldCheck, Link, Truck, Package, Info, Lock, Settings 
+    RefreshCw, ShieldCheck, Link, Truck, Package, Info, Lock, Settings, ExternalLink 
 } from 'lucide-react';
 
 // Helper to get Env Vars safely
@@ -71,7 +71,9 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
 
   const [loading, setLoading] = useState(true);
   const [testingConnection, setTestingConnection] = useState<string | null>(null);
-  const [connectMethod, setConnectMethod] = useState<'manual' | 'oauth'>('manual');
+  
+  // Default to OAuth for "Automatic Integration" experience
+  const [connectMethod, setConnectMethod] = useState<'oauth' | 'manual'>('oauth');
   
   // OAuth Configuration (Platform Level)
   const ENV_CLIENT_ID = getEnv('VITE_SHOPIFY_API_KEY');
@@ -211,6 +213,8 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
 
       const scopes = 'read_orders,read_products,read_customers';
       const nonce = Math.random().toString(36).substring(7);
+      
+      // Ensure redirect_uri is exactly what is in Shopify Partner Dashboard
       const authUrl = `https://${shopUrl}/admin/oauth/authorize?client_id=${ENV_CLIENT_ID}&scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${nonce}`;
       window.location.href = authUrl; 
   };
@@ -377,7 +381,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
            <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex gap-3 text-sm text-amber-800">
                <AlertTriangle className="shrink-0 text-amber-600" size={20} />
                <div>
-                   <strong>Note:</strong> Auto-connect is not configured in environment. Please use Manual Connection.
+                   <strong>Note:</strong> Auto-connect is not configured in environment (API Key missing).
                </div>
            </div>
       )}
@@ -439,26 +443,33 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                           {/* Connection Method Tabs */}
                           <div className="flex bg-slate-100 p-1 rounded-lg mb-6">
                               <button 
+                                onClick={() => setConnectMethod('oauth')} 
+                                className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${connectMethod === 'oauth' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                              >
+                                Auto Connect (Recommended)
+                              </button>
+                              <button 
                                 onClick={() => setConnectMethod('manual')} 
                                 className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${connectMethod === 'manual' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                               >
                                 Manual API Token
                               </button>
-                              <button 
-                                onClick={() => setConnectMethod('oauth')} 
-                                className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${connectMethod === 'oauth' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                              >
-                                Auto Connect (OAuth)
-                              </button>
                           </div>
 
                           {connectMethod === 'oauth' ? (
                               <>
-                                <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 text-xs text-blue-800 leading-relaxed mb-2">
-                                    <Info size={14} className="inline mr-1 -mt-0.5" />
-                                    <strong>Installation Error?</strong> If you see "This app cannot be installed on this store", it means your Shopify App Settings restrict installation. 
-                                    Switch to <strong>Manual API Token</strong> above to bypass this check.
+                                <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 text-xs text-blue-800 leading-relaxed mb-4">
+                                    <div className="font-bold flex items-center gap-2 mb-1">
+                                        <Info size={14} /> Developer Configuration Required
+                                    </div>
+                                    If you see "App cannot be installed on this store", it means your Shopify App is not set to <strong>Public</strong>.
+                                    <ul className="list-disc pl-4 mt-1 space-y-1 text-blue-700">
+                                        <li>Go to <strong>Shopify Partners &rarr; Apps &rarr; App Setup</strong></li>
+                                        <li>Ensure App Distribution is set to <strong>Public</strong>.</li>
+                                        <li>Add <code>{redirectUri}</code> to Allowed Redirection URLs.</li>
+                                    </ul>
                                 </div>
+
                                 <div>
                                     <label className="block text-sm font-bold text-slate-700 mb-2">Store URL</label>
                                     <div className="relative group">
