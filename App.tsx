@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
@@ -413,7 +414,7 @@ const App: React.FC = () => {
                 {currentPage === 'orders' && <Orders orders={orders} />}
                 {currentPage === 'reconciliation' && <Reconciliation shopifyOrders={shopifyOrders} courierOrders={orders} products={products} />}
                 {currentPage === 'couriers' && <Couriers orders={orders} />}
-                {currentPage === 'profitability' && <Profitability orders={orders} products={products} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} />}
+                {currentPage === 'profitability' && <Profitability orders={orders} products={products} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} shopifyOrders={shopifyOrders} />}
                 {currentPage === 'inventory' && <Inventory products={products} onUpdateProducts={handleUpdateProducts} />}
                 {currentPage === 'marketing' && <Marketing adSpend={adSpend} products={products} onAddAdSpend={handleAddAdSpend} onDeleteAdSpend={handleDeleteAdSpend} />}
                 {currentPage === 'integrations' && <Integrations onConfigUpdate={() => setRefreshTrigger(p => p + 1)} />}

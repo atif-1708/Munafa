@@ -1,5 +1,6 @@
+
 import React, { useMemo, useState } from 'react';
-import { Order, Product, AdSpend } from '../types';
+import { Order, Product, AdSpend, ShopifyOrder } from '../types';
 import { calculateProductPerformance, formatCurrency, ProductPerformance } from '../services/calculator';
 import { Package, Eye, X, Banknote, ShoppingBag, CheckCircle2, RotateCcw, Clock, Layers, ChevronDown, ChevronRight, CornerDownRight, ArrowUpRight, TrendingUp, AlertCircle, Calendar, Target } from 'lucide-react';
 
@@ -8,6 +9,7 @@ interface ProfitabilityProps {
   products: Product[];
   adSpend?: AdSpend[];
   adsTaxRate?: number;
+  shopifyOrders?: ShopifyOrder[]; // New Prop
 }
 
 // Extend interface locally for view logic
@@ -86,6 +88,18 @@ const ProfitabilityRow: React.FC<ProfitabilityRowProps> = ({
                             )}
                         </div>
                     </div>
+                </td>
+                
+                {/* 1.1 Demand (New) */}
+                <td className="px-1 py-3 text-center tabular-nums bg-slate-50/30">
+                     <div className="text-slate-700 font-medium">{item.shopify_demand > 0 ? item.shopify_demand : '-'}</div>
+                </td>
+
+                {/* 1.2 Confirmed (New) */}
+                <td className="px-1 py-3 text-center tabular-nums bg-blue-50/10">
+                     <div className={`${item.confirmed_units > 0 ? 'text-blue-700' : 'text-slate-300'} font-medium`}>
+                         {item.confirmed_units > 0 ? item.confirmed_units : '-'}
+                     </div>
                 </td>
 
                 {/* 2. Delivered */}
@@ -166,7 +180,7 @@ const ProfitabilityRow: React.FC<ProfitabilityRowProps> = ({
     );
 };
 
-const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend = [], adsTaxRate = 0 }) => {
+const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend = [], adsTaxRate = 0, shopifyOrders = [] }) => {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [selectedItem, setSelectedItem] = useState<ProductPerformance | null>(null);
 
@@ -196,22 +210,34 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
         const d = new Date(a.date);
         return d >= start && d <= end;
     });
+    
+    // Also filter Shopify Orders for correct Demand calculation
+    const filteredShopifyOrders = shopifyOrders.filter(so => {
+         const d = new Date(so.created_at);
+         return d >= start && d <= end;
+    });
 
-    return { orders: filteredOrders, adSpend: filteredAdSpend };
-  }, [orders, adSpend, dateRange]);
+    return { orders: filteredOrders, adSpend: filteredAdSpend, shopifyOrders: filteredShopifyOrders };
+  }, [orders, adSpend, shopifyOrders, dateRange]);
 
-  const variantData = useMemo(() => calculateProductPerformance(filteredData.orders, products, filteredData.adSpend, adsTaxRate), [filteredData, products, adsTaxRate]);
+  const variantData = useMemo(() => calculateProductPerformance(
+      filteredData.orders, 
+      products, 
+      filteredData.adSpend, 
+      adsTaxRate,
+      filteredData.shopifyOrders
+  ), [filteredData, products, adsTaxRate]);
 
   // Group Aggregation & Filtering Logic
   const data = useMemo(() => {
     const groups: Record<string, GroupedProductPerformance> = {};
     const standalones: GroupedProductPerformance[] = [];
 
-    // Helper: Filter out "Booked" or "Unbooked" only items.
-    // We only want items that have been dispatched (In Transit, Sold, Returned) OR have money spent on Ads.
+    // Helper: Filter out inactive items.
+    // We want items that have been dispatched OR have ads spend OR have shopify demand
     const isActiveItem = (item: ProductPerformance) => {
         const totalDispatched = item.units_sold + item.units_returned + item.units_in_transit;
-        return totalDispatched > 0 || item.ad_spend_allocation > 0;
+        return totalDispatched > 0 || item.ad_spend_allocation > 0 || item.shopify_demand > 0;
     };
 
     // 1. Aggregate Variants
@@ -238,6 +264,8 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                     ad_spend_allocation: 0,
                     net_profit: 0,
                     rto_rate: 0,
+                    shopify_demand: 0, // Init Group
+                    confirmed_units: 0, // Init Group
                     variants: [] 
                 };
             }
@@ -255,6 +283,11 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
             g.overhead_allocation += item.overhead_allocation;
             g.tax_allocation += item.tax_allocation;
             g.ad_spend_allocation += item.ad_spend_allocation; 
+            
+            // New Aggregation
+            g.shopify_demand += item.shopify_demand;
+            g.confirmed_units += item.confirmed_units;
+
         } else {
             standalones.push(item);
         }
@@ -401,6 +434,11 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 <th className="pl-3 pr-2 py-3 font-semibold text-slate-700 w-[25%] uppercase tracking-wider">Product</th>
+                
+                {/* NEW COLUMNS */}
+                <th className="px-1 py-3 font-semibold text-slate-700 text-center uppercase tracking-wider bg-slate-100/50">Demand</th>
+                <th className="px-1 py-3 font-semibold text-slate-700 text-center uppercase tracking-wider bg-blue-50/20">Conf.</th>
+                
                 <th className="px-1 py-3 font-semibold text-slate-700 text-center uppercase tracking-wider">Del.</th>
                 <th className="px-1 py-3 font-semibold text-slate-700 text-center uppercase tracking-wider">Ret.</th>
                 <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider">Rev</th>
@@ -415,7 +453,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
             <tbody className="divide-y divide-slate-100">
               {data.length === 0 ? (
                   <tr>
-                      <td colSpan={10} className="px-6 py-12 text-center text-slate-400 italic">
+                      <td colSpan={12} className="px-6 py-12 text-center text-slate-400 italic">
                           No active dispatched orders or ad spend found for this period.
                       </td>
                   </tr>
