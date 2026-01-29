@@ -105,16 +105,16 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
 
             const pStat = productStats.get(fingerprint)!;
 
-            // 1. Demand (Count Orders, not Quantity)
-            pStat.shopifyDemand += 1;
+            // 1. Demand
+            pStat.shopifyDemand += item.quantity;
 
             // 2. Buckets (Mutually Exclusive for Reconciliation)
             if (isShopifyCancelled) {
-                pStat.cancelled += 1;
+                pStat.cancelled += item.quantity;
             } else if (hasCourierData) {
-                pStat.confirmed += 1;
+                pStat.confirmed += item.quantity;
             } else {
-                pStat.pending += 1;
+                pStat.pending += item.quantity;
             }
 
             // 3. Logistics Flow (Subset of Confirmed/Dispatched)
@@ -125,9 +125,9 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                 const isDelivered = courierOrder!.status === OrderStatus.DELIVERED;
                 const isRto = courierOrder!.status === OrderStatus.RETURNED || courierOrder!.status === OrderStatus.RTO_INITIATED;
 
-                if (isDispatched) pStat.dispatched += 1;
-                if (isDelivered) pStat.delivered += 1;
-                if (isRto) pStat.rto += 1;
+                if (isDispatched) pStat.dispatched += item.quantity;
+                if (isDelivered) pStat.delivered += item.quantity;
+                if (isRto) pStat.rto += item.quantity;
             }
 
             // Determine display status for the drill-down
@@ -176,7 +176,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-200 pb-6">
             <div>
                 <h2 className="text-2xl font-bold text-slate-900">Reconciliation</h2>
-                <p className="text-slate-500 text-sm">Compare Shopify demand vs Courier fulfillment per product (Order Count).</p>
+                <p className="text-slate-500 text-sm">Compare Shopify demand vs Courier fulfillment per product.</p>
             </div>
             
             <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
@@ -217,7 +217,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                     <tr>
                         <th className="px-4 py-4 font-bold text-slate-700 w-[25%] uppercase tracking-wider text-xs">Product</th>
                         <th className="px-2 py-4 font-bold text-slate-700 text-center uppercase tracking-wider text-xs bg-slate-100/50">
-                            Demand (Orders)
+                            Demand
                         </th>
                         
                         {/* Breakdown Columns */}
