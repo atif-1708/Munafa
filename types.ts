@@ -1,5 +1,4 @@
 
-
 // Database Schema Representations
 
 export enum CourierName {
@@ -113,7 +112,28 @@ export interface AdSpend {
   platform: 'Facebook' | 'TikTok' | 'Google';
   amount_spent: number;
   product_id?: string; // ID of the product OR group this ad was for
-  attributed_orders?: number; 
+  attributed_orders?: number;
+  
+  // New: Campaign Data for Auto-Sync
+  campaign_id?: string;
+  campaign_name?: string;
+}
+
+// New: Marketing Configuration (Facebook, etc)
+export interface MarketingConfig {
+    id: string;
+    platform: 'Facebook' | 'TikTok' | 'Google';
+    access_token: string;
+    ad_account_id?: string;
+    is_active: boolean;
+}
+
+// New: Campaign Mapping Strategy B
+export interface CampaignMapping {
+    campaign_id: string;
+    campaign_name: string;
+    product_id: string | null; // null = General Store Spend
+    platform: string;
 }
 
 // Dashboard Aggregates

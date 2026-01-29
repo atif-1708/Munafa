@@ -48,6 +48,8 @@ create table if not exists ad_spend (
   amount_spent numeric not null,
   product_id text,
   attributed_orders numeric,
+  campaign_id text, -- New
+  campaign_name text, -- New
   created_at timestamptz default now()
 );
 alter table ad_spend enable row level security;
@@ -106,3 +108,32 @@ alter table app_settings enable row level security;
 
 drop policy if exists "Users can all own settings" on app_settings;
 create policy "Users can all own settings" on app_settings for all using ( auth.uid() = user_id );
+
+-- 7. Marketing Configs (Facebook, TikTok, Google)
+create table if not exists marketing_configs (
+  id uuid default uuid_generate_v4() primary key,
+  user_id uuid references auth.users on delete cascade not null,
+  platform text not null, -- 'Facebook', 'TikTok', 'Google'
+  access_token text,
+  ad_account_id text,
+  is_active boolean default false,
+  created_at timestamptz default now(),
+  unique(user_id, platform)
+);
+alter table marketing_configs enable row level security;
+drop policy if exists "Users can manage own marketing configs" on marketing_configs;
+create policy "Users can manage own marketing configs" on marketing_configs for all using ( auth.uid() = user_id );
+
+-- 8. Campaign Mappings (Strategy B)
+create table if not exists campaign_mappings (
+  user_id uuid references auth.users on delete cascade not null,
+  campaign_id text not null,
+  campaign_name text,
+  product_id text, -- Can be null (General) or Product ID or Group ID
+  platform text,
+  updated_at timestamptz default now(),
+  primary key (user_id, campaign_id)
+);
+alter table campaign_mappings enable row level security;
+drop policy if exists "Users can manage own campaign mappings" on campaign_mappings;
+create policy "Users can manage own campaign mappings" on campaign_mappings for all using ( auth.uid() = user_id );

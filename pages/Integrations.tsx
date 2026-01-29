@@ -1,24 +1,23 @@
+
 import React, { useState, useEffect } from 'react';
-import { CourierName, CourierConfig, SalesChannel } from '../types';
+import { CourierName, CourierConfig, SalesChannel, MarketingConfig } from '../types';
 import { PostExAdapter } from '../services/couriers/postex';
+import { FacebookService } from '../services/facebook';
 import { supabase } from '../services/supabase';
 import { 
     CheckCircle2, AlertTriangle, Key, Globe, Loader2, Store, ArrowRight, 
-    RefreshCw, ShieldCheck, Link, Truck, Package, Info, Lock, Settings, ExternalLink 
+    RefreshCw, ShieldCheck, Link, Truck, Package, Info, Lock, Settings, ExternalLink, Facebook 
 } from 'lucide-react';
 
 // Helper to get Env Vars safely
 const getEnv = (key: string) => {
     try {
-        // Check for Vite's import.meta.env
         // @ts-ignore
         if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
             // @ts-ignore
             return import.meta.env[key];
         }
-    } catch (e) {
-        // Ignore
-    }
+    } catch (e) {}
     return '';
 };
 
@@ -69,6 +68,12 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     return initial;
   });
 
+  // 3. Separate State for Marketing
+  const [fbConfig, setFbConfig] = useState<MarketingConfig>({
+      id: '', platform: 'Facebook', access_token: '', is_active: false
+  });
+  const [availableAdAccounts, setAvailableAdAccounts] = useState<{id: string, name: string}[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [testingConnection, setTestingConnection] = useState<string | null>(null);
   
@@ -91,29 +96,16 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
         const { data: { session } } = await supabase.auth.getSession();
         
         if (session?.user) {
-            // A. Fetch Sales Channels (New Table)
-            const { data: salesData } = await supabase
-                .from('sales_channels')
-                .select('*')
-                .eq('user_id', session.user.id)
-                .eq('platform', 'Shopify')
-                .single();
-            
-            if (salesData) {
-                setShopifyConfig(salesData);
-            }
+            // A. Fetch Sales Channels
+            const { data: salesData } = await supabase.from('sales_channels').select('*').eq('user_id', session.user.id).eq('platform', 'Shopify').single();
+            if (salesData) setShopifyConfig(salesData);
 
-            // B. Fetch Couriers (Use OLD TABLE 'integration_configs' for compatibility)
-            const { data: courierData } = await supabase
-                .from('integration_configs') 
-                .select('*')
-                .eq('user_id', session.user.id);
-
+            // B. Fetch Couriers
+            const { data: courierData } = await supabase.from('integration_configs').select('*').eq('user_id', session.user.id);
             if (courierData) {
                 setCourierConfigs(prev => {
                     const newConfigs = { ...prev };
                     courierData.forEach((conf: any) => {
-                        // Map 'provider_id' from DB to 'courier_id' in State
                         const cName = conf.provider_id as string;
                         if (newConfigs[cName]) {
                             newConfigs[cName] = { 
@@ -127,6 +119,17 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                     });
                     return newConfigs;
                 });
+            }
+
+            // C. Fetch Marketing
+            const { data: marketingData } = await supabase.from('marketing_configs').select('*').eq('user_id', session.user.id).eq('platform', 'Facebook').single();
+            if (marketingData) {
+                setFbConfig(marketingData);
+                // If active, fetch ad accounts for dropdown
+                if(marketingData.access_token) {
+                    const svc = new FacebookService();
+                    svc.getAdAccounts(marketingData.access_token).then(setAvailableAdAccounts).catch(console.error);
+                }
             }
         } 
         setLoading(false);
@@ -142,7 +145,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
         // Handle Shopify OAuth Return
         if (code && shop && isPlatformConfigured) {
             await handleTokenExchange(shop, code, ENV_CLIENT_ID, ENV_CLIENT_SECRET);
-            // Clean URL
             window.history.replaceState({}, document.title, window.location.pathname);
         }
     };
@@ -153,7 +155,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
       setIsExchangingToken(true);
       setErrorMessage(null);
       try {
-          // Use CORS Proxy for client-side exchange
           const proxyUrl = 'https://corsproxy.io/?';
           const tokenUrl = `https://${shop}/admin/oauth/access_token`;
           const fullUrl = `${proxyUrl}${encodeURIComponent(tokenUrl)}`;
@@ -213,8 +214,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
 
       const scopes = 'read_orders,read_products,read_customers';
       const nonce = Math.random().toString(36).substring(7);
-      
-      // Ensure redirect_uri is exactly what is in Shopify Partner Dashboard
       const authUrl = `https://${shopUrl}/admin/oauth/authorize?client_id=${ENV_CLIENT_ID}&scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${nonce}`;
       window.location.href = authUrl; 
   };
@@ -224,17 +223,9 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
           setErrorMessage("Please enter both Store URL and Access Token");
           return;
       }
-
-      // STRICT SANITIZATION
       let shopUrl = shopifyConfig.store_url.trim();
       shopUrl = shopUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
-      
-      // Auto-append myshopify if missing (User convenience)
-      if (shopUrl.indexOf('.') === -1 && shopUrl.length > 0) {
-          shopUrl += '.myshopify.com';
-      }
-
-      // Trim Token (Critical for copy-paste)
+      if (shopUrl.indexOf('.') === -1 && shopUrl.length > 0) shopUrl += '.myshopify.com';
       const token = shopifyConfig.access_token.trim();
 
       const updatedConfig: SalesChannel = {
@@ -256,7 +247,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     }));
   };
 
-  // Save to 'sales_channels' table
   const saveSalesChannel = async (config: SalesChannel) => {
       setErrorMessage(null);
       const { data: { session } } = await supabase.auth.getSession();
@@ -271,44 +261,30 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
           is_active: config.is_active
       };
       
-      const { error } = await supabase
-        .from('sales_channels')
-        .upsert(payload, { onConflict: 'user_id, platform' });
-
+      const { error } = await supabase.from('sales_channels').upsert(payload, { onConflict: 'user_id, platform' });
       if (error) {
-          console.error("Sales Channel Save Error:", error);
           setErrorMessage("Database Save Failed: " + error.message);
       } else {
           if (onConfigUpdate) onConfigUpdate();
       }
   };
 
-  // Save to 'integration_configs' table (Using OLD table name for Couriers)
   const saveCourierConfig = async (courierId: string, isActive: boolean) => {
     setErrorMessage(null);
     const config = courierConfigs[courierId];
-    const updatedConfig = { ...config, is_active: isActive };
-    
-    setCourierConfigs(prev => ({ ...prev, [courierId]: updatedConfig }));
+    setCourierConfigs(prev => ({ ...prev, [courierId]: { ...config, is_active: isActive } }));
 
     try {
         const { data: { session } } = await supabase.auth.getSession();
-        
         if (session?.user) {
             const payload = {
                 user_id: session.user.id,
-                provider_id: courierId, // Map 'courier_id' -> 'provider_id'
+                provider_id: courierId,
                 api_token: config.api_token,
                 is_active: isActive
             };
-
-            // Using 'integration_configs' table
-            const { error } = await supabase
-                .from('integration_configs')
-                .upsert(payload, { onConflict: 'user_id, provider_id' }); 
-            
+            const { error } = await supabase.from('integration_configs').upsert(payload, { onConflict: 'user_id, provider_id' }); 
             if (error) {
-                console.error("Supabase Save Error:", error);
                 setErrorMessage("Failed to save to database. " + error.message);
                 return false;
             }
@@ -316,7 +292,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
         }
         return false;
     } catch (e: any) {
-        console.error(e);
         return false;
     } finally {
         if (onConfigUpdate) onConfigUpdate();
@@ -341,29 +316,71 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
         return;
     }
 
-    // Special logic for PostEx simulation validation
     if (courierName === CourierName.POSTEX) {
         const adapter = new PostExAdapter();
-        const tempConfig = { 
-            id: '', 
-            provider_id: courierName, // Adapter expects 'provider_id'
-            api_token: config.api_token, 
-            is_active: true 
-        };
+        const tempConfig = { id: '', provider_id: courierName, api_token: config.api_token, is_active: true };
         const success = await adapter.testConnection(tempConfig);
-        
         if (!success && !window.confirm("Connection check failed (likely CORS or Invalid Key). Force save anyway?")) {
              setTestingConnection(null);
              return;
         }
-    } 
-    else {
-        await new Promise(r => setTimeout(r, 500)); // Simulate check for others
+    } else {
+        await new Promise(r => setTimeout(r, 500));
     }
 
     await saveCourierConfig(courierName, true);
     setTestingConnection(null);
   };
+
+  // --- Facebook Integration Handlers ---
+
+  const handleFacebookConnect = async () => {
+      // In a real app, this redirects to Facebook OAuth
+      // For Demo/Dev, we simulate a successful token retrieval
+      const demoToken = "demo_EAAG..."; 
+      const newConfig: MarketingConfig = {
+          ...fbConfig,
+          access_token: demoToken,
+          is_active: true
+      };
+      setFbConfig(newConfig);
+      
+      const { data: { session } } = await supabase.auth.getSession();
+      if(session?.user) {
+         await supabase.from('marketing_configs').upsert({
+             user_id: session.user.id,
+             platform: 'Facebook',
+             access_token: demoToken,
+             is_active: true
+         }, { onConflict: 'user_id, platform' });
+      }
+
+      // Fetch Accounts
+      const svc = new FacebookService();
+      const accounts = await svc.getAdAccounts(demoToken);
+      setAvailableAdAccounts(accounts);
+      if(onConfigUpdate) onConfigUpdate();
+  };
+
+  const saveAdAccount = async (accountId: string) => {
+      const newConfig = { ...fbConfig, ad_account_id: accountId };
+      setFbConfig(newConfig);
+      const { data: { session } } = await supabase.auth.getSession();
+      if(session?.user) {
+         await supabase.from('marketing_configs').update({ ad_account_id: accountId }).eq('user_id', session.user.id).eq('platform', 'Facebook');
+      }
+      if(onConfigUpdate) onConfigUpdate();
+  };
+
+  const disconnectFacebook = async () => {
+      setFbConfig({ id: '', platform: 'Facebook', access_token: '', is_active: false, ad_account_id: '' });
+      setAvailableAdAccounts([]);
+      const { data: { session } } = await supabase.auth.getSession();
+      if(session?.user) {
+         await supabase.from('marketing_configs').delete().eq('user_id', session.user.id).eq('platform', 'Facebook');
+      }
+      if(onConfigUpdate) onConfigUpdate();
+  }
 
   return (
     <div className="space-y-8 max-w-6xl mx-auto pb-12">
@@ -376,15 +393,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
             <RefreshCw size={14} /> Refresh Status
         </button>
       </div>
-
-      {!isPlatformConfigured && !shopifyConfig.is_active && connectMethod === 'oauth' && (
-           <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex gap-3 text-sm text-amber-800">
-               <AlertTriangle className="shrink-0 text-amber-600" size={20} />
-               <div>
-                   <strong>Note:</strong> Auto-connect is not configured in environment (API Key missing).
-               </div>
-           </div>
-      )}
 
       {errorMessage && (
            <div className="bg-red-50 border border-red-200 p-4 rounded-xl flex gap-3 text-sm text-red-800 animate-in fade-in slide-in-from-top-2">
@@ -458,18 +466,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
 
                           {connectMethod === 'oauth' ? (
                               <>
-                                <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 text-xs text-blue-800 leading-relaxed mb-4">
-                                    <div className="font-bold flex items-center gap-2 mb-1">
-                                        <Info size={14} /> Developer Configuration Required
-                                    </div>
-                                    If you see "App cannot be installed on this store", it means your Shopify App is not set to <strong>Public</strong>.
-                                    <ul className="list-disc pl-4 mt-1 space-y-1 text-blue-700">
-                                        <li>Go to <strong>Shopify Partners &rarr; Apps &rarr; App Setup</strong></li>
-                                        <li>Ensure App Distribution is set to <strong>Public</strong>.</li>
-                                        <li>Add <code>{redirectUri}</code> to Allowed Redirection URLs.</li>
-                                    </ul>
-                                </div>
-
                                 <div>
                                     <label className="block text-sm font-bold text-slate-700 mb-2">Store URL</label>
                                     <div className="relative group">
@@ -484,65 +480,33 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                         />
                                     </div>
                                 </div>
-
-                                {isExchangingToken ? (
-                                    <button disabled className="w-full bg-slate-100 text-slate-500 py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 cursor-not-allowed">
-                                        <Loader2 className="animate-spin" size={18} /> Verifying Connection...
-                                    </button>
-                                ) : (
-                                    <button 
-                                        onClick={startOAuthFlow}
-                                        disabled={!shopifyConfig.store_url || !isPlatformConfigured}
-                                        className="w-full bg-slate-900 text-white py-3.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                                    >
-                                        Connect Shopify <ArrowRight size={16} />
-                                    </button>
-                                )}
+                                <button 
+                                    onClick={startOAuthFlow}
+                                    disabled={!shopifyConfig.store_url || !isPlatformConfigured}
+                                    className="w-full bg-slate-900 text-white py-3.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                >
+                                    Connect Shopify <ArrowRight size={16} />
+                                </button>
                               </>
                           ) : (
                               <>
-                                <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 text-sm text-slate-600 mb-2">
-                                    <div className="font-bold text-slate-800 flex items-center gap-2 mb-2">
-                                        <Settings size={14} /> How to get Access Token:
-                                    </div>
-                                    <ol className="list-decimal pl-4 space-y-1 text-xs">
-                                        <li>Go to <strong>Shopify Admin &rarr; Settings &rarr; Apps & sales channels</strong>.</li>
-                                        <li>Click <strong>Develop apps</strong> &rarr; Create an app.</li>
-                                        <li>Click <strong>Configure Admin API scopes</strong> and enable:
-                                            <ul className="list-disc pl-4 mt-1 mb-1 text-slate-500">
-                                                <li>read_orders</li>
-                                                <li>read_products</li>
-                                                <li>read_customers</li>
-                                            </ul>
-                                        </li>
-                                        <li>Click <strong>Install app</strong> and copy the <strong>Admin API access token</strong> (starts with <code>shpat_</code>).</li>
-                                    </ol>
-                                </div>
                                 <div>
                                     <label className="block text-sm font-bold text-slate-700 mb-2">Store URL</label>
-                                    <div className="relative group">
-                                        <Globe className="absolute left-4 top-3.5 text-slate-400 group-focus-within:text-green-600 transition-colors" size={18} />
-                                        <input 
-                                            type="text"
-                                            placeholder="your-brand.myshopify.com"
-                                            className="w-full pl-11 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-all"
-                                            value={shopifyConfig.store_url || ''}
-                                            onChange={(e) => setShopifyConfig({...shopifyConfig, store_url: e.target.value})}
-                                        />
-                                    </div>
+                                    <input 
+                                        type="text"
+                                        className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none"
+                                        value={shopifyConfig.store_url || ''}
+                                        onChange={(e) => setShopifyConfig({...shopifyConfig, store_url: e.target.value})}
+                                    />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-2">Admin API Access Token</label>
-                                    <div className="relative group">
-                                        <Lock className="absolute left-4 top-3.5 text-slate-400 group-focus-within:text-green-600 transition-colors" size={18} />
-                                        <input 
-                                            type="password"
-                                            placeholder="shpat_xxxxxxxxxxxxxxxxxxxxxxxx"
-                                            className="w-full pl-11 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-all"
-                                            value={shopifyConfig.access_token || ''}
-                                            onChange={(e) => setShopifyConfig({...shopifyConfig, access_token: e.target.value})}
-                                        />
-                                    </div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-2">Access Token</label>
+                                    <input 
+                                        type="password"
+                                        className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none"
+                                        value={shopifyConfig.access_token || ''}
+                                        onChange={(e) => setShopifyConfig({...shopifyConfig, access_token: e.target.value})}
+                                    />
                                 </div>
                                 <button 
                                     onClick={handleManualConnect}
@@ -559,7 +523,79 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
           </div>
       </section>
 
-      {/* 2. LOGISTICS PARTNERS */}
+      {/* 2. MARKETING */}
+      <section>
+          <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2 mt-8">
+              <Facebook className="text-blue-600" size={20} /> Marketing Integrations
+          </h3>
+           <div className={`
+              relative overflow-hidden rounded-2xl border transition-all duration-300 max-w-2xl
+              ${fbConfig.is_active ? 'bg-blue-50/50 border-blue-200 shadow-sm' : 'bg-white border-slate-200 shadow-md hover:shadow-lg'}
+          `}>
+               <div className="p-8">
+                  <div className="flex justify-between items-start mb-6">
+                      <div className="flex items-center gap-4">
+                          <div className="w-14 h-14 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-sm">
+                              <Facebook size={28} />
+                          </div>
+                          <div>
+                              <h3 className="font-bold text-xl text-slate-900">Facebook Ads</h3>
+                              <p className="text-sm text-slate-500">Auto-sync campaign spend & calculate ROAS</p>
+                          </div>
+                      </div>
+                      {fbConfig.is_active && (
+                          <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-bold flex items-center gap-1">
+                              <CheckCircle2 size={14} /> Connected
+                          </span>
+                      )}
+                  </div>
+
+                  {fbConfig.is_active ? (
+                       <div className="space-y-6">
+                           <div className="flex items-center gap-3 p-4 bg-white rounded-xl border border-blue-100 shadow-sm">
+                               <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
+                                   <Settings size={20} />
+                               </div>
+                               <div className="flex-1 min-w-0">
+                                   <label className="text-xs text-slate-500 font-bold uppercase mb-1 block">Selected Ad Account</label>
+                                   {availableAdAccounts.length > 0 ? (
+                                       <select 
+                                         className="w-full bg-white border-none p-0 font-medium text-slate-900 focus:ring-0 cursor-pointer"
+                                         value={fbConfig.ad_account_id || ''}
+                                         onChange={(e) => saveAdAccount(e.target.value)}
+                                       >
+                                           <option value="">-- Select Account --</option>
+                                           {availableAdAccounts.map(acc => (
+                                               <option key={acc.id} value={acc.id}>{acc.name} ({acc.id})</option>
+                                           ))}
+                                       </select>
+                                   ) : (
+                                       <p className="text-sm text-slate-400 italic">No ad accounts found.</p>
+                                   )}
+                               </div>
+                           </div>
+                           <button onClick={disconnectFacebook} className="text-sm text-red-600 hover:text-red-700 hover:underline">
+                               Disconnect Facebook
+                           </button>
+                       </div>
+                  ) : (
+                       <div className="space-y-4">
+                           <p className="text-sm text-slate-600 leading-relaxed">
+                               Connect your Meta Business Account to automatically pull daily ad spend per campaign. You will be able to map campaigns to specific products in the <strong>Ad Spend</strong> tab.
+                           </p>
+                           <button 
+                                onClick={handleFacebookConnect}
+                                className="w-full bg-[#1877F2] text-white py-3.5 rounded-xl text-sm font-bold hover:bg-[#166fe5] transition-all flex items-center justify-center gap-2"
+                            >
+                                <Facebook size={18} /> Connect with Facebook
+                            </button>
+                       </div>
+                  )}
+              </div>
+           </div>
+      </section>
+
+      {/* 3. LOGISTICS PARTNERS */}
       <section>
         <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2 mt-8">
             <Truck className="text-slate-500" size={20} /> Logistics Partners
