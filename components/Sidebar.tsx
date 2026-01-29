@@ -59,7 +59,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             
             {/* Inventory Alert Badge */}
             {item.id === 'inventory' && inventoryAlertCount > 0 && (
-                <div className="bg-red-50 text-white text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse shadow-sm shadow-red-900/50">
+                <div className="bg-red-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse shadow-sm shadow-red-900/50">
                     {inventoryAlertCount}
                 </div>
             )}

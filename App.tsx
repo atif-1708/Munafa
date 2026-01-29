@@ -62,7 +62,11 @@ const App: React.FC = () => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+       // Only update state if session ID or User ID changes to prevent re-renders on token refresh
+       setSession((prev: any) => {
+           if (prev?.access_token === session?.access_token) return prev;
+           return session;
+       });
     });
 
     return () => subscription.unsubscribe();
@@ -284,7 +288,7 @@ const App: React.FC = () => {
     };
 
     fetchAppData();
-  }, [session, isDemoMode, refreshTrigger]);
+  }, [session?.user?.id, isDemoMode, refreshTrigger]);
 
   const handleUpdateProducts = async (updatedProducts: Product[]) => {
     // 1. Optimistic Update
