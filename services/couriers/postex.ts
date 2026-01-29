@@ -1,19 +1,21 @@
 import { CourierAdapter } from './adapter';
 import { IntegrationConfig, TrackingUpdate, OrderStatus, Order, CourierName, PaymentStatus } from '../../types';
-import { getOrders, getProducts } from '../mockData'; // Import mock generator for simulation mode
+import { getOrders, getProducts } from '../mockData';
 
 export class PostExAdapter implements CourierAdapter {
   name = CourierName.POSTEX;
   private readonly BASE_URL = 'https://api.postex.pk/services/integration/api';
   
-  // PROXY: Required to bypass CORS in browser environments.
-  // Note: Free tier has 1MB limit.
-  private readonly PROXY_URL = 'https://corsproxy.io/?';
+  // List of proxies to try
+  private readonly PROXIES = [
+    'https://corsproxy.io/?',
+    'https://api.allorigins.win/raw?url='
+  ];
 
-  private getUrl(endpoint: string, params?: Record<string, string | number>): string {
+  // Robust Fetcher that tries multiple proxies
+  private async fetchWithFallback(endpoint: string, options: RequestInit, params?: Record<string, string | number>): Promise<any> {
     let url = `${this.BASE_URL}${endpoint}`;
     
-    // Append query parameters if they exist (for GET requests)
     if (params) {
         const query = Object.entries(params)
             .filter(([_, value]) => value !== undefined && value !== null)
@@ -22,7 +24,36 @@ export class PostExAdapter implements CourierAdapter {
         url += `?${query}`;
     }
 
-    return `${this.PROXY_URL}${encodeURIComponent(url)}`;
+    const encodedTarget = encodeURIComponent(url);
+    let lastError;
+
+    for (const proxyBase of this.PROXIES) {
+        try {
+            let fetchUrl = `${proxyBase}${encodedTarget}`;
+             // Add cache buster for allorigins
+            if (proxyBase.includes('allorigins')) {
+                fetchUrl += `&timestamp=${Date.now()}`;
+            }
+
+            const response = await fetch(fetchUrl, options);
+
+            if (!response.ok) {
+                 // Special handling for Proxy Errors (403 often means size limit on proxy)
+                 if (response.status === 403) {
+                     const text = await response.text();
+                     if (text.includes('proxy files larger')) throw new Error('Proxy Limit Exceeded');
+                 }
+                 throw new Error(`HTTP ${response.status}`);
+            }
+            
+            return await response.json();
+
+        } catch (e: any) {
+            console.warn(`PostEx fetch failed via ${proxyBase}`, e);
+            lastError = e;
+        }
+    }
+    throw lastError || new Error("All proxy attempts failed");
   }
 
   private mapStatus(rawStatus: string): OrderStatus {
@@ -35,7 +66,6 @@ export class PostExAdapter implements CourierAdapter {
     if (status === 'unbooked') return OrderStatus.PENDING;
     if (status === 'booked') return OrderStatus.BOOKED;
     
-    // Transit statuses
     if (
         status === 'postex warehouse' || 
         status === 'out for delivery' || 
@@ -60,13 +90,11 @@ export class PostExAdapter implements CourierAdapter {
       return input
         .toLowerCase()
         .trim()
-        .replace(/[^a-z0-9]+/g, '-') // Replace special chars with dash
-        .replace(/^-+|-+$/g, '');    // Remove leading/trailing dashes
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
   }
 
-  // Page 17: Order Tracking API
   async track(trackingNumber: string, config: IntegrationConfig): Promise<TrackingUpdate> {
-    // SIMULATION MODE
     if (config.api_token.startsWith('demo_')) {
         await new Promise(r => setTimeout(r, 800));
         return {
@@ -79,19 +107,12 @@ export class PostExAdapter implements CourierAdapter {
     }
 
     try {
-      const response = await fetch(this.getUrl(`/order/v1/track-order/${trackingNumber}`), {
+      const data = await this.fetchWithFallback(`/order/v1/track-order/${trackingNumber}`, {
         method: 'GET',
-        headers: { 
-            'token': config.api_token,
-            'Accept': 'application/json' 
-        }
+        headers: { 'token': config.api_token, 'Accept': 'application/json' }
       });
-
-      if (!response.ok) throw new Error(`PostEx API Error: ${response.status} ${response.statusText}`);
-      const data = await response.json();
       
       const orderData = Array.isArray(data.dist) ? data.dist[0] : data.dist;
-      
       if (!orderData) throw new Error("Tracking data not found");
 
       const rawStatus = orderData.transactionStatus || orderData.orderStatus || 'Unknown';
@@ -109,9 +130,7 @@ export class PostExAdapter implements CourierAdapter {
     }
   }
 
-  // Page 12: Order Creation API (v3)
   async createBooking(order: Order, config: IntegrationConfig): Promise<string> {
-    // SIMULATION MODE
     if (config.api_token.startsWith('demo_')) {
         await new Promise(r => setTimeout(r, 1000));
         return `DEMO-PX-${Math.floor(Math.random() * 100000)}`;
@@ -130,54 +149,43 @@ export class PostExAdapter implements CourierAdapter {
       transactionNotes: "Handle with care" 
     };
 
-    const response = await fetch(this.getUrl(`/order/v3/create-order`), {
-      method: 'POST',
-      headers: { 
-          'token': config.api_token, 
-          'Content-Type': 'application/json' 
-      },
-      body: JSON.stringify(payload)
-    });
+    try {
+        const data = await this.fetchWithFallback(`/order/v3/create-order`, {
+          method: 'POST',
+          headers: { 'token': config.api_token, 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
 
-    if (!response.ok) throw new Error(`Booking Failed: ${response.status}`);
-    const data = await response.json();
-    
-    if (data.statusCode !== "200") {
-        throw new Error(data.statusMessage || "Booking Error");
+        if (data.statusCode !== "200") {
+            throw new Error(data.statusMessage || "Booking Error");
+        }
+        return data.dist?.trackingNumber || "";
+    } catch (e) {
+        throw e;
     }
-
-    return data.dist?.trackingNumber || "";
   }
 
-  // Page 6: Operational Cities API (Used for connection test)
   async testConnection(config: IntegrationConfig): Promise<boolean> {
-    // SIMULATION MODE: Bypass check if token starts with 'demo_'
     if (config.api_token.startsWith('demo_')) {
-        await new Promise(r => setTimeout(r, 1500)); // Simulate network latency
+        await new Promise(r => setTimeout(r, 1500));
         return true;
     }
 
     try {
-      const response = await fetch(this.getUrl(`/order/v2/get-operational-city`), {
+      await this.fetchWithFallback(`/order/v2/get-operational-city`, {
         method: 'GET',
-        headers: { 
-            'token': config.api_token,
-            'Accept': 'application/json'
-        }
+        headers: { 'token': config.api_token, 'Accept': 'application/json' }
       });
-      return response.ok;
+      return true;
     } catch (e) {
       console.error("Connection Test Failed:", e);
       return false;
     }
   }
 
-  // Page 29: List Orders API (Get All Orders)
   async fetchRecentOrders(config: IntegrationConfig): Promise<Order[]> {
-    // SIMULATION MODE: Generate consistent mock data
     if (config.api_token.startsWith('demo_')) {
         await new Promise(r => setTimeout(r, 1200));
-        // Reuse the mock data generator but filter for PostEx only to be realistic
         const mockOrders = getOrders(getProducts()); 
         return mockOrders.map(o => ({...o, courier: CourierName.POSTEX}));
     }
@@ -185,36 +193,19 @@ export class PostExAdapter implements CourierAdapter {
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 7); 
-
-    const formatDate = (d: Date) => d.toISOString().split('T')[0]; // yyyy-mm-dd
-
-    const params = {
-        orderStatusID: 0, 
-        orderStatusId: 0,
-        startDate: formatDate(startDate),
-        endDate: formatDate(endDate)
-    };
+    const formatDate = (d: Date) => d.toISOString().split('T')[0];
 
     try {
-        const response = await fetch(this.getUrl(`/order/v1/get-all-order`, params), {
+        const json = await this.fetchWithFallback(`/order/v1/get-all-order`, {
             method: 'GET',
-            headers: { 
-                'token': config.api_token, 
-                'Accept': 'application/json' 
-            }
+            headers: { 'token': config.api_token, 'Accept': 'application/json' }
+        }, {
+            orderStatusID: 0, 
+            orderStatusId: 0,
+            startDate: formatDate(startDate),
+            endDate: formatDate(endDate)
         });
 
-        if (!response.ok) {
-            if (response.status === 403) {
-                 const errorText = await response.text();
-                 if (errorText.includes('proxy files larger than')) {
-                     throw new Error(`Data too large for proxy. Please try 'demo_123' key for simulation.`);
-                 }
-            }
-            throw new Error(`Failed to fetch from PostEx (${response.status}).`);
-        }
-
-        const json = await response.json();
         const postExOrders = (json && json.dist) ? json.dist : [];
 
         return postExOrders.map((po: any) => {
@@ -222,8 +213,6 @@ export class PostExAdapter implements CourierAdapter {
             const amountStr = String(po.invoicePayment || '0').replace(/,/g, '');
             const amount = parseFloat(amountStr) || 0;
             
-            // --- FINGERPRINTING LOGIC ---
-            // We do not look for SKU. We fingerprint the description to find unique variants.
             let items: any[] = [];
             
             if (po.orderItems && Array.isArray(po.orderItems) && po.orderItems.length > 0) {
@@ -236,13 +225,12 @@ export class PostExAdapter implements CourierAdapter {
                         quantity: parseInt(item.quantity) || 1,
                         sale_price: parseFloat(item.price) || (amount / po.orderItems.length),
                         product_name: rawName,
-                        sku: fingerprint, // We use fingerprint as SKU
+                        sku: fingerprint,
                         variant_fingerprint: fingerprint,
                         cogs_at_time_of_order: 0
                     };
                 });
             } else {
-                // Fallback to Order Detail / Ref
                 const rawName = po.orderDetail || po.productName || po.orderRefNumber || 'General Item';
                 const fingerprint = this.createFingerprint(rawName);
 
@@ -251,7 +239,7 @@ export class PostExAdapter implements CourierAdapter {
                     quantity: 1,
                     sale_price: amount,
                     product_name: rawName,
-                    sku: fingerprint, // Use fingerprint as SKU for system consistency
+                    sku: fingerprint, 
                     variant_fingerprint: fingerprint,
                     cogs_at_time_of_order: 0 
                 }];
@@ -275,7 +263,6 @@ export class PostExAdapter implements CourierAdapter {
                 packaging_cost: 45,
                 overhead_cost: 0,
                 tax_amount: 0,
-                
                 items: items
             };
         });
