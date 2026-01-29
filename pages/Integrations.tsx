@@ -4,7 +4,7 @@ import { PostExAdapter } from '../services/couriers/postex';
 import { supabase } from '../services/supabase';
 import { 
     CheckCircle2, AlertTriangle, Key, Globe, Loader2, Store, ArrowRight, 
-    RefreshCw, ShieldCheck, Link, Truck, Package, Info, Lock 
+    RefreshCw, ShieldCheck, Link, Truck, Package, Info, Lock, Settings 
 } from 'lucide-react';
 
 // Helper to get Env Vars safely
@@ -71,7 +71,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
 
   const [loading, setLoading] = useState(true);
   const [testingConnection, setTestingConnection] = useState<string | null>(null);
-  const [useManualToken, setUseManualToken] = useState(false);
+  const [connectMethod, setConnectMethod] = useState<'manual' | 'oauth'>('manual');
   
   // OAuth Configuration (Platform Level)
   const ENV_CLIENT_ID = getEnv('VITE_SHOPIFY_API_KEY');
@@ -373,11 +373,11 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
         </button>
       </div>
 
-      {!isPlatformConfigured && !shopifyConfig.is_active && (
+      {!isPlatformConfigured && !shopifyConfig.is_active && connectMethod === 'oauth' && (
            <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex gap-3 text-sm text-amber-800">
                <AlertTriangle className="shrink-0 text-amber-600" size={20} />
                <div>
-                   <strong>Note:</strong> Auto-connect is not configured. Please use the Manual Connection method below.
+                   <strong>Note:</strong> Auto-connect is not configured in environment. Please use Manual Connection.
                </div>
            </div>
       )}
@@ -436,8 +436,29 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                        </div>
                   ) : (
                       <div className="space-y-4">
-                          {!useManualToken ? (
+                          {/* Connection Method Tabs */}
+                          <div className="flex bg-slate-100 p-1 rounded-lg mb-6">
+                              <button 
+                                onClick={() => setConnectMethod('manual')} 
+                                className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${connectMethod === 'manual' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                              >
+                                Manual API Token
+                              </button>
+                              <button 
+                                onClick={() => setConnectMethod('oauth')} 
+                                className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${connectMethod === 'oauth' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                              >
+                                Auto Connect (OAuth)
+                              </button>
+                          </div>
+
+                          {connectMethod === 'oauth' ? (
                               <>
+                                <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 text-xs text-blue-800 leading-relaxed mb-2">
+                                    <Info size={14} className="inline mr-1 -mt-0.5" />
+                                    <strong>Installation Error?</strong> If you see "This app cannot be installed on this store", it means your Shopify App Settings restrict installation. 
+                                    Switch to <strong>Manual API Token</strong> above to bypass this check.
+                                </div>
                                 <div>
                                     <label className="block text-sm font-bold text-slate-700 mb-2">Store URL</label>
                                     <div className="relative group">
@@ -466,20 +487,25 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                         Connect Shopify <ArrowRight size={16} />
                                     </button>
                                 )}
-                                <div className="text-center">
-                                     <button onClick={() => setUseManualToken(true)} className="text-xs text-slate-500 underline hover:text-slate-800">
-                                         Having trouble? Connect manually with Access Token
-                                     </button>
-                                </div>
                               </>
                           ) : (
                               <>
                                 <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 text-sm text-slate-600 mb-2">
-                                    <strong className="text-slate-800 block mb-1">How to get Access Token:</strong>
-                                    1. Go to Shopify Admin &rarr; Settings &rarr; Apps & sales channels.<br/>
-                                    2. Click <strong>Develop apps</strong> &rarr; Create an app.<br/>
-                                    3. Configure Admin API scopes (read_orders, read_products).<br/>
-                                    4. Install app and copy the <strong>Admin API access token</strong>.
+                                    <div className="font-bold text-slate-800 flex items-center gap-2 mb-2">
+                                        <Settings size={14} /> How to get Access Token:
+                                    </div>
+                                    <ol className="list-decimal pl-4 space-y-1 text-xs">
+                                        <li>Go to <strong>Shopify Admin &rarr; Settings &rarr; Apps & sales channels</strong>.</li>
+                                        <li>Click <strong>Develop apps</strong> &rarr; Create an app.</li>
+                                        <li>Click <strong>Configure Admin API scopes</strong> and enable:
+                                            <ul className="list-disc pl-4 mt-1 mb-1 text-slate-500">
+                                                <li>read_orders</li>
+                                                <li>read_products</li>
+                                                <li>read_customers</li>
+                                            </ul>
+                                        </li>
+                                        <li>Click <strong>Install app</strong> and copy the <strong>Admin API access token</strong> (starts with <code>shpat_</code>).</li>
+                                    </ol>
                                 </div>
                                 <div>
                                     <label className="block text-sm font-bold text-slate-700 mb-2">Store URL</label>
@@ -514,11 +540,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                 >
                                     Save Connection <ArrowRight size={16} />
                                 </button>
-                                <div className="text-center">
-                                     <button onClick={() => setUseManualToken(false)} className="text-xs text-slate-500 underline hover:text-slate-800">
-                                         Back to Auto Connect
-                                     </button>
-                                </div>
                               </>
                           )}
                       </div>
