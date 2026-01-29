@@ -5,7 +5,7 @@ import KPICard from '../components/KPICard';
 import ProfitChart from '../components/ProfitChart';
 import { 
   Wallet, TrendingDown, PackageCheck, AlertTriangle, 
-  Banknote, ArrowRightLeft, Calendar, Package, Truck, CheckCircle, ShoppingBasket, Hourglass, Clock, BarChart3, ClipboardList, Clipboard, Filter, Receipt, FileText
+  Banknote, ArrowRightLeft, Calendar, Package, Truck, CheckCircle, ShoppingBasket, Hourglass, Clock, BarChart3, ClipboardList, Clipboard, Filter, Receipt, FileText, ShoppingCart, CheckSquare, XCircle
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -46,6 +46,27 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend, adsTaxRate = 0 }
   }, [orders, adSpend, dateRange]);
 
   const metrics: DashboardMetrics = useMemo(() => calculateMetrics(filteredData.orders, filteredData.adSpend, adsTaxRate), [filteredData, adsTaxRate]);
+
+  // Shopify Order Flow Metrics
+  const shopifyMetrics = useMemo(() => {
+      const total = filteredData.orders.length;
+      let pending = 0;
+      let cancelled = 0;
+      let confirmed = 0;
+
+      filteredData.orders.forEach(o => {
+          if (o.status === OrderStatus.PENDING) {
+              pending++;
+          } else if (o.status === OrderStatus.CANCELLED) {
+              cancelled++;
+          } else {
+              // Any status other than Pending or Cancelled implies it was Confirmed/Booked
+              confirmed++;
+          }
+      });
+
+      return { total, pending, cancelled, confirmed };
+  }, [filteredData.orders]);
 
   // Transform data for chart based on selected range
   const chartData = useMemo(() => {
@@ -109,10 +130,9 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend, adsTaxRate = 0 }
     return Object.values(days);
   }, [filteredData, dateRange, adsTaxRate]);
 
-  const calculatePercentage = (count: number) => {
-      // Use Dispatched Orders as the denominator for operational percentages
-      if (metrics.dispatched_orders === 0) return '0%';
-      return `${((count / metrics.dispatched_orders) * 100).toFixed(1)}%`;
+  const calculatePercentage = (count: number, total: number = metrics.dispatched_orders) => {
+      if (total === 0) return '0%';
+      return `${((count / total) * 100).toFixed(1)}%`;
   };
 
   return (
@@ -210,6 +230,45 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, adSpend, adsTaxRate = 0 }
               subValue={`${metrics.roi.toFixed(1)}% ROI`}
               icon={Wallet} 
               color="emerald"
+            />
+        </div>
+      </div>
+
+      {/* Section 1.5: Shopify Order Flow */}
+      <div>
+        <div className="flex items-center gap-2 mb-4 mt-8">
+            <div className="h-6 w-1 bg-teal-600 rounded-full"></div>
+            <h3 className="text-lg font-bold text-slate-800">Shopify Order Flow</h3>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            <KPICard 
+              title="Total Orders" 
+              value={shopifyMetrics.total.toString()} 
+              subValue="Imported Volume"
+              icon={ShoppingCart} 
+              color="slate"
+            />
+            <KPICard 
+              title="Confirmed" 
+              value={shopifyMetrics.confirmed.toString()} 
+              subValue={`${calculatePercentage(shopifyMetrics.confirmed, shopifyMetrics.total)} Processing`}
+              icon={CheckSquare} 
+              color="blue"
+            />
+            <KPICard 
+              title="Pending" 
+              value={shopifyMetrics.pending.toString()} 
+              subValue={`${calculatePercentage(shopifyMetrics.pending, shopifyMetrics.total)} Action Needed`}
+              icon={Clock} 
+              color="yellow"
+            />
+             <KPICard 
+              title="Cancelled" 
+              value={shopifyMetrics.cancelled.toString()} 
+              subValue={`${calculatePercentage(shopifyMetrics.cancelled, shopifyMetrics.total)} Rate`}
+              icon={XCircle} 
+              color="red"
             />
         </div>
       </div>
