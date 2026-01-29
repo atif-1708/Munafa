@@ -54,12 +54,22 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, shopifyOrders = [], adSpe
 
   // Shopify Order Flow Metrics (Based on Raw Shopify Data)
   const shopifyMetrics = useMemo(() => {
-      const total = filteredData.shopifyOrders.length;
+      // 1. Deduplicate Orders by ID to ensure we count Orders, not lines/items.
+      const uniqueOrdersMap = new Map<number, ShopifyOrder>();
+      filteredData.shopifyOrders.forEach(o => {
+          if (!uniqueOrdersMap.has(o.id)) {
+              uniqueOrdersMap.set(o.id, o);
+          }
+      });
+      
+      const orders = Array.from(uniqueOrdersMap.values());
+      const total = orders.length;
+      
       let pending = 0;
       let cancelled = 0;
       let confirmed = 0;
 
-      filteredData.shopifyOrders.forEach(o => {
+      orders.forEach(o => {
           const isCancelled = o.cancel_reason !== null;
           // In Shopify: fulfilled = confirmed/processed. null = unfulfilled/pending.
           const isFulfilled = o.fulfillment_status === 'fulfilled' || o.fulfillment_status === 'partial';
