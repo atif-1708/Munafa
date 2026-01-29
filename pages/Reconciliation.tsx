@@ -50,19 +50,23 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
     const getFingerprint = (text: string) => text.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-');
 
     shopifyOrders.forEach(so => {
-        // Skip cancelled shopify orders for "Net Demand" calculation logic if desired, 
-        // but typically we want to see them if they caused stock movement.
-        // For this view, let's keep cancelled orders in the list but mark them clearly.
         const isCancelled = so.cancel_reason !== null;
         
         const key = so.name.replace('#', '').trim();
         const courierOrder = courierMap.get(key);
         
-        // Logic Definitions:
-        const isConfirmed = courierOrder !== undefined && courierOrder.status !== OrderStatus.CANCELLED;
-        const isDispatched = isConfirmed && 
+        // "Confirmed" = Has Courier Data OR is Cancelled (Processed)
+        // Definition: "fulfilled, Cancelled, and delivered".
+        // Effectively, anything NOT "Missed/Unbooked".
+        const hasCourierData = courierOrder !== undefined;
+        const isConfirmed = hasCourierData || isCancelled;
+
+        // Dispatched = Has courier data AND is moving (not just booked/pending/cancelled in courier)
+        const isDispatched = hasCourierData && 
                              courierOrder!.status !== OrderStatus.BOOKED && 
-                             courierOrder!.status !== OrderStatus.PENDING;
+                             courierOrder!.status !== OrderStatus.PENDING &&
+                             courierOrder!.status !== OrderStatus.CANCELLED;
+                             
         const isDelivered = courierOrder?.status === OrderStatus.DELIVERED;
         const isRto = courierOrder?.status === OrderStatus.RETURNED || courierOrder?.status === OrderStatus.RTO_INITIATED;
 
@@ -88,9 +92,8 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
 
             const pStat = productStats.get(fingerprint)!;
 
-            if (!isCancelled) {
-                pStat.shopifyDemand += item.quantity;
-            }
+            // Include ALL orders in Demand to calculate accurate Confirmation Rate
+            pStat.shopifyDemand += item.quantity;
 
             if (isConfirmed) pStat.confirmed += item.quantity;
             if (isDispatched) pStat.dispatched += item.quantity;
@@ -186,7 +189,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                 <tbody className="divide-y divide-slate-100">
                     {stats.map((p, idx) => {
                         const confirmRate = p.shopifyDemand > 0 ? (p.confirmed / p.shopifyDemand) * 100 : 0;
-                        const isLeakage = confirmRate < 90;
+                        const isLeakage = confirmRate < 95;
                         const isExpanded = expandedFingerprint === p.fingerprint;
 
                         return (
@@ -212,12 +215,19 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                                     </td>
 
                                     <td className="px-4 py-4 text-center">
-                                        <div className={`font-semibold ${isLeakage ? 'text-red-600' : 'text-blue-600'}`}>
-                                            {p.confirmed}
+                                        <div className="flex flex-col items-center">
+                                            <div className={`font-semibold ${isLeakage ? 'text-red-600' : 'text-blue-600'}`}>
+                                                {p.confirmed}
+                                            </div>
+                                            {p.shopifyDemand > 0 && (
+                                                <div className={`text-[10px] font-bold mt-0.5 ${isLeakage ? 'text-red-500' : 'text-green-600'}`}>
+                                                    {confirmRate.toFixed(0)}%
+                                                </div>
+                                            )}
                                         </div>
                                         {isLeakage && (
                                             <div className="text-[10px] text-red-500 flex items-center justify-center gap-1 mt-1">
-                                                <AlertCircle size={10} /> Missed
+                                                <AlertCircle size={10} /> {p.shopifyDemand - p.confirmed} Missed
                                             </div>
                                         )}
                                     </td>
