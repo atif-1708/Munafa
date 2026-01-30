@@ -7,7 +7,7 @@ import { FacebookService } from '../services/facebook';
 import { supabase } from '../services/supabase';
 import { 
     CheckCircle2, AlertTriangle, Key, Globe, Loader2, Store, ArrowRight, 
-    RefreshCw, ShieldCheck, Link, Truck, Info, Settings, Facebook, ChevronDown, ChevronUp 
+    RefreshCw, ShieldCheck, Link, Truck, Info, Settings, Facebook, ChevronDown, ChevronUp, Lock, HelpCircle 
 } from 'lucide-react';
 
 // UI Metadata for Couriers
@@ -140,13 +140,13 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
       const token = shopifyConfig.access_token.trim();
 
       if (!cleanUrl.includes('myshopify.com')) {
-          setErrorMessage("Please use your '.myshopify.com' domain (e.g., brand.myshopify.com), not a custom domain.");
+          setErrorMessage("Invalid URL. Please use your internal '.myshopify.com' domain (e.g. mystore-123.myshopify.com), NOT your custom domain.");
           setTestingConnection(null);
           return;
       }
       
       if (!token.startsWith('shpat_') && !token.startsWith('demo_')) {
-          setErrorMessage("Invalid Token Format. Admin API tokens usually start with 'shpat_'.");
+          setErrorMessage("Invalid Token. The Access Token must start with 'shpat_'. Please follow the guide below to create a Custom App.");
           setTestingConnection(null);
           return;
       }
@@ -159,7 +159,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
           if (success) {
               await handleManualConnect(true); // Save if success
           } else {
-              setErrorMessage("Connection Failed. Verify your Access Token and Store URL.");
+              setErrorMessage("Connection Failed. The token is valid, but we couldn't fetch orders. Ensure you checked 'read_orders' in API Scopes.");
           }
       } catch (e: any) {
           setErrorMessage("Connection Error: " + e.message);
@@ -282,9 +282,9 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     setTestingConnection(null);
   };
 
-  // --- Facebook Integration Handlers (Real) ---
-
+  // --- Facebook Integration Handlers ---
   const handleVerifyFbToken = async () => {
+      // ... (Existing Facebook Code)
       if (!fbManualToken || fbManualToken.length < 10) {
           setErrorMessage("Please enter a valid Facebook Access Token.");
           return;
@@ -317,6 +317,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   };
 
   const handleSaveFbConfig = async () => {
+      // ... (Existing Facebook Code)
       if (!fbConfig.ad_account_id) {
           setErrorMessage("Please select an Ad Account to track.");
           return;
@@ -377,7 +378,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
            </div>
       )}
 
-      {/* 1. SALES CHANNELS */}
+      {/* 1. SALES CHANNELS - MANUAL CONFIG ONLY */}
       <section>
           <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
               <Store className="text-slate-500" size={20} /> Sales Channels
@@ -393,8 +394,8 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                               <Store size={28} />
                           </div>
                           <div>
-                              <h3 className="font-bold text-xl text-slate-900">Shopify Store</h3>
-                              <p className="text-sm text-slate-500">Import Orders, Products & Customer Data</p>
+                              <h3 className="font-bold text-xl text-slate-900">Shopify Manual Integration</h3>
+                              <p className="text-sm text-slate-500">Connect using Admin API Token</p>
                           </div>
                       </div>
                       {shopifyConfig.is_active && (
@@ -411,81 +412,105 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                    <Globe size={20} />
                                </div>
                                <div className="flex-1 min-w-0">
-                                   <p className="text-xs text-slate-500 font-bold uppercase">Connected URL</p>
+                                   <p className="text-xs text-slate-500 font-bold uppercase">Connected Store</p>
                                    <p className="text-sm font-medium text-slate-900 truncate" title={shopifyConfig.store_url}>
                                        {shopifyConfig.store_url}
                                    </p>
                                </div>
                                <CheckCircle2 size={20} className="text-green-500" />
                            </div>
+                           <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-500">
+                               <p className="font-mono truncate">Token: ••••••••••••••••••••••{shopifyConfig.access_token.slice(-4)}</p>
+                           </div>
                            <button onClick={handleDisconnectShopify} className="text-sm text-red-600 hover:text-red-700 hover:underline">
                                Disconnect Store
                            </button>
                        </div>
                   ) : (
-                      <div className="space-y-4">
-                          <div className="bg-slate-50 p-4 rounded-lg text-sm text-slate-600 flex gap-2">
-                               <Info className="shrink-0 text-slate-500" size={18} />
-                               <div>
-                                   <p className="mb-1">
-                                       Create a Custom App in Shopify Admin to get your Access Token.
-                                   </p>
-                                   <button 
-                                        onClick={() => setShowShopifyGuide(!showShopifyGuide)}
-                                        className="text-xs font-bold text-brand-600 underline flex items-center gap-1 mt-1"
-                                   >
-                                        How to get Access Token? {showShopifyGuide ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}
-                                   </button>
-                               </div>
+                      <div className="space-y-6">
+                           {/* Guide Section */}
+                           <div className="bg-slate-50 border border-slate-200 rounded-xl p-5">
+                                <div className="flex items-start gap-3">
+                                    <HelpCircle className="text-brand-600 mt-0.5 shrink-0" size={18} />
+                                    <div>
+                                        <p className="text-sm font-bold text-slate-800 mb-1">How to generate Credentials?</p>
+                                        <p className="text-xs text-slate-500 leading-relaxed mb-3">
+                                            Shopify requires a <strong>Custom App</strong> to connect externally.
+                                        </p>
+                                        <button 
+                                            onClick={() => setShowShopifyGuide(!showShopifyGuide)}
+                                            className="text-xs font-bold text-brand-600 hover:text-brand-800 flex items-center gap-1"
+                                        >
+                                            {showShopifyGuide ? 'Hide Instructions' : 'Show Step-by-Step Guide'} 
+                                            {showShopifyGuide ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {showShopifyGuide && (
+                                    <div className="mt-4 pt-4 border-t border-slate-200 text-xs space-y-3 animate-in fade-in slide-in-from-top-2">
+                                        <ol className="list-decimal pl-4 space-y-2 text-slate-600">
+                                            <li>Go to your <strong>Shopify Admin</strong> &gt; <strong>Settings</strong> &gt; <strong>Apps and sales channels</strong>.</li>
+                                            <li>Click <strong>Develop apps</strong> (top right) &gt; <strong>Create an app</strong>. Name it "ProfitCalc".</li>
+                                            <li>Click <strong>Configure Admin API scopes</strong>.</li>
+                                            <li>Search and enable these scopes:
+                                                <ul className="list-disc pl-4 mt-1 text-slate-700 font-mono text-[10px]">
+                                                    <li>read_orders</li>
+                                                    <li>read_products</li>
+                                                    <li>read_customers</li>
+                                                </ul>
+                                            </li>
+                                            <li>Click <strong>Save</strong> (top right), then go to the <strong>API credentials</strong> tab.</li>
+                                            <li>Click <strong>Install app</strong>.</li>
+                                            <li>Under "Admin API access token", click <strong>Reveal token once</strong>. Copy this token (starts with <code>shpat_</code>).</li>
+                                        </ol>
+                                    </div>
+                                )}
                            </div>
 
-                           {/* Shopify Guide */}
-                           {showShopifyGuide && (
-                               <div className="bg-white border border-slate-200 rounded-lg p-4 text-xs space-y-2 animate-in fade-in slide-in-from-top-2">
-                                   <p className="font-bold text-slate-700">How to generate Admin API Access Token:</p>
-                                   <ol className="list-decimal pl-4 space-y-1 text-slate-600">
-                                       <li>Go to Shopify Admin &gt; <strong>Settings</strong> &gt; <strong>Apps and sales channels</strong>.</li>
-                                       <li>Click <strong>Develop apps</strong> &gt; <strong>Create an app</strong>. Name it "ProfitCalc".</li>
-                                       <li>Click <strong>Configure Admin API scopes</strong>.</li>
-                                       <li>Enable: <code>read_orders</code>, <code>read_products</code>, and <code>read_customers</code>.</li>
-                                       <li>Click <strong>Save</strong>, then go to <strong>API credentials</strong> tab.</li>
-                                       <li>Click <strong>Install app</strong> and copy the <strong>Admin API access token</strong> (starts with shpat_...).</li>
-                                   </ol>
-                               </div>
-                           )}
-
-                           <div>
-                                <label className="block text-sm font-bold text-slate-700 mb-2">Shopify Domain</label>
-                                <input 
-                                    type="text"
-                                    placeholder="brandname.myshopify.com"
-                                    className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none"
-                                    value={shopifyConfig.store_url || ''}
-                                    onChange={(e) => setShopifyConfig({...shopifyConfig, store_url: e.target.value})}
-                                />
-                                <p className="text-[10px] text-slate-400 mt-1">
-                                    Must be the original <strong>.myshopify.com</strong> domain, not your custom domain.
-                                </p>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-bold text-slate-700 mb-2">Admin API Access Token</label>
-                                <div className="relative">
-                                    <Key className="absolute left-4 top-3.5 text-slate-400" size={18} />
-                                    <input 
-                                        type="password"
-                                        placeholder="shpat_xxxxxxxxxxxxxxxx"
-                                        className="w-full pl-11 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none"
-                                        value={shopifyConfig.access_token || ''}
-                                        onChange={(e) => setShopifyConfig({...shopifyConfig, access_token: e.target.value})}
-                                    />
+                           {/* Form Section */}
+                           <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-2">
+                                        Store URL <span className="text-slate-400 font-normal">(.myshopify.com)</span>
+                                    </label>
+                                    <div className="relative">
+                                        <Globe className="absolute left-4 top-3.5 text-slate-400" size={18} />
+                                        <input 
+                                            type="text"
+                                            placeholder="e.g. mystore-123.myshopify.com"
+                                            className="w-full pl-11 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none text-sm transition-all"
+                                            value={shopifyConfig.store_url || ''}
+                                            onChange={(e) => setShopifyConfig({...shopifyConfig, store_url: e.target.value})}
+                                        />
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 mt-1.5 ml-1">
+                                        Do not use your custom domain (e.g. brand.com). Use the internal Shopify domain.
+                                    </p>
                                 </div>
-                            </div>
+
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-2">
+                                        Admin API Access Token <span className="text-slate-400 font-normal">(starts with shpat_)</span>
+                                    </label>
+                                    <div className="relative">
+                                        <Key className="absolute left-4 top-3.5 text-slate-400" size={18} />
+                                        <input 
+                                            type="password"
+                                            placeholder="shpat_xxxxxxxxxxxxxxxxxxxxxxxx"
+                                            className="w-full pl-11 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none text-sm transition-all"
+                                            value={shopifyConfig.access_token || ''}
+                                            onChange={(e) => setShopifyConfig({...shopifyConfig, access_token: e.target.value})}
+                                        />
+                                    </div>
+                                </div>
+                           </div>
                             
-                            <div className="flex gap-3">
+                            <div className="flex gap-3 pt-2">
                                 <button 
                                     onClick={handleTestShopify}
                                     disabled={testingConnection === 'Shopify' || !shopifyConfig.store_url || !shopifyConfig.access_token}
-                                    className="flex-1 bg-white border border-slate-300 text-slate-700 py-3.5 rounded-xl text-sm font-bold hover:bg-slate-50 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                    className="flex-1 bg-white border border-slate-300 text-slate-700 py-3 rounded-xl text-sm font-bold hover:bg-slate-50 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                                 >
                                     {testingConnection === 'Shopify' ? <Loader2 className="animate-spin" size={16} /> : <ShieldCheck size={16} />}
                                     Verify
@@ -493,9 +518,9 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                 <button 
                                     onClick={() => handleManualConnect(false)}
                                     disabled={!shopifyConfig.store_url || !shopifyConfig.access_token}
-                                    className="flex-2 w-full bg-slate-900 text-white py-3.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                    className="flex-[2] bg-slate-900 text-white py-3 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                                 >
-                                    Connect <ArrowRight size={16} />
+                                    Save & Connect <ArrowRight size={16} />
                                 </button>
                             </div>
                       </div>
@@ -505,11 +530,11 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
       </section>
 
       {/* 2. MARKETING */}
-      {/* ... (Rest of file unchanged) ... */}
       <section>
           <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2 mt-8">
               <Facebook className="text-blue-600" size={20} /> Marketing Integrations
           </h3>
+          {/* ... (Kept existing Facebook logic as is) ... */}
            <div className={`
               relative overflow-hidden rounded-2xl border transition-all duration-300 max-w-2xl
               ${fbConfig.is_active ? 'bg-blue-50/50 border-blue-200 shadow-sm' : 'bg-white border-slate-200 shadow-md hover:shadow-lg'}

@@ -18,7 +18,7 @@ export class PostExAdapter implements CourierAdapter {
         url += `?${query}`;
     }
 
-    // 1. Try Local API (Vercel/Next.js/Vite Proxy) first
+    // 1. Try Local API first
     try {
         const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
         const res = await fetch(proxyUrl, options);
@@ -28,20 +28,16 @@ export class PostExAdapter implements CourierAdapter {
                  return await res.json();
              }
         }
-    } catch (e) {
-        // Ignore and fallback to public proxies
-    }
+    } catch (e) {}
 
-    // 2. Public Proxies with specific formatting
-    // Prioritize corsproxy.io as it handles custom headers (like 'token') better than codetabs
+    // 2. Public Proxies
     const proxies = [
         { base: 'https://corsproxy.io/?', encode: true },
-        { base: 'https://api.codetabs.com/v1/proxy?quest=', encode: true },
         { base: 'https://thingproxy.freeboard.io/fetch/', encode: false },
+        // PostEx API is sometimes sensitive to headers; we try these two robust ones.
     ];
 
     let lastError: Error | null = null;
-    let authError: Error | null = null;
 
     for (const proxy of proxies) {
         try {
@@ -49,21 +45,16 @@ export class PostExAdapter implements CourierAdapter {
 
             const response = await fetch(fetchUrl, {
                 ...options,
-                credentials: 'omit', // Important: Do not send cookies to proxies
+                credentials: 'omit',
                 headers: {
                     ...options.headers,
-                    'X-Requested-With': 'XMLHttpRequest' 
+                    // Ensure NO extra headers that might confuse the proxy or destination
                 }
             });
 
             if (!response.ok) {
-                 if (response.status === 403 || response.status === 401) {
-                     const text = await response.text();
-                     // Capture auth error but TRY NEXT PROXY just in case this proxy stripped the headers
-                     authError = new Error(`API Error ${response.status}: ${text}`);
-                     continue;
-                 }
-                 // If 500 or other, try next
+                 const text = await response.text();
+                 lastError = new Error(`API Error ${response.status}: ${text}`);
                  continue;
             }
             
@@ -71,7 +62,7 @@ export class PostExAdapter implements CourierAdapter {
             try {
                 return JSON.parse(text);
             } catch {
-                 // Response was not JSON (likely an HTML error page from proxy)
+                 lastError = new Error("Invalid JSON response");
                  continue;
             }
 
@@ -81,15 +72,7 @@ export class PostExAdapter implements CourierAdapter {
         }
     }
     
-    // If we have an explicit Auth Error from one of the tries, throw that.
-    if (authError) throw authError;
-    
-    // Final error formatting
-    const msg = lastError?.message || "Unknown error";
-    if (msg.includes('Failed to fetch')) {
-        throw new Error("Network Error: Could not connect to PostEx via any proxy. Check internet connection.");
-    }
-    throw lastError || new Error("Connection failed. Check your API token.");
+    throw lastError || new Error("Network Error: Could not connect to PostEx. Please check your internet or try again later.");
   }
 
   private mapStatus(rawStatus: string): OrderStatus {
@@ -101,7 +84,6 @@ export class PostExAdapter implements CourierAdapter {
     if (status === 'unbooked') return OrderStatus.PENDING;
     if (status === 'booked') return OrderStatus.BOOKED;
 
-    // RTO Detection: Catch all return variations
     if (
         status.includes('return') || 
         status.includes('rto') ||
@@ -110,7 +92,6 @@ export class PostExAdapter implements CourierAdapter {
         return OrderStatus.RTO_INITIATED;
     }
     
-    // Delivery Flow
     if (
         status === 'postex warehouse' || 
         status === 'out for delivery' || 
@@ -124,7 +105,6 @@ export class PostExAdapter implements CourierAdapter {
         return OrderStatus.IN_TRANSIT;
     }
 
-    // Fallback: If we don't recognize it, but it's not any of the above closed states, assume In Transit
     return OrderStatus.IN_TRANSIT;
   }
 
@@ -135,11 +115,7 @@ export class PostExAdapter implements CourierAdapter {
 
   private createFingerprint(input: string): string {
       if (!input) return 'unknown-item';
-      return input
-        .toLowerCase()
-        .trim()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '');
+      return input.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   }
 
   async track(trackingNumber: string, config: IntegrationConfig): Promise<TrackingUpdate> {
@@ -220,7 +196,6 @@ export class PostExAdapter implements CourierAdapter {
     }
 
     try {
-      // Test endpoint: get operational cities (safe read-only)
       await this.fetchWithFallback(`/order/v2/get-operational-city`, {
         method: 'GET',
         headers: { 'token': config.api_token, 'Accept': 'application/json' }
@@ -241,7 +216,7 @@ export class PostExAdapter implements CourierAdapter {
 
     const endDate = new Date();
     const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 60); // 60 Days window
+    startDate.setDate(startDate.getDate() - 60); 
     const formatDate = (d: Date) => d.toISOString().split('T')[0];
 
     try {
