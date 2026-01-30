@@ -3,7 +3,6 @@ import { MarketingConfig, AdSpend } from '../types';
 
 export class FacebookService {
     private readonly API_VERSION = 'v19.0';
-    private readonly PROXY_URL = 'https://corsproxy.io/?';
 
     // Simulated Data for Demo Mode
     private getMockCampaigns(startDate: string, endDate: string) {
@@ -62,7 +61,7 @@ export class FacebookService {
 
     async fetchInsights(config: MarketingConfig, startDate: string, endDate: string): Promise<AdSpend[]> {
         if (!config.access_token || config.access_token.startsWith('demo_')) {
-            await new Promise(r => setTimeout(r, 1500)); // Simulate lag
+            await new Promise(r => setTimeout(r, 1500)); 
             return this.getMockCampaigns(startDate, endDate);
         }
 
@@ -70,36 +69,54 @@ export class FacebookService {
             throw new Error("No Ad Account selected");
         }
 
+        // Ensure act_ prefix if missing (common user error)
+        let accountId = config.ad_account_id;
+        if (!accountId.startsWith('act_')) {
+            accountId = `act_${accountId}`;
+        }
+
         try {
-            // Level: Campaign, Time Increment: 1 (Daily)
-            const fields = 'campaign_id,campaign_name,spend,date_start';
-            const url = `https://graph.facebook.com/${this.API_VERSION}/${config.ad_account_id}/insights?level=campaign&time_increment=1&time_range={'since':'${startDate}','until':'${endDate}'}&fields=${fields}&access_token=${config.access_token}&limit=500`;
+            // Correctly format JSON parameters
+            const timeRange = JSON.stringify({ since: startDate, until: endDate });
             
-            // Using Proxy if needed for client-side calls to Graph API (sometimes blocked)
-            // But Graph API usually supports CORS if origin is set in App.
-            // Safe fallback to fetch directly.
+            // Use URLSearchParams for safe encoding of special characters
+            const params = new URLSearchParams({
+                level: 'campaign',
+                time_increment: '1',
+                time_range: timeRange,
+                fields: 'campaign_id,campaign_name,spend,date_start',
+                access_token: config.access_token,
+                limit: '500'
+            });
+
+            const url = `https://graph.facebook.com/${this.API_VERSION}/${accountId}/insights?${params.toString()}`;
+            
             const res = await fetch(url);
             const json = await res.json();
             
             if (json.error) {
-                throw new Error(json.error.message);
+                // Handle specific permissions errors
+                if (json.error.code === 10 || json.error.code === 200 || json.error.code === 294) {
+                     throw new Error(`Permission Error: ${json.error.message}. Ensure token has 'ads_read'.`);
+                }
+                throw new Error(`Facebook API Error: ${json.error.message}`);
             }
 
             const data = json.data || [];
             
             return data.map((item: any) => ({
-                id: crypto.randomUUID(), // New ID for our DB
+                id: crypto.randomUUID(), 
                 date: item.date_start,
                 platform: 'Facebook',
                 amount_spent: parseFloat(item.spend || '0'),
                 campaign_id: item.campaign_id,
                 campaign_name: item.campaign_name,
-                product_id: undefined // Will be filled by Mapping Strategy
+                product_id: undefined // Will be filled by Mapping Strategy in the UI
             }));
 
-        } catch (e) {
+        } catch (e: any) {
             console.error("FB Insights Error", e);
-            throw e;
+            throw e; 
         }
     }
 }

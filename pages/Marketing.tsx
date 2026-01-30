@@ -45,6 +45,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
   // State for Facebook Integration
   const [fbConfig, setFbConfig] = useState<MarketingConfig | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [mappings, setMappings] = useState<CampaignMapping[]>([]);
   const hasLoadedConfig = useRef(false);
 
@@ -80,6 +81,8 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
       if (!onSyncAdSpend) return;
 
       setIsSyncing(true);
+      setSyncError(null);
+      
       try {
           const svc = new FacebookService();
           const start = dateRange.start;
@@ -98,8 +101,9 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
           // SYNC: Replace data for this range
           onSyncAdSpend('Facebook', start, end, newEntries);
 
-      } catch (e) {
+      } catch (e: any) {
           console.error(e);
+          setSyncError(e.message || "Failed to fetch Facebook data");
       } finally {
           setIsSyncing(false);
       }
@@ -476,6 +480,10 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
                               <span className="flex items-center gap-1 text-xs text-blue-600 font-bold bg-blue-100 px-2 py-0.5 rounded-full animate-pulse">
                                   <RefreshCw size={10} className="animate-spin" /> Auto-syncing...
                               </span>
+                          ) : syncError ? (
+                              <span className="flex items-center gap-1 text-xs text-red-700 font-bold bg-red-100 px-2 py-0.5 rounded-full">
+                                  <AlertTriangle size={10} /> Sync Failed
+                              </span>
                           ) : (
                               <span className="flex items-center gap-1 text-xs text-green-700 font-bold bg-green-100 px-2 py-0.5 rounded-full">
                                   <CheckCircle2 size={10} /> Up to date
@@ -490,6 +498,16 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
                       <span className="text-xs font-bold uppercase tracking-wide">Live Data</span>
                   </div>
               </div>
+
+              {syncError && (
+                   <div className="bg-red-50 border border-red-200 p-4 rounded-xl flex gap-3 text-sm text-red-800 animate-in fade-in slide-in-from-top-2">
+                       <AlertTriangle className="shrink-0 text-red-600" size={20} />
+                       <div>
+                           <p className="font-bold">Sync Error</p>
+                           <p>{syncError}</p>
+                       </div>
+                   </div>
+              )}
 
               {!fbConfig?.is_active && (
                   <div className="text-center py-12 bg-white rounded-xl border border-slate-200">
@@ -519,7 +537,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
                               </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                              {facebookCampaigns.length === 0 && (
+                              {facebookCampaigns.length === 0 && !syncError && (
                                   <tr>
                                       <td colSpan={4} className="px-6 py-12 text-center text-slate-400">
                                           {isSyncing ? 'Fetching campaigns...' : 'No campaigns found in this period.'}
