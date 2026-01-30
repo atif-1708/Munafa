@@ -78,8 +78,10 @@ export const calculateMetrics = (
        total_cogs += orderCost;
 
        // Cash in Stock = Cost of all skus except booked, unbooked, delivered (and cancelled)
-       // Essentially: Cost of Inventory currently floating in the courier network
-       if (!isDelivered) {
+       // Essentially: Cost of Inventory currently floating in the courier network.
+       // NOTE: We exclude 'RETURNED' (completed return) as that stock is assumed back in hand.
+       // 'RTO_INITIATED' is still considered in transit (risk).
+       if (!isDelivered && order.status !== OrderStatus.RETURNED) {
            cash_in_transit_stock += orderCost;
        }
     }
@@ -321,8 +323,12 @@ export const calculateProductPerformance = (
         if (order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED) {
              p.units_returned += item.quantity;
              p.shipping_cost_allocation += (shippingPerItem * item.quantity); 
-             // RTO is technically stock stuck in the network until received
-             p.cash_in_stock += (historicalCogs * item.quantity);
+             
+             // Inventory: If explicitly RETURNED, it's back in stock (no cash stuck).
+             // If RTO_INITIATED, it's still floating (cash stuck).
+             if (order.status === OrderStatus.RTO_INITIATED) {
+                 p.cash_in_stock += (historicalCogs * item.quantity);
+             }
         }
         // Delivered Logic
         else if (order.status === OrderStatus.DELIVERED) {

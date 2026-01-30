@@ -80,22 +80,35 @@ export class PostExAdapter implements CourierAdapter {
     
     if (status === 'delivered') return OrderStatus.DELIVERED;
     if (status === 'returned') return OrderStatus.RETURNED;
-    if (status === 'out for return' || status === 'return to shipper' || status === 'out for return') return OrderStatus.RTO_INITIATED;
     if (status === 'cancelled') return OrderStatus.CANCELLED;
     if (status === 'unbooked') return OrderStatus.PENDING;
     if (status === 'booked') return OrderStatus.BOOKED;
+
+    // RTO Detection: Catch all return variations
+    if (
+        status.includes('return') || 
+        status.includes('rto') ||
+        status === 'out for return'
+    ) {
+        // If it explicitly says "returned", it's final (handled above), otherwise it's initiated/in-progress
+        return OrderStatus.RTO_INITIATED;
+    }
     
+    // Delivery Flow
     if (
         status === 'postex warehouse' || 
         status === 'out for delivery' || 
         status === 'delivery under review' || 
         status === 'picked by postex' ||
         status === 'en-route to postex warehouse' ||
-        status === 'attempted'
+        status === 'attempted' ||
+        status === 'arrived at station' ||
+        status === 'in transit'
     ) {
         return OrderStatus.IN_TRANSIT;
     }
 
+    // Fallback: If we don't recognize it, but it's not any of the above closed states, assume In Transit
     return OrderStatus.IN_TRANSIT;
   }
 
