@@ -204,7 +204,7 @@ export class PostExAdapter implements CourierAdapter {
 
     const endDate = new Date();
     const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 7); 
+    startDate.setDate(startDate.getDate() - 60); 
     const formatDate = (d: Date) => d.toISOString().split('T')[0];
 
     try {
