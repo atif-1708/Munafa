@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { AdSpend, Product, MarketingConfig, CampaignMapping } from '../types';
+import { AdSpend, Product, MarketingConfig, CampaignMapping, Order } from '../types';
 import { formatCurrency } from '../services/calculator';
 import { FacebookService } from '../services/facebook';
 import { supabase } from '../services/supabase';
@@ -9,13 +9,14 @@ import { BarChart3, Plus, Trash2, Layers, Calendar, DollarSign, CalendarRange, R
 interface MarketingProps {
   adSpend: AdSpend[];
   products: Product[];
+  orders: Order[]; // New prop for filtering active products
   onAddAdSpend: (ads: AdSpend[]) => void;
   onDeleteAdSpend: (id: string) => void;
   onSyncAdSpend?: (platform: string, start: string, end: string, ads: AdSpend[]) => void;
   onNavigate?: (page: string) => void;
 }
 
-const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, onDeleteAdSpend, onSyncAdSpend, onNavigate }) => {
+const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddAdSpend, onDeleteAdSpend, onSyncAdSpend, onNavigate }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'facebook'>('overview');
   
   const [newAd, setNewAd] = useState<{
@@ -110,19 +111,51 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
       }
   };
 
-  // Extract unique groups
+  // Calculate active items in the date range for dropdown filtering
+  const activeItemKeys = useMemo(() => {
+      const start = new Date(dateRange.start);
+      start.setHours(0,0,0,0);
+      const end = new Date(dateRange.end);
+      end.setHours(23,59,59,999);
+
+      const keys = new Set<string>();
+      orders.forEach(o => {
+          const d = new Date(o.created_at);
+          if (d >= start && d <= end) {
+              o.items.forEach(i => {
+                  if (i.variant_fingerprint) keys.add(i.variant_fingerprint);
+                  if (i.sku) keys.add(i.sku);
+                  if (i.product_id) keys.add(i.product_id);
+              });
+          }
+      });
+      return keys;
+  }, [orders, dateRange]);
+
+  // Extract unique groups (Filtered by activity)
   const groups = useMemo(() => {
       const uniqueGroups = new Map();
       products.forEach(p => {
-          if (p.group_id && p.group_name) {
+          // Check if this product is active OR its group has other active members?
+          // Simplest approach: if this product is active, its group is relevant.
+          const isActive = activeItemKeys.has(p.variant_fingerprint || '') || activeItemKeys.has(p.sku) || activeItemKeys.has(p.id);
+          
+          if (isActive && p.group_id && p.group_name) {
               uniqueGroups.set(p.group_id, p.group_name);
           }
       });
       return Array.from(uniqueGroups.entries()).map(([id, name]) => ({ id, name }));
-  }, [products]);
+  }, [products, activeItemKeys]);
 
-  // Filter standalone products (not in any group)
-  const standaloneProducts = useMemo(() => products.filter(p => !p.group_id), [products]);
+  // Filter standalone products (Filtered by activity)
+  const standaloneProducts = useMemo(() => {
+      return products.filter(p => {
+          if (p.group_id) return false;
+          // Filter out inactive items
+          const isActive = activeItemKeys.has(p.variant_fingerprint || '') || activeItemKeys.has(p.sku) || activeItemKeys.has(p.id);
+          return isActive;
+      });
+  }, [products, activeItemKeys]);
 
   const generateUUID = () => {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -246,6 +279,28 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
      return days > 1 ? (parseFloat(newAd.amount) / days) : null;
   }, [newAd]);
 
+  const renderProductOptions = () => (
+      <>
+          <option value="">-- General Store Spend --</option>
+          {groups.length > 0 && (
+              <optgroup label="Active Product Groups">
+                  {groups.map(g => (
+                      <option key={g.id} value={g.id}>{g.name} (Group)</option>
+                  ))}
+              </optgroup>
+          )}
+          {standaloneProducts.length > 0 && (
+              <optgroup label="Active Individual Variants">
+                  {standaloneProducts.map(p => (
+                      <option key={p.id} value={p.id}>{p.title}</option>
+                  ))}
+              </optgroup>
+          )}
+          {/* Fallback for mapped products that might not be active in current view? 
+              For now we stick to user request: "show just items in the selected period" */}
+      </>
+  );
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -368,21 +423,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
                             value={newAd.product_id}
                             onChange={e => setNewAd({...newAd, product_id: e.target.value})}
                         >
-                            <option value="">-- General Store Spend --</option>
-                            {groups.length > 0 && (
-                                <optgroup label="Product Groups">
-                                    {groups.map(g => (
-                                        <option key={g.id} value={g.id}>{g.name} (Group)</option>
-                                    ))}
-                                </optgroup>
-                            )}
-                            {standaloneProducts.length > 0 && (
-                                <optgroup label="Individual Variants">
-                                    {standaloneProducts.map(p => (
-                                        <option key={p.id} value={p.id}>{p.title}</option>
-                                    ))}
-                                </optgroup>
-                            )}
+                            {renderProductOptions()}
                         </select>
                     </div>
                     <button type="submit" className="w-full bg-slate-900 text-white py-2 rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors">
@@ -611,21 +652,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
                                               value={camp.productId || ''}
                                               onChange={(e) => saveMapping(camp.id, camp.name, e.target.value)}
                                           >
-                                              <option value="">-- General Store Spend --</option>
-                                              {groups.length > 0 && (
-                                                  <optgroup label="Product Groups">
-                                                      {groups.map(g => (
-                                                          <option key={g.id} value={g.id}>{g.name} (Group)</option>
-                                                      ))}
-                                                  </optgroup>
-                                              )}
-                                              {standaloneProducts.length > 0 && (
-                                                  <optgroup label="Individual Variants">
-                                                      {standaloneProducts.map(p => (
-                                                          <option key={p.id} value={p.id}>{p.title}</option>
-                                                      ))}
-                                                  </optgroup>
-                                              )}
+                                              {renderProductOptions()}
                                           </select>
                                       </td>
                                   </tr>

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
@@ -455,11 +456,12 @@ const App: React.FC = () => {
                 {currentPage === 'reconciliation' && <Reconciliation shopifyOrders={shopifyOrders} courierOrders={orders} products={products} />}
                 {currentPage === 'couriers' && <Couriers orders={orders} />}
                 {currentPage === 'profitability' && <Profitability orders={orders} products={products} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} />}
-                {currentPage === 'inventory' && <Inventory products={products} onUpdateProducts={handleUpdateProducts} />}
+                {currentPage === 'inventory' && <Inventory products={products} orders={orders} onUpdateProducts={handleUpdateProducts} />}
                 {currentPage === 'marketing' && (
                     <Marketing 
                         adSpend={adSpend} 
                         products={products} 
+                        orders={orders}
                         onAddAdSpend={handleAddAdSpend} 
                         onDeleteAdSpend={handleDeleteAdSpend}
                         onSyncAdSpend={handleSyncAdSpend}

@@ -1,14 +1,16 @@
+
 import React, { useState, useMemo } from 'react';
-import { Product } from '../types';
+import { Product, Order } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { PackageSearch, History, Edit2, Plus, Save, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, FolderPlus } from 'lucide-react';
+import { PackageSearch, History, Edit2, Plus, Save, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar } from 'lucide-react';
 
 interface InventoryProps {
   products: Product[];
+  orders: Order[]; // Passed for date filtering
   onUpdateProducts: (products: Product[]) => void;
 }
 
-const Inventory: React.FC<InventoryProps> = ({ products, onUpdateProducts }) => {
+const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProducts }) => {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
@@ -22,10 +24,57 @@ const Inventory: React.FC<InventoryProps> = ({ products, onUpdateProducts }) => 
   const [newGroupName, setNewGroupName] = useState('');
   const [selectedGroupId, setSelectedGroupId] = useState('');
 
-  const filteredProducts = products.filter(p => 
-    p.title.toLowerCase().includes(search.toLowerCase()) || 
-    p.sku.toLowerCase().includes(search.toLowerCase())
-  );
+  // Default to Last 60 Days
+  const [dateRange, setDateRange] = useState(() => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - 60);
+    return {
+      start: start.toISOString().split('T')[0],
+      end: end.toISOString().split('T')[0]
+    };
+  });
+
+  // Calculate active items in the date range
+  const activeItemKeys = useMemo(() => {
+      const start = new Date(dateRange.start);
+      start.setHours(0,0,0,0);
+      const end = new Date(dateRange.end);
+      end.setHours(23,59,59,999);
+
+      const keys = new Set<string>();
+      orders.forEach(o => {
+          const d = new Date(o.created_at);
+          if (d >= start && d <= end) {
+              o.items.forEach(i => {
+                  if (i.variant_fingerprint) keys.add(i.variant_fingerprint);
+                  if (i.sku) keys.add(i.sku);
+                  if (i.product_id) keys.add(i.product_id);
+              });
+          }
+      });
+      return keys;
+  }, [orders, dateRange]);
+
+  const filteredProducts = useMemo(() => {
+      return products.filter(p => {
+          // 1. Text Search
+          const matchesSearch = p.title.toLowerCase().includes(search.toLowerCase()) || 
+                                p.sku.toLowerCase().includes(search.toLowerCase());
+          if (!matchesSearch) return false;
+
+          // 2. Date/Active Filter
+          // Logic: Show if product is active in period OR if it's currently selected OR if user is searching specifically
+          // If search is empty, enforce date filter strictly.
+          if (search.length === 0) {
+              const isActive = activeItemKeys.has(p.variant_fingerprint || '') || 
+                               activeItemKeys.has(p.sku) || 
+                               activeItemKeys.has(p.id);
+              return isActive;
+          }
+          return true;
+      });
+  }, [products, search, activeItemKeys]);
 
   // Organize Data into Groups and Singles
   const inventoryTree = useMemo(() => {
@@ -159,12 +208,13 @@ const Inventory: React.FC<InventoryProps> = ({ products, onUpdateProducts }) => 
 
   return (
     <div className="space-y-6 relative">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Inventory & Cost Manager</h2>
           <p className="text-slate-500 text-sm">Manage SKU costs and group variants for unified tracking.</p>
         </div>
-        <div className="flex items-center gap-3">
+        
+        <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
              {selectedIds.size > 0 && (
                  <button 
                     onClick={openGroupModal}
@@ -173,6 +223,25 @@ const Inventory: React.FC<InventoryProps> = ({ products, onUpdateProducts }) => 
                      <Layers size={16} /> Group Selected ({selectedIds.size})
                  </button>
              )}
+             
+             {/* Date Filter */}
+             <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm">
+                <Calendar size={16} className="text-slate-500" />
+                <input 
+                  type="date" 
+                  value={dateRange.start}
+                  onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+                  className="text-sm text-slate-700 bg-transparent border-none focus:ring-0 outline-none w-24 font-medium cursor-pointer"
+                />
+                <span className="text-slate-400 text-xs">to</span>
+                <input 
+                  type="date" 
+                  value={dateRange.end}
+                  onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+                  className="text-sm text-slate-700 bg-transparent border-none focus:ring-0 outline-none w-24 font-medium cursor-pointer"
+                />
+             </div>
+
              <div className="relative">
                  <input 
                     type="text" 
@@ -203,6 +272,13 @@ const Inventory: React.FC<InventoryProps> = ({ products, onUpdateProducts }) => 
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
+                        {inventoryTree.groups.length === 0 && inventoryTree.singles.length === 0 && (
+                            <tr>
+                                <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
+                                    No items found for this period. Try expanding the date range.
+                                </td>
+                            </tr>
+                        )}
                         {/* 1. Render Groups */}
                         {inventoryTree.groups.map(group => {
                             const isExpanded = expandedGroups.has(group.id);
