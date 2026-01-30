@@ -25,13 +25,18 @@ export class FacebookService {
             campaigns.forEach(c => {
                 // Random spend between 500 and 5000
                 const spend = Math.floor(Math.random() * 4500) + 500;
+                // Random purchases based on spend (approx 800-1500 per purchase)
+                const estimatedCPA = Math.floor(Math.random() * 700) + 800;
+                const purchases = Math.floor(spend / estimatedCPA);
+
                 data.push({
                     id: crypto.randomUUID(),
                     date: dateStr,
                     platform: 'Facebook',
                     amount_spent: spend,
                     campaign_id: c.id,
-                    campaign_name: c.name
+                    campaign_name: c.name,
+                    purchases: purchases
                 });
             });
         }
@@ -88,7 +93,8 @@ export class FacebookService {
                 level: 'campaign',
                 time_increment: '1',
                 time_range: timeRange,
-                fields: 'campaign_id,campaign_name,spend,date_start',
+                // Request 'actions' to get purchase data
+                fields: 'campaign_id,campaign_name,spend,date_start,actions',
                 access_token: config.access_token,
                 limit: '500'
             });
@@ -111,15 +117,24 @@ export class FacebookService {
 
             const data = json.data || [];
             
-            return data.map((item: any) => ({
-                id: crypto.randomUUID(), 
-                date: item.date_start,
-                platform: 'Facebook',
-                amount_spent: parseFloat(item.spend || '0'),
-                campaign_id: item.campaign_id,
-                campaign_name: item.campaign_name,
-                product_id: undefined // Will be filled by Mapping Strategy in the UI
-            }));
+            return data.map((item: any) => {
+                // Extract Purchases from actions array
+                const actions = item.actions || [];
+                // Look for standard 'purchase' or pixel specific purchase events
+                const purchaseAction = actions.find((a: any) => a.action_type === 'purchase' || a.action_type === 'offsite_conversion.fb_pixel_purchase');
+                const purchases = purchaseAction ? parseInt(purchaseAction.value) : 0;
+
+                return {
+                    id: crypto.randomUUID(), 
+                    date: item.date_start,
+                    platform: 'Facebook',
+                    amount_spent: parseFloat(item.spend || '0'),
+                    campaign_id: item.campaign_id,
+                    campaign_name: item.campaign_name,
+                    purchases: purchases,
+                    product_id: undefined // Will be filled by Mapping Strategy in the UI
+                };
+            });
 
         } catch (e: any) {
             console.error("FB Insights Error", e);

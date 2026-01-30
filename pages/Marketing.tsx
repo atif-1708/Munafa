@@ -3,7 +3,7 @@ import { AdSpend, Product, MarketingConfig, CampaignMapping } from '../types';
 import { formatCurrency } from '../services/calculator';
 import { FacebookService } from '../services/facebook';
 import { supabase } from '../services/supabase';
-import { BarChart3, Plus, Trash2, Layers, Calendar, DollarSign, CalendarRange, RefreshCw, Facebook, AlertTriangle, Link, ArrowRight, X, CheckCircle2, LayoutGrid, ListFilter, Zap, Settings } from 'lucide-react';
+import { BarChart3, Plus, Trash2, Layers, Calendar, DollarSign, CalendarRange, RefreshCw, Facebook, AlertTriangle, Link, ArrowRight, X, CheckCircle2, LayoutGrid, ListFilter, Zap, Settings, ShoppingBag, Target } from 'lucide-react';
 
 interface MarketingProps {
   adSpend: AdSpend[];
@@ -211,7 +211,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
   
   // Aggregate Campaigns for Facebook Tab
   const facebookCampaigns = useMemo(() => {
-      const stats = new Map<string, { id: string, name: string, spend: number, productId: string | undefined }>();
+      const stats = new Map<string, { id: string, name: string, spend: number, purchases: number, productId: string | undefined }>();
       
       filteredAds.forEach(ad => {
           if (ad.platform === 'Facebook' && ad.campaign_id) {
@@ -220,11 +220,13 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
                       id: ad.campaign_id,
                       name: ad.campaign_name || 'Unknown',
                       spend: 0,
+                      purchases: 0,
                       productId: ad.product_id
                   });
               }
               const c = stats.get(ad.campaign_id)!;
               c.spend += ad.amount_spent;
+              c.purchases += (ad.purchases || 0);
           }
       });
       return Array.from(stats.values()).sort((a,b) => b.spend - a.spend);
@@ -547,19 +549,24 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
                               <tr>
                                   <th className="px-6 py-4">Campaign Name</th>
                                   <th className="px-6 py-4 text-center">Status</th>
+                                  <th className="px-6 py-4 text-right">Purchases</th>
+                                  <th className="px-6 py-4 text-right">CPP</th>
                                   <th className="px-6 py-4 text-right">Total Spend</th>
-                                  <th className="px-6 py-4 w-[35%]">Mapped Product</th>
+                                  <th className="px-6 py-4 w-[25%]">Mapped Product</th>
                               </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
                               {facebookCampaigns.length === 0 && !syncError && (
                                   <tr>
-                                      <td colSpan={4} className="px-6 py-12 text-center text-slate-400">
+                                      <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
                                           {isSyncing ? 'Fetching campaigns...' : 'No campaigns found in this period.'}
                                       </td>
                                   </tr>
                               )}
-                              {facebookCampaigns.map(camp => (
+                              {facebookCampaigns.map(camp => {
+                                  const cpp = camp.purchases > 0 ? camp.spend / camp.purchases : 0;
+                                  
+                                  return (
                                   <tr key={camp.id} className="hover:bg-slate-50">
                                       <td className="px-6 py-4">
                                           <div className="font-bold text-slate-800">{camp.name}</div>
@@ -574,6 +581,22 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
                                               <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-red-100 text-red-700 text-xs font-bold animate-pulse">
                                                   <AlertTriangle size={12} /> Unmapped
                                               </span>
+                                          )}
+                                      </td>
+                                      <td className="px-6 py-4 text-right font-medium text-slate-700">
+                                          <div className="flex items-center justify-end gap-1">
+                                              <ShoppingBag size={14} className="text-slate-400" />
+                                              {camp.purchases}
+                                          </div>
+                                      </td>
+                                      <td className="px-6 py-4 text-right font-medium text-slate-700">
+                                          {cpp > 0 ? (
+                                            <div className="flex items-center justify-end gap-1 text-purple-600">
+                                                <Target size={14} />
+                                                {formatCurrency(cpp)}
+                                            </div>
+                                          ) : (
+                                            <span className="text-slate-300">-</span>
                                           )}
                                       </td>
                                       <td className="px-6 py-4 text-right font-bold text-slate-900">
@@ -605,7 +628,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
                                           </select>
                                       </td>
                                   </tr>
-                              ))}
+                              )})}
                           </tbody>
                       </table>
                   </div>

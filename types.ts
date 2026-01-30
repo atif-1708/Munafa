@@ -117,6 +117,7 @@ export interface AdSpend {
   // New: Campaign Data for Auto-Sync
   campaign_id?: string;
   campaign_name?: string;
+  purchases?: number; // Fetched from 'actions'
 }
 
 // New: Marketing Configuration (Facebook, etc)
