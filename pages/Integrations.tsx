@@ -617,7 +617,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                <div className="bg-white border border-blue-100 rounded-lg p-4 text-xs space-y-2 animate-in fade-in slide-in-from-top-2">
                                    <p className="font-bold text-slate-700">Get a non-expiring System User Token:</p>
                                    <ol className="list-decimal pl-4 space-y-1 text-slate-600">
-                                       <li>Go to <a href="https://business.facebook.com/settings/system-users" target="_blank" className="text-blue-600 underline">Business Settings > Users > System Users</a>.</li>
+                                       <li>Go to <a href="https://business.facebook.com/settings/system-users" target="_blank" className="text-blue-600 underline">Business Settings &gt; Users &gt; System Users</a>.</li>
                                        <li>Click <strong>Add</strong>, name it (e.g. "ProfitCalc"), set role to <strong>Admin</strong>.</li>
                                        <li>Click <strong>Add Assets</strong> and assign your Ad Account (Full Control).</li>
                                        <li>Click <strong>Generate New Token</strong>. Select your App.</li>
