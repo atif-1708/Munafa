@@ -11,6 +11,7 @@ interface ProfitabilityProps {
   products: Product[];
   adSpend?: AdSpend[];
   adsTaxRate?: number;
+  storeName?: string;
 }
 
 // Extend interface locally for view logic
@@ -174,7 +175,7 @@ const ProfitabilityRow: React.FC<ProfitabilityRowProps> = ({
 };
 
 
-const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend = [], adsTaxRate = 0 }) => {
+const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend = [], adsTaxRate = 0, storeName = 'My Store' }) => {
   const [dateRange, setDateRange] = useState(() => {
     const end = new Date();
     const start = new Date();
@@ -293,7 +294,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
         
         // Header
         doc.setFontSize(18);
-        doc.text("Product Profitability Report", 14, 15);
+        doc.text(`${storeName} - Product Profitability Report`, 14, 15);
         
         doc.setFontSize(10);
         doc.text(`Period: ${dateRange.start} to ${dateRange.end}`, 14, 22);

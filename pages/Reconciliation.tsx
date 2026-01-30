@@ -9,6 +9,7 @@ interface ReconciliationProps {
   shopifyOrders: ShopifyOrder[];
   courierOrders: Order[];
   products: Product[];
+  storeName?: string;
 }
 
 // Helper interface for the drill-down data
@@ -23,7 +24,7 @@ interface OrderDetail {
     isMissed: boolean;
 }
 
-const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierOrders, products }) => {
+const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierOrders, products, storeName = 'My Store' }) => {
   const [expandedFingerprint, setExpandedFingerprint] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [isExporting, setIsExporting] = useState(false);
@@ -185,7 +186,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
         
         // Header
         doc.setFontSize(18);
-        doc.text("Reconciliation Audit Report", 14, 15);
+        doc.text(`${storeName} - Reconciliation Audit`, 14, 15);
         
         doc.setFontSize(10);
         doc.text(`Period: ${dateRange.start} to ${dateRange.end}`, 14, 22);

@@ -58,18 +58,48 @@ export class ShopifyAdapter {
 
         } catch (e) {
             console.error("Shopify sync error on page:", e);
-            hasMore = false; // Stop syncing on error to prevent infinite loops
+            // If it's a critical auth error, stop. Otherwise, maybe just this page failed.
+            if ((e as Error).message.includes('Auth Failed')) {
+                throw e; // Stop the whole sync
+            }
+            hasMore = false; // Stop syncing on unknown error to prevent infinite loops
         }
     }
 
     return allOrders;
+  }
+  
+  // Verify credentials by fetching shop details
+  async testConnection(config: SalesChannel): Promise<boolean> {
+      if (!config.store_url || !config.access_token) return false;
+      
+      const accessToken = config.access_token.trim();
+      if (accessToken.startsWith('demo_')) return true;
+
+      let cleanUrl = config.store_url.replace(/^https?:\/\//, '').replace(/\/$/, '').trim();
+      if (!cleanUrl.includes('.')) cleanUrl += '.myshopify.com';
+
+      const targetUrl = `https://${cleanUrl}/admin/api/2024-01/shop.json`;
+
+      try {
+          const data = await this.fetchWithProxy(targetUrl, {
+              method: 'GET',
+              headers: {
+                  'X-Shopify-Access-Token': accessToken,
+                  'Content-Type': 'application/json',
+              }
+          });
+          return !!data.shop;
+      } catch (e) {
+          console.error("Shopify Connection Test Failed:", e);
+          return false;
+      }
   }
 
   // Robust Fetcher with Vercel API support
   private async fetchWithProxy(targetUrl: string, options: RequestInit): Promise<any> {
       // 1. Try Local API (Best for Vercel Production)
       try {
-          // Check if we are in a browser env where /api might exist
           const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
           const res = await fetch(proxyUrl, options);
           if (res.ok) {
@@ -77,61 +107,76 @@ export class ShopifyAdapter {
               if (contentType && contentType.includes('application/json')) {
                   return await res.json();
               }
-              // If text, check if it's valid JSON
-              const text = await res.text();
-              try { return JSON.parse(text); } catch { /* Not JSON */ }
           }
       } catch (e) {
           // Ignore local api error and fall back
       }
 
       // 2. Fallback: Public Proxies
-      // Order matters: AllOrigins is very reliable for simple GETs
+      // PRIORITIZE CORSPROXY.IO - It preserves headers best.
       const proxies = [
-          'https://api.allorigins.win/raw?url=',
-          'https://corsproxy.io/?', 
-          'https://thingproxy.freeboard.io/fetch/',
+        { base: 'https://corsproxy.io/?', encode: true },
+        { base: 'https://api.codetabs.com/v1/proxy?quest=', encode: true },
+        { base: 'https://thingproxy.freeboard.io/fetch/', encode: false },
       ];
 
-      for (const proxyBase of proxies) {
-          try {
-              let fetchUrl = '';
-              // URL Construction Logic
-              if (proxyBase.includes('corsproxy.io') || proxyBase.includes('allorigins')) {
-                   // These expect encoded URL
-                   fetchUrl = `${proxyBase}${encodeURIComponent(targetUrl)}`;
-              } else {
-                   fetchUrl = `${proxyBase}${targetUrl}`;
-              }
+      let authError: Error | null = null;
+      let networkError: Error | null = null;
 
-              const res = await fetch(fetchUrl, options);
+      for (const proxy of proxies) {
+          try {
+              const fetchUrl = proxy.encode ? `${proxy.base}${encodeURIComponent(targetUrl)}` : `${proxy.base}${targetUrl}`;
+
+              const res = await fetch(fetchUrl, {
+                  ...options,
+                  credentials: 'omit' // Prevent cookies to avoid CORS issues
+              });
               
               if (!res.ok) {
-                  // Specific check: If 401/403, the key/url is definitely wrong, don't retry proxies
+                  // If 401/403, it MIGHT be the proxy stripping headers. 
+                  // Store error and Try Next Proxy.
                   if (res.status === 401 || res.status === 403) {
                       const text = await res.text();
-                      throw new Error(`Shopify Auth Failed (${res.status}): ${text}`);
+                      // Only treat as definitive if the error body confirms it's from Shopify (JSON)
+                      // otherwise it might be the proxy blocking us.
+                      let isShopifyError = false;
+                      try {
+                          const json = JSON.parse(text);
+                          if (json.errors) isShopifyError = true;
+                      } catch {}
+
+                      const msg = `Shopify Auth Failed (${res.status}): ${text}`;
+                      
+                      // If we are sure it hit Shopify (isShopifyError), we *could* stop, but 
+                      // sometimes proxies mess up requests leading to auth errors. 
+                      // Safer to try all proxies if one fails.
+                      authError = new Error(msg);
+                      continue; 
                   }
+                  // For 500s or other errors, continue to next proxy
+                  networkError = new Error(`Proxy Error ${res.status}: ${res.statusText}`);
                   continue; 
               }
 
-              const contentType = res.headers.get('content-type');
-              if (contentType && contentType.includes('application/json')) {
-                  return await res.json();
-              } else {
-                  // Try parsing anyway, sometimes content-type is missing
-                  const text = await res.text();
-                  try {
-                      return JSON.parse(text);
-                  } catch {
-                      // ignore
-                  }
+              const text = await res.text();
+              try {
+                  return JSON.parse(text);
+              } catch {
+                  // Not JSON? Proxy returned HTML error page. Try next.
+                  continue;
               }
-          } catch (e) {
-              console.warn(`Proxy ${proxyBase} failed`, e);
+          } catch (e: any) {
+              networkError = e;
+              // Network error, try next proxy
           }
       }
-      throw new Error("Unable to connect to Shopify. Please check your Store URL and Internet Connection.");
+
+      // If we exhausted all proxies:
+      // If we encountered an Auth error (401), throw that (it's the most specific/likely root cause)
+      if (authError) throw authError;
+      
+      // Otherwise throw generic connectivity error
+      throw networkError || new Error("Unable to connect to Shopify. Please check your Store URL and Internet Connection.");
   }
 
   private getMockOrders(): ShopifyOrder[] {

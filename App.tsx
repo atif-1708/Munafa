@@ -463,11 +463,11 @@ const App: React.FC = () => {
         <div className="max-w-7xl mx-auto">
           {(isConfigured || currentPage === 'integrations') && (
               <>
-                {currentPage === 'dashboard' && <Dashboard orders={orders} shopifyOrders={shopifyOrders} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} />}
+                {currentPage === 'dashboard' && <Dashboard orders={orders} shopifyOrders={shopifyOrders} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} storeName={storeName} />}
                 {currentPage === 'orders' && <Orders orders={orders} />}
-                {currentPage === 'reconciliation' && <Reconciliation shopifyOrders={shopifyOrders} courierOrders={orders} products={products} />}
+                {currentPage === 'reconciliation' && <Reconciliation shopifyOrders={shopifyOrders} courierOrders={orders} products={products} storeName={storeName} />}
                 {currentPage === 'couriers' && <Couriers orders={orders} />}
-                {currentPage === 'profitability' && <Profitability orders={orders} products={products} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} />}
+                {currentPage === 'profitability' && <Profitability orders={orders} products={products} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} storeName={storeName} />}
                 {currentPage === 'inventory' && <Inventory products={products} orders={orders} onUpdateProducts={handleUpdateProducts} />}
                 {currentPage === 'marketing' && (
                     <Marketing 

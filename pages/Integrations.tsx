@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { CourierName, CourierConfig, SalesChannel, MarketingConfig } from '../types';
 import { PostExAdapter } from '../services/couriers/postex';
+import { ShopifyAdapter } from '../services/shopify';
 import { FacebookService } from '../services/facebook';
 import { supabase } from '../services/supabase';
 import { 
@@ -119,21 +120,67 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     loadConfigs();
   }, []);
 
-  const handleManualConnect = async () => {
+  const validateShopifyUrl = (url: string) => {
+      let shopUrl = url.trim();
+      shopUrl = shopUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      if (shopUrl.includes('/')) shopUrl = shopUrl.split('/')[0];
+      
+      // Heuristic: If user types "mystore", add ".myshopify.com"
+      if (!shopUrl.includes('.')) {
+          shopUrl += '.myshopify.com';
+      }
+      return shopUrl;
+  };
+
+  const handleTestShopify = async () => {
+      setErrorMessage(null);
+      setTestingConnection('Shopify');
+      
+      const cleanUrl = validateShopifyUrl(shopifyConfig.store_url);
+      const token = shopifyConfig.access_token.trim();
+
+      if (!cleanUrl.includes('myshopify.com')) {
+          setErrorMessage("Please use your '.myshopify.com' domain (e.g., brand.myshopify.com), not a custom domain.");
+          setTestingConnection(null);
+          return;
+      }
+      
+      if (!token.startsWith('shpat_') && !token.startsWith('demo_')) {
+          setErrorMessage("Invalid Token Format. Admin API tokens usually start with 'shpat_'.");
+          setTestingConnection(null);
+          return;
+      }
+
+      try {
+          const adapter = new ShopifyAdapter();
+          const tempConfig = { ...shopifyConfig, store_url: cleanUrl, access_token: token };
+          const success = await adapter.testConnection(tempConfig);
+          
+          if (success) {
+              await handleManualConnect(true); // Save if success
+          } else {
+              setErrorMessage("Connection Failed. Verify your Access Token and Store URL.");
+          }
+      } catch (e: any) {
+          setErrorMessage("Connection Error: " + e.message);
+      } finally {
+          setTestingConnection(null);
+      }
+  };
+
+  const handleManualConnect = async (verified: boolean = false) => {
       setErrorMessage(null);
       if (!shopifyConfig.store_url || !shopifyConfig.access_token) {
           setErrorMessage("Please enter both Store URL and Access Token");
           return;
       }
-      let shopUrl = shopifyConfig.store_url.trim();
-      shopUrl = shopUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
-      if (shopUrl.includes('/')) shopUrl = shopUrl.split('/')[0];
-      if (shopUrl.indexOf('.') === -1 && shopUrl.length > 0) shopUrl += '.myshopify.com';
+      
+      const cleanUrl = validateShopifyUrl(shopifyConfig.store_url);
       const token = shopifyConfig.access_token.trim();
 
       const updatedConfig: SalesChannel = {
           ...shopifyConfig,
-          store_url: shopUrl,
+          store_url: cleanUrl,
           access_token: token,
           is_active: true,
           platform: 'Shopify'
@@ -408,14 +455,17 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                            )}
 
                            <div>
-                                <label className="block text-sm font-bold text-slate-700 mb-2">Store URL</label>
+                                <label className="block text-sm font-bold text-slate-700 mb-2">Shopify Domain</label>
                                 <input 
                                     type="text"
-                                    placeholder="your-brand.myshopify.com"
+                                    placeholder="brandname.myshopify.com"
                                     className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none"
                                     value={shopifyConfig.store_url || ''}
                                     onChange={(e) => setShopifyConfig({...shopifyConfig, store_url: e.target.value})}
                                 />
+                                <p className="text-[10px] text-slate-400 mt-1">
+                                    Must be the original <strong>.myshopify.com</strong> domain, not your custom domain.
+                                </p>
                             </div>
                             <div>
                                 <label className="block text-sm font-bold text-slate-700 mb-2">Admin API Access Token</label>
@@ -430,13 +480,24 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                     />
                                 </div>
                             </div>
-                            <button 
-                                onClick={handleManualConnect}
-                                disabled={!shopifyConfig.store_url || !shopifyConfig.access_token}
-                                className="w-full bg-slate-900 text-white py-3.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                            >
-                                Connect Shopify <ArrowRight size={16} />
-                            </button>
+                            
+                            <div className="flex gap-3">
+                                <button 
+                                    onClick={handleTestShopify}
+                                    disabled={testingConnection === 'Shopify' || !shopifyConfig.store_url || !shopifyConfig.access_token}
+                                    className="flex-1 bg-white border border-slate-300 text-slate-700 py-3.5 rounded-xl text-sm font-bold hover:bg-slate-50 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                >
+                                    {testingConnection === 'Shopify' ? <Loader2 className="animate-spin" size={16} /> : <ShieldCheck size={16} />}
+                                    Verify
+                                </button>
+                                <button 
+                                    onClick={() => handleManualConnect(false)}
+                                    disabled={!shopifyConfig.store_url || !shopifyConfig.access_token}
+                                    className="flex-2 w-full bg-slate-900 text-white py-3.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                >
+                                    Connect <ArrowRight size={16} />
+                                </button>
+                            </div>
                       </div>
                   )}
               </div>
@@ -444,6 +505,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
       </section>
 
       {/* 2. MARKETING */}
+      {/* ... (Rest of file unchanged) ... */}
       <section>
           <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2 mt-8">
               <Facebook className="text-blue-600" size={20} /> Marketing Integrations

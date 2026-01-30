@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { LayoutDashboard, ShoppingBag, Truck, BarChart3, Settings, TrendingUp, Plug, PackageSearch, GitCompare, LogOut } from 'lucide-react';
 import { supabase } from '../services/supabase';
@@ -19,7 +20,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'reconciliation', label: 'Reconciliation', icon: GitCompare },
+    { id: 'reconciliation', label: 'Shopify', icon: GitCompare },
     { id: 'inventory', label: 'Inventory & Costs', icon: PackageSearch },
     { id: 'orders', label: 'Orders & RTO', icon: ShoppingBag },
     { id: 'couriers', label: 'Courier Performance', icon: Truck },

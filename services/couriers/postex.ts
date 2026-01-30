@@ -18,10 +18,9 @@ export class PostExAdapter implements CourierAdapter {
         url += `?${query}`;
     }
 
-    // 1. Try Local API (Vercel) first
+    // 1. Try Local API (Vercel/Next.js/Vite Proxy) first
     try {
         const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
-        // Only try local proxy if we are likely in an environment that supports it (relative path)
         const res = await fetch(proxyUrl, options);
         if (res.ok) {
              const contentType = res.headers.get('content-type');
@@ -30,56 +29,65 @@ export class PostExAdapter implements CourierAdapter {
              }
         }
     } catch (e) {
-        // Ignore and fallback
+        // Ignore and fallback to public proxies
     }
 
-    // 2. Public Proxies
-    // Added 'allorigins' as a reliable fallback
+    // 2. Public Proxies with specific formatting
+    // Prioritize corsproxy.io as it handles custom headers (like 'token') better than codetabs
     const proxies = [
-        'https://api.allorigins.win/raw?url=',
-        'https://corsproxy.io/?',
-        'https://thingproxy.freeboard.io/fetch/', 
+        { base: 'https://corsproxy.io/?', encode: true },
+        { base: 'https://api.codetabs.com/v1/proxy?quest=', encode: true },
+        { base: 'https://thingproxy.freeboard.io/fetch/', encode: false },
     ];
 
-    let lastError;
+    let lastError: Error | null = null;
+    let authError: Error | null = null;
 
-    for (const proxyBase of proxies) {
+    for (const proxy of proxies) {
         try {
-            let fetchUrl = '';
-             if (proxyBase.includes('corsproxy.io') || proxyBase.includes('allorigins')) {
-                   fetchUrl = `${proxyBase}${encodeURIComponent(url)}`;
-              } else {
-                   fetchUrl = `${proxyBase}${url}`;
-              }
+            const fetchUrl = proxy.encode ? `${proxy.base}${encodeURIComponent(url)}` : `${proxy.base}${url}`;
 
-            const response = await fetch(fetchUrl, options);
+            const response = await fetch(fetchUrl, {
+                ...options,
+                credentials: 'omit', // Important: Do not send cookies to proxies
+                headers: {
+                    ...options.headers,
+                    'X-Requested-With': 'XMLHttpRequest' 
+                }
+            });
 
             if (!response.ok) {
-                 if (response.status === 403) {
-                     // Some proxies return 403 if target forbids them
+                 if (response.status === 403 || response.status === 401) {
                      const text = await response.text();
-                     if (text.includes('proxy')) throw new Error('Proxy Limit Exceeded');
+                     // Capture auth error but TRY NEXT PROXY just in case this proxy stripped the headers
+                     authError = new Error(`API Error ${response.status}: ${text}`);
+                     continue;
                  }
-                 throw new Error(`HTTP ${response.status}`);
+                 // If 500 or other, try next
+                 continue;
             }
             
-            const contentType = response.headers.get('content-type');
-            if (contentType && contentType.includes('application/json')) {
-                return await response.json();
-            } else {
-                const text = await response.text();
-                // Try parsing JSON even if content-type is wrong
-                try {
-                    return JSON.parse(text);
-                } catch {
-                     throw new Error("Invalid JSON response via proxy");
-                }
+            const text = await response.text();
+            try {
+                return JSON.parse(text);
+            } catch {
+                 // Response was not JSON (likely an HTML error page from proxy)
+                 continue;
             }
 
         } catch (e: any) {
-            console.warn(`PostEx fetch failed via ${proxyBase}`, e);
+            console.warn(`PostEx fetch failed via ${proxy.base}`, e.message);
             lastError = e;
         }
+    }
+    
+    // If we have an explicit Auth Error from one of the tries, throw that.
+    if (authError) throw authError;
+    
+    // Final error formatting
+    const msg = lastError?.message || "Unknown error";
+    if (msg.includes('Failed to fetch')) {
+        throw new Error("Network Error: Could not connect to PostEx via any proxy. Check internet connection.");
     }
     throw lastError || new Error("Connection failed. Check your API token.");
   }
@@ -99,7 +107,6 @@ export class PostExAdapter implements CourierAdapter {
         status.includes('rto') ||
         status === 'out for return'
     ) {
-        // If it explicitly says "returned", it's final (handled above), otherwise it's initiated/in-progress
         return OrderStatus.RTO_INITIATED;
     }
     
@@ -108,7 +115,7 @@ export class PostExAdapter implements CourierAdapter {
         status === 'postex warehouse' || 
         status === 'out for delivery' || 
         status === 'delivery under review' || 
-        status === 'picked by postex' ||
+        status === 'picked by postex' || 
         status === 'en-route to postex warehouse' ||
         status === 'attempted' ||
         status === 'arrived at station' ||
@@ -213,6 +220,7 @@ export class PostExAdapter implements CourierAdapter {
     }
 
     try {
+      // Test endpoint: get operational cities (safe read-only)
       await this.fetchWithFallback(`/order/v2/get-operational-city`, {
         method: 'GET',
         headers: { 'token': config.api_token, 'Accept': 'application/json' }

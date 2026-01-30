@@ -16,9 +16,10 @@ interface DashboardProps {
   shopifyOrders?: ShopifyOrder[];
   adSpend: AdSpend[];
   adsTaxRate?: number;
+  storeName?: string;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ orders, shopifyOrders = [], adSpend, adsTaxRate = 0 }) => {
+const Dashboard: React.FC<DashboardProps> = ({ orders, shopifyOrders = [], adSpend, adsTaxRate = 0, storeName = 'My Store' }) => {
   // Default to Last 60 Days
   const [dateRange, setDateRange] = useState(() => {
     const end = new Date();
@@ -193,7 +194,7 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, shopifyOrders = [], adSpe
 
       pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfImgHeight);
       
-      const fileName = `Executive_Dashboard_${new Date().toISOString().split('T')[0]}.pdf`;
+      const fileName = `${storeName.replace(/\s+/g, '_')}_Executive_Dashboard_${new Date().toISOString().split('T')[0]}.pdf`;
       pdf.save(fileName);
     } catch (e) {
       console.error("PDF Export Error", e);
