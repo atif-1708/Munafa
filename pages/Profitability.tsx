@@ -43,6 +43,9 @@ const ProfitabilityRow: React.FC<ProfitabilityRowProps> = ({
     const bgClass = isChild ? 'bg-slate-50' : 'bg-white';
     const hoverClass = isChild ? 'hover:bg-slate-100' : 'hover:bg-gray-50';
 
+    // Calculate CPR (Cost Per Result) based on Facebook Purchases
+    const fbCpr = item.marketing_purchases > 0 ? item.ad_spend_allocation / item.marketing_purchases : 0;
+
     return (
         <>
             <tr 
@@ -109,21 +112,28 @@ const ProfitabilityRow: React.FC<ProfitabilityRowProps> = ({
                     {formatCurrency(item.gross_revenue)}
                 </td>
 
-                {/* 5. COGS */}
-                <td className="px-1 py-3 text-right text-slate-500 tabular-nums hidden sm:table-cell">
-                    {formatCurrency(item.cogs_total)}
+                {/* 5. Ads */}
+                <td className="px-1 py-3 text-right text-purple-600 tabular-nums">
+                    {item.ad_spend_allocation > 0 ? formatCurrency(item.ad_spend_allocation) : '-'}
                 </td>
 
-                {/* 6. Cash Stuck */}
+                {/* 6. Ad CPR (NEW) */}
+                <td className="px-1 py-3 text-right tabular-nums hidden sm:table-cell">
+                    {fbCpr > 0 ? (
+                        <div className="flex flex-col items-end">
+                             <span className="font-medium text-purple-700 text-xs">{formatCurrency(fbCpr)}</span>
+                             <span className="text-[10px] text-slate-400">({item.marketing_purchases})</span>
+                        </div>
+                    ) : (
+                         <span className="text-slate-300">-</span>
+                    )}
+                </td>
+
+                {/* 7. Cash Stuck */}
                 <td className="px-1 py-3 text-right tabular-nums hidden md:table-cell">
                     <span className={`${item.cash_in_stock > 0 ? 'text-indigo-600' : 'text-slate-300'}`}>
                         {formatCurrency(item.cash_in_stock)}
                     </span>
-                </td>
-
-                {/* 7. Ads (Moved before Gross) */}
-                <td className="px-1 py-3 text-right text-purple-600 tabular-nums">
-                    {item.ad_spend_allocation > 0 ? formatCurrency(item.ad_spend_allocation) : '-'}
                 </td>
 
                 {/* 8. Gross Profit (After Ads) */}
@@ -242,6 +252,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                     overhead_allocation: 0,
                     tax_allocation: 0,
                     ad_spend_allocation: 0,
+                    marketing_purchases: 0,
                     net_profit: 0,
                     rto_rate: 0,
                     variants: [] 
@@ -260,7 +271,8 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
             g.shipping_cost_allocation += item.shipping_cost_allocation;
             g.overhead_allocation += item.overhead_allocation;
             g.tax_allocation += item.tax_allocation;
-            g.ad_spend_allocation += item.ad_spend_allocation; 
+            g.ad_spend_allocation += item.ad_spend_allocation;
+            g.marketing_purchases += item.marketing_purchases; 
 
         } else {
             standalones.push(item);
@@ -273,11 +285,16 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
             .filter(a => a.product_id === groupId)
             .reduce((sum, a) => sum + a.amount_spent, 0);
         
+        const groupLevelPurchases = filteredData.adSpend
+            .filter(a => a.product_id === groupId)
+            .reduce((sum, a) => sum + (a.purchases || 0), 0);
+
         // Add Tax to Group Ads
         const groupLevelAds = groupLevelRawAds * (1 + adsTaxRate / 100);
         
         const g = groups[groupId];
         g.ad_spend_allocation += groupLevelAds;
+        g.marketing_purchases += groupLevelPurchases;
         
         const expenses = g.cogs_total + g.shipping_cost_allocation + g.overhead_allocation + g.tax_allocation + g.ad_spend_allocation;
         g.net_profit = g.gross_revenue - expenses - g.cash_in_stock;
@@ -412,9 +429,9 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                 <th className="px-1 py-3 font-semibold text-slate-700 text-center uppercase tracking-wider">Del.</th>
                 <th className="px-1 py-3 font-semibold text-slate-700 text-center uppercase tracking-wider">Ret.</th>
                 <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider">Rev</th>
-                <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider hidden sm:table-cell">COGS</th>
-                <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider hidden md:table-cell">Stock</th>
                 <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider">Ads</th>
+                <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider hidden sm:table-cell">Ad CPR</th>
+                <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider hidden md:table-cell">Stock</th>
                 <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider hidden lg:table-cell">Gross</th>
                 <th className="px-1 py-3 font-semibold text-slate-700 text-right uppercase tracking-wider">Net Profit</th>
                 <th className="px-2 py-3 font-semibold text-slate-700 text-center w-[50px]"></th>
@@ -562,7 +579,10 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                 
                                 {/* CPR Section */}
                                 {(() => {
+                                    // Use standard Blended CPR for Break Even calculation, but show FB CPR as distinct if available
                                     const { cpr, breakEvenCPR, totalOrders } = getCPRData(selectedItem);
+                                    const fbCpr = selectedItem.marketing_purchases > 0 ? selectedItem.ad_spend_allocation / selectedItem.marketing_purchases : 0;
+                                    
                                     if (totalOrders === 0 && selectedItem.ad_spend_allocation === 0) return null;
                                     
                                     return (
@@ -570,12 +590,20 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                             <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
                                                 <div className="flex items-center gap-2 mb-1">
                                                     <Target size={14} className="text-purple-500" />
-                                                    <p className="text-xs text-slate-500 uppercase font-bold">Cost Per Result</p>
+                                                    <p className="text-xs text-slate-500 uppercase font-bold">Blended CPR</p>
                                                 </div>
                                                 <p className="text-lg font-bold text-purple-600">
                                                     {totalOrders > 0 ? formatCurrency(cpr) : (selectedItem.ad_spend_allocation > 0 ? '∞' : formatCurrency(0))}
                                                 </p>
                                                 <p className="text-[10px] text-slate-400">Ads / Dispatched Order</p>
+                                                
+                                                {fbCpr > 0 && (
+                                                    <div className="mt-2 pt-2 border-t border-slate-200">
+                                                         <p className="text-xs text-slate-500 uppercase font-bold">FB Direct CPR</p>
+                                                         <p className="text-sm font-bold text-purple-600">{formatCurrency(fbCpr)}</p>
+                                                         <p className="text-[10px] text-slate-400">({selectedItem.marketing_purchases} conversions)</p>
+                                                    </div>
+                                                )}
                                             </div>
                                             <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
                                                 <div className="flex items-center gap-2 mb-1">

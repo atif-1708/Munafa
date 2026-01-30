@@ -96,9 +96,7 @@ export const calculateMetrics = (
 
   // Gross Profit (Operational Profit AFTER Ads)
   // Logic: Net Profit + Cash Stuck.
-  // This essentially means: Realized Revenue - Realized COGS - Shipping - Overhead - Tax - ADS.
-  // We add back cash_in_transit_stock because `net_profit` deducted full `total_cogs`.
-  // By adding it back, we get "Realized Profit after Ads".
+  // This essentially means: Realized Revenue - Realized COGS - Expenses (Before Cash Stuck) - ADS.
   const gross_profit = net_profit + cash_in_transit_stock;
 
   const total_finished_orders = delivered_orders + rto_orders;
@@ -226,6 +224,7 @@ export interface ProductPerformance {
   overhead_allocation: number;
   tax_allocation: number;
   ad_spend_allocation: number;
+  marketing_purchases: number; // NEW: Facebook Pixel Purchase Count
   net_profit: number;
   rto_rate: number;
 }
@@ -243,6 +242,7 @@ export const calculateProductPerformance = (
     // Sum relevant ads (DIRECT MATCH ONLY - Group ads handled in Profitability.tsx view)
     const relevantAds = adSpend.filter(a => a.product_id === p.id);
     const rawAdSpend = relevantAds.reduce((sum, a) => sum + a.amount_spent, 0);
+    const adPurchases = relevantAds.reduce((sum, a) => sum + (a.purchases || 0), 0); // Aggregate purchases
     const totalAdSpend = rawAdSpend * (1 + adsTaxRate / 100);
     
     // Key by Fingerprint (preferred) or SKU
@@ -262,6 +262,7 @@ export const calculateProductPerformance = (
       overhead_allocation: 0,
       tax_allocation: 0,
       ad_spend_allocation: totalAdSpend,
+      marketing_purchases: adPurchases, // Set aggregated purchases
       net_profit: 0,
       rto_rate: 0
     };
@@ -303,7 +304,7 @@ export const calculateProductPerformance = (
                  units_sold: 0, units_returned: 0, units_in_transit: 0,
                  gross_revenue: 0, cogs_total: 0, gross_profit: 0, cash_in_stock: 0,
                  shipping_cost_allocation: 0, overhead_allocation: 0, tax_allocation: 0,
-                 ad_spend_allocation: 0, net_profit: 0, rto_rate: 0
+                 ad_spend_allocation: 0, marketing_purchases: 0, net_profit: 0, rto_rate: 0
              };
         }
         
