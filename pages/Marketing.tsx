@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { AdSpend, Product, MarketingConfig, CampaignMapping } from '../types';
 import { formatCurrency } from '../services/calculator';
@@ -31,11 +32,11 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
       product_id: ''
   });
 
-  // Default to Last 30 Days
+  // Default to Last 60 Days
   const [dateRange, setDateRange] = useState(() => {
     const end = new Date();
     const start = new Date();
-    start.setDate(end.getDate() - 30);
+    start.setDate(end.getDate() - 60);
     return {
       start: start.toISOString().split('T')[0],
       end: end.toISOString().split('T')[0]

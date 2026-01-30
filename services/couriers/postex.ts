@@ -1,3 +1,4 @@
+
 import { CourierAdapter } from './adapter';
 import { IntegrationConfig, TrackingUpdate, OrderStatus, Order, CourierName, PaymentStatus } from '../../types';
 import { getOrders, getProducts } from '../mockData';
@@ -58,14 +59,20 @@ export class PostExAdapter implements CourierAdapter {
                  throw new Error(`HTTP ${response.status}`);
             }
             
-            return await response.json();
+            const contentType = response.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+                return await response.json();
+            } else {
+                const text = await response.text();
+                return JSON.parse(text);
+            }
 
         } catch (e: any) {
             console.warn(`PostEx fetch failed via ${proxyBase}`, e);
             lastError = e;
         }
     }
-    throw lastError || new Error("All proxy attempts failed");
+    throw lastError || new Error("Connection failed. Check your API token.");
   }
 
   private mapStatus(rawStatus: string): OrderStatus {
@@ -204,7 +211,7 @@ export class PostExAdapter implements CourierAdapter {
 
     const endDate = new Date();
     const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 60); 
+    startDate.setDate(startDate.getDate() - 60); // 60 Days window
     const formatDate = (d: Date) => d.toISOString().split('T')[0];
 
     try {

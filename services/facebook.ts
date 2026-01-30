@@ -1,3 +1,4 @@
+
 import { MarketingConfig, AdSpend } from '../types';
 
 export class FacebookService {
@@ -57,12 +58,12 @@ export class FacebookService {
             const json = await res.json();
             if (json.error) {
                  if (json.error.code === 190) {
-                     throw new Error("Session Expired. Please refresh your Access Token in Integrations.");
+                     throw new Error("Session Expired. Please update your Facebook Access Token in Integrations.");
                  }
                  throw new Error(json.error.message);
             }
             return json.data || [];
-        } catch (e) {
+        } catch (e: any) {
             console.error("FB Get Accounts Error", e);
             throw e;
         }
@@ -137,8 +138,12 @@ export class FacebookService {
             });
 
         } catch (e: any) {
-            console.error("FB Insights Error", e);
+            // Don't log expected auth errors to console to keep it clean
+            if (!e.message.includes('Session Expired')) {
+                console.error("FB Insights Error", e);
+            }
             throw e; 
         }
     }
 }
+        

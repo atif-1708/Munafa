@@ -1,3 +1,4 @@
+
 import React, { useMemo, useState } from 'react';
 import { Order } from '../types';
 import { calculateCourierPerformance, formatCurrency } from '../services/calculator';
@@ -8,11 +9,11 @@ interface CouriersProps {
 }
 
 const Couriers: React.FC<CouriersProps> = ({ orders }) => {
-  // Default to Last 30 Days
+  // Default to Last 60 Days
   const [dateRange, setDateRange] = useState(() => {
     const end = new Date();
     const start = new Date();
-    start.setDate(end.getDate() - 30);
+    start.setDate(end.getDate() - 60);
     return {
       start: start.toISOString().split('T')[0],
       end: end.toISOString().split('T')[0]

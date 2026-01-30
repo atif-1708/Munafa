@@ -1,3 +1,4 @@
+
 import { SalesChannel, ShopifyOrder } from '../types';
 
 export class ShopifyAdapter {
@@ -72,7 +73,6 @@ export class ShopifyAdapter {
           const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
           const res = await fetch(proxyUrl, options);
           if (res.ok) {
-              // If it returns HTML (like a 404 page for the API route), it's not the API
               const contentType = res.headers.get('content-type');
               if (contentType && contentType.includes('application/json')) {
                   return await res.json();
@@ -85,11 +85,11 @@ export class ShopifyAdapter {
           // Ignore local api error and fall back
       }
 
-      // 2. Fallback: Public Proxies (Updated List)
-      // Note: AllOrigins removed as it strips Auth headers usually.
+      // 2. Fallback: Public Proxies
+      // Order matters: corsproxy.io is most reliable for headers
       const proxies = [
-          'https://corsproxy.io/?', // Standard
-          'https://thingproxy.freeboard.io/fetch/', // Robust
+          'https://corsproxy.io/?', 
+          'https://thingproxy.freeboard.io/fetch/',
       ];
 
       for (const proxyBase of proxies) {
@@ -97,23 +97,36 @@ export class ShopifyAdapter {
               let fetchUrl = '';
               // URL Construction Logic
               if (proxyBase.includes('corsproxy.io')) {
+                   // corsproxy.io expects encoded URL
                    fetchUrl = `${proxyBase}${encodeURIComponent(targetUrl)}`;
               } else {
                    fetchUrl = `${proxyBase}${targetUrl}`;
               }
 
               const res = await fetch(fetchUrl, options);
+              
               if (!res.ok) {
-                  // Specific check: If 403/401, the key might be wrong, or proxy blocked
-                  if (res.status === 401) throw new Error("Unauthorized");
+                  // Specific check: If 401/403, the key/url is definitely wrong, don't retry proxies
+                  if (res.status === 401 || res.status === 403) {
+                      const text = await res.text();
+                      throw new Error(`Shopify Auth Failed (${res.status}): ${text}`);
+                  }
                   continue; 
               }
-              return await res.json();
+
+              const contentType = res.headers.get('content-type');
+              if (contentType && contentType.includes('application/json')) {
+                  return await res.json();
+              } else {
+                  // Try parsing anyway, sometimes content-type is missing
+                  const text = await res.text();
+                  return JSON.parse(text);
+              }
           } catch (e) {
               console.warn(`Proxy ${proxyBase} failed`, e);
           }
       }
-      throw new Error("All proxies failed");
+      throw new Error("Unable to connect to Shopify. Please check your Store URL and Internet Connection.");
   }
 
   private getMockOrders(): ShopifyOrder[] {
@@ -149,3 +162,4 @@ export class ShopifyAdapter {
       return orders;
   }
 }
+        
