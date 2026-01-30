@@ -117,13 +117,10 @@ const ProfitabilityRow: React.FC<ProfitabilityRowProps> = ({
                     {item.ad_spend_allocation > 0 ? formatCurrency(item.ad_spend_allocation) : '-'}
                 </td>
 
-                {/* 6. Ad CPR (NEW) */}
+                {/* 6. Ad CPR (NEW - FB CPR Only, no count) */}
                 <td className="px-1 py-3 text-right tabular-nums hidden sm:table-cell">
                     {fbCpr > 0 ? (
-                        <div className="flex flex-col items-end">
-                             <span className="font-medium text-purple-700 text-xs">{formatCurrency(fbCpr)}</span>
-                             <span className="text-[10px] text-slate-400">({item.marketing_purchases})</span>
-                        </div>
+                         <span className="font-medium text-purple-700 text-xs">{formatCurrency(fbCpr)}</span>
                     ) : (
                          <span className="text-slate-300">-</span>
                     )}
@@ -579,9 +576,15 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                 
                                 {/* CPR Section */}
                                 {(() => {
-                                    // Use standard Blended CPR for Break Even calculation, but show FB CPR as distinct if available
+                                    // Use standard Blended CPR for Break Even calculation
                                     const { cpr, breakEvenCPR, totalOrders } = getCPRData(selectedItem);
+                                    
+                                    // Use FB CPR if available, otherwise Blended
                                     const fbCpr = selectedItem.marketing_purchases > 0 ? selectedItem.ad_spend_allocation / selectedItem.marketing_purchases : 0;
+                                    const showFb = fbCpr > 0;
+                                    const currentCpr = showFb ? fbCpr : cpr;
+                                    const label = showFb ? "FB CPR" : "Blended CPR";
+                                    const desc = showFb ? "Cost Per Purchase" : "Ads / Dispatched Order";
                                     
                                     if (totalOrders === 0 && selectedItem.ad_spend_allocation === 0) return null;
                                     
@@ -590,20 +593,12 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                             <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
                                                 <div className="flex items-center gap-2 mb-1">
                                                     <Target size={14} className="text-purple-500" />
-                                                    <p className="text-xs text-slate-500 uppercase font-bold">Blended CPR</p>
+                                                    <p className="text-xs text-slate-500 uppercase font-bold">{label}</p>
                                                 </div>
                                                 <p className="text-lg font-bold text-purple-600">
-                                                    {totalOrders > 0 ? formatCurrency(cpr) : (selectedItem.ad_spend_allocation > 0 ? '∞' : formatCurrency(0))}
+                                                    {(totalOrders > 0 || showFb) ? formatCurrency(currentCpr) : (selectedItem.ad_spend_allocation > 0 ? '∞' : formatCurrency(0))}
                                                 </p>
-                                                <p className="text-[10px] text-slate-400">Ads / Dispatched Order</p>
-                                                
-                                                {fbCpr > 0 && (
-                                                    <div className="mt-2 pt-2 border-t border-slate-200">
-                                                         <p className="text-xs text-slate-500 uppercase font-bold">FB Direct CPR</p>
-                                                         <p className="text-sm font-bold text-purple-600">{formatCurrency(fbCpr)}</p>
-                                                         <p className="text-[10px] text-slate-400">({selectedItem.marketing_purchases} conversions)</p>
-                                                    </div>
-                                                )}
+                                                <p className="text-[10px] text-slate-400">{desc}</p>
                                             </div>
                                             <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
                                                 <div className="flex items-center gap-2 mb-1">
