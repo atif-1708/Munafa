@@ -63,7 +63,8 @@ create table if not exists sales_channels (
   user_id uuid references auth.users on delete cascade not null,
   platform text not null check (platform in ('Shopify', 'WooCommerce')),
   store_url text not null,
-  access_token text, -- OAuth Token
+  api_key text, -- New: Client ID / Public Key
+  access_token text, -- OAuth Token / Admin Token
   scope text,
   is_active boolean default true,
   last_sync_at timestamptz,

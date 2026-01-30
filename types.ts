@@ -167,6 +167,7 @@ export interface SalesChannel {
   id: string;
   platform: 'Shopify' | 'WooCommerce';
   store_url: string;
+  api_key?: string; // New: Client ID
   access_token: string;
   scope?: string;
   is_active: boolean;
