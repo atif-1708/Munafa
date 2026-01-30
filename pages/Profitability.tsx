@@ -338,28 +338,33 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
 
   // Helper Calculation for Detail View
   const getCPRData = (item: ProductPerformance) => {
-      // CPR uses Total Orders (Dispatched) as denominator
-      const totalOrders = item.units_sold + item.units_returned + item.units_in_transit;
+      // 1. Determine the relevant denominator (FB Purchases > Total Orders)
+      // "break even cpr should on fb cpr" implies using FB Volume if available.
+      const hasFbData = item.marketing_purchases > 0;
+      const denominator = hasFbData ? item.marketing_purchases : (item.units_sold + item.units_returned + item.units_in_transit);
       
-      const cpr = totalOrders > 0 ? item.ad_spend_allocation / totalOrders : 0;
-      
-      // Break Even CPR:
-      // Since Gross Profit = Net Profit + Stock Stuck.
-      // Net Profit = Gross Profit - Stock Stuck.
-      // (This assumes Gross Profit already has ads deducted).
-      // To find Max Allowable Ads (Break Even), we need Profit Before Ads.
-      // Profit Before Ads = Gross Profit + Ad Spend.
-      
-      const profitBeforeAds = item.gross_profit + item.ad_spend_allocation;
-      
-      // We want to find Ad Spend where Net Profit = 0.
-      // 0 = ProfitBeforeAds - Ads - Stock.
-      // Ads = ProfitBeforeAds - Stock.
-      
-      const profitAvailableForAds = profitBeforeAds - item.cash_in_stock;
-      const breakEvenCPR = totalOrders > 0 ? profitAvailableForAds / totalOrders : 0;
+      // 2. Profit Available Calculation
+      // Start with Gross Profit (which is Revenue - Realized Expenses - Stock).
+      // Realized Expenses includes the allocated Ad Spend (which includes Tax).
+      // So to find "Profit Before Ads", we add back the allocated Ad Spend.
+      // And we subtract Stock (Cash Stuck) to get true Cash Available for Ads.
+      // Formula: Profit Available = Gross Profit + Ad Spend - Cash Stuck.
+      const profitAvailableForAds = item.gross_profit + item.ad_spend_allocation - item.cash_in_stock;
 
-      return { cpr, breakEvenCPR, totalOrders };
+      // 3. Break Even CPR
+      // This tells us: "How much can I spend (incl. Tax) per Result to break even?"
+      const breakEvenCPR = denominator > 0 ? profitAvailableForAds / denominator : 0;
+      
+      // 4. Actual CPR (FB or Blended)
+      // Note: item.ad_spend_allocation ALREADY includes Tax.
+      const actualCpr = denominator > 0 ? item.ad_spend_allocation / denominator : 0;
+
+      return { 
+          cpr: actualCpr, 
+          breakEvenCPR, 
+          denominator,
+          isFbBased: hasFbData
+      };
   };
 
   return (
@@ -576,17 +581,13 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                 
                                 {/* CPR Section */}
                                 {(() => {
-                                    // Use standard Blended CPR for Break Even calculation
-                                    const { cpr, breakEvenCPR, totalOrders } = getCPRData(selectedItem);
+                                    // Calculate CPR based on priority (Facebook > Total)
+                                    const { cpr, breakEvenCPR, denominator, isFbBased } = getCPRData(selectedItem);
                                     
-                                    // Use FB CPR if available, otherwise Blended
-                                    const fbCpr = selectedItem.marketing_purchases > 0 ? selectedItem.ad_spend_allocation / selectedItem.marketing_purchases : 0;
-                                    const showFb = fbCpr > 0;
-                                    const currentCpr = showFb ? fbCpr : cpr;
-                                    const label = showFb ? "FB CPR" : "Blended CPR";
-                                    const desc = showFb ? "Cost Per Purchase" : "Ads / Dispatched Order";
+                                    const label = isFbBased ? "FB CPR" : "Blended CPR";
+                                    const desc = isFbBased ? "Cost Per Purchase" : "Ads / Dispatched Order";
                                     
-                                    if (totalOrders === 0 && selectedItem.ad_spend_allocation === 0) return null;
+                                    if (denominator === 0 && selectedItem.ad_spend_allocation === 0) return null;
                                     
                                     return (
                                         <div className="mt-6 pt-4 border-t border-slate-100 grid grid-cols-2 gap-4">
@@ -596,7 +597,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                                     <p className="text-xs text-slate-500 uppercase font-bold">{label}</p>
                                                 </div>
                                                 <p className="text-lg font-bold text-purple-600">
-                                                    {(totalOrders > 0 || showFb) ? formatCurrency(currentCpr) : (selectedItem.ad_spend_allocation > 0 ? '∞' : formatCurrency(0))}
+                                                    {(denominator > 0 || isFbBased) ? formatCurrency(cpr) : (selectedItem.ad_spend_allocation > 0 ? '∞' : formatCurrency(0))}
                                                 </p>
                                                 <p className="text-[10px] text-slate-400">{desc}</p>
                                             </div>
@@ -606,9 +607,9 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                                     <p className="text-xs text-slate-500 uppercase font-bold">Break-Even CPR</p>
                                                 </div>
                                                 <p className="text-lg font-bold text-slate-700">
-                                                    {totalOrders > 0 ? formatCurrency(breakEvenCPR) : '-'}
+                                                    {denominator > 0 ? formatCurrency(breakEvenCPR) : '-'}
                                                 </p>
-                                                <p className="text-[10px] text-slate-400">Max Allowable CPA</p>
+                                                <p className="text-[10px] text-slate-400">Max Allowable {isFbBased ? 'CPA' : 'Cost'}</p>
                                             </div>
                                         </div>
                                     );
