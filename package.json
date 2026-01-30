@@ -13,7 +13,10 @@
     "react-dom": "^19.2.3",
     "lucide-react": "^0.563.0",
     "recharts": "^3.7.0",
-    "@supabase/supabase-js": "^2.93.1"
+    "@supabase/supabase-js": "^2.93.1",
+    "jspdf": "2.5.1",
+    "jspdf-autotable": "3.8.2",
+    "html2canvas": "1.4.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

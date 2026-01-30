@@ -1,7 +1,9 @@
 
 import React, { useMemo, useState } from 'react';
 import { Order, ShopifyOrder, Product, OrderStatus } from '../types';
-import { Package, ArrowRight, CheckCircle2, Truck, ClipboardCheck, AlertCircle, ChevronDown, ChevronRight, Calendar, User, Search, XCircle, Clock } from 'lucide-react';
+import { Package, ArrowRight, CheckCircle2, Truck, ClipboardCheck, AlertCircle, ChevronDown, ChevronRight, Calendar, User, Search, XCircle, Clock, Download, Loader2 } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 interface ReconciliationProps {
   shopifyOrders: ShopifyOrder[];
@@ -24,6 +26,7 @@ interface OrderDetail {
 const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierOrders, products }) => {
   const [expandedFingerprint, setExpandedFingerprint] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [isExporting, setIsExporting] = useState(false);
   
   // Default to Last 60 Days
   const [dateRange, setDateRange] = useState(() => {
@@ -175,6 +178,61 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
       else setExpandedFingerprint(fingerprint);
   };
 
+  const handleExportPDF = () => {
+    setIsExporting(true);
+    try {
+        const doc = new jsPDF();
+        
+        // Header
+        doc.setFontSize(18);
+        doc.text("Reconciliation Audit Report", 14, 15);
+        
+        doc.setFontSize(10);
+        doc.text(`Period: ${dateRange.start} to ${dateRange.end}`, 14, 22);
+        
+        const tableColumn = ["Product Name", "Demand (Shopify)", "Confirmed", "Pending", "Dispatched", "Delivered", "RTO"];
+        const tableRows: any[] = [];
+        
+        stats.forEach(item => {
+            const row = [
+                item.name.substring(0, 40) + (item.name.length > 40 ? '...' : ''),
+                item.shopifyDemand,
+                item.confirmed,
+                item.pending,
+                item.dispatched,
+                item.delivered,
+                item.rto
+            ];
+            tableRows.push(row);
+        });
+
+        autoTable(doc, {
+            head: [tableColumn],
+            body: tableRows,
+            startY: 28,
+            theme: 'grid',
+            headStyles: { fillColor: [15, 23, 42] }, // Slate-900
+            styles: { fontSize: 8, cellPadding: 2 },
+            columnStyles: {
+                0: { cellWidth: 60 },
+                1: { halign: 'center' },
+                2: { halign: 'center' },
+                3: { halign: 'center', textColor: [220, 38, 38] }, // Red for Pending
+                4: { halign: 'center' },
+                5: { halign: 'center' },
+                6: { halign: 'center' }
+            }
+        });
+
+        doc.save(`Reconciliation_Audit_${dateRange.start}.pdf`);
+    } catch (e) {
+        console.error("PDF Error", e);
+        alert("Failed to export reconciliation report.");
+    } finally {
+        setIsExporting(false);
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-200 pb-6">
@@ -211,6 +269,15 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
                 </div>
+                
+                <button 
+                    onClick={handleExportPDF}
+                    disabled={isExporting}
+                    className="flex items-center gap-2 bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-900 transition-colors shadow-sm disabled:opacity-70"
+                >
+                  {isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                  Export Audit
+                </button>
             </div>
         </div>
 

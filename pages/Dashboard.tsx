@@ -4,9 +4,11 @@ import { Order, AdSpend, DashboardMetrics, OrderStatus, ShopifyOrder } from '../
 import { calculateMetrics, formatCurrency } from '../services/calculator';
 import KPICard from '../components/KPICard';
 import ProfitChart from '../components/ProfitChart';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 import { 
   Wallet, TrendingDown, PackageCheck, AlertTriangle, 
-  Banknote, ArrowRightLeft, Calendar, Package, Truck, CheckCircle, ShoppingBasket, Hourglass, Clock, BarChart3, ClipboardList, Clipboard, Filter, Receipt, FileText, ShoppingCart, CheckSquare, XCircle
+  Banknote, ArrowRightLeft, Calendar, Package, Truck, CheckCircle, ShoppingBasket, Hourglass, Clock, BarChart3, ClipboardList, Clipboard, Filter, Receipt, FileText, ShoppingCart, CheckSquare, XCircle, Download, Loader2
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -27,6 +29,8 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, shopifyOrders = [], adSpe
       end: end.toISOString().split('T')[0]
     };
   });
+
+  const [isExporting, setIsExporting] = useState(false);
 
   // Filter Data based on Range
   const filteredData = useMemo(() => {
@@ -160,8 +164,47 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, shopifyOrders = [], adSpe
     return `${((count / total) * 100).toFixed(1)}%`;
   };
 
+  const handleExportPDF = async () => {
+    const element = document.getElementById('dashboard-content');
+    if (!element) return;
+    
+    setIsExporting(true);
+    try {
+      // Allow any state updates to flush
+      await new Promise(r => setTimeout(r, 100));
+
+      const canvas = await html2canvas(element, {
+        scale: 2, 
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#f8fafc',
+        ignoreElements: (el) => el.classList.contains('no-print') // Ignore filter controls if marked
+      });
+
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const imgWidth = canvas.width;
+      const imgHeight = canvas.height;
+      
+      // Calculate height to fit width
+      const pdfImgHeight = (imgHeight * pdfWidth) / imgWidth;
+
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfImgHeight);
+      
+      const fileName = `Executive_Dashboard_${new Date().toISOString().split('T')[0]}.pdf`;
+      pdf.save(fileName);
+    } catch (e) {
+      console.error("PDF Export Error", e);
+      alert("Failed to generate PDF report.");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
-    <div className="space-y-8 pb-12">
+    <div id="dashboard-content" className="space-y-8 pb-12">
       {/* Header Section */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div>
@@ -169,7 +212,7 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, shopifyOrders = [], adSpe
           <p className="text-slate-500 text-sm mt-1">Snapshot of your business performance & financial health.</p>
         </div>
         
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 no-print">
             <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200">
                 <Calendar size={16} className="text-slate-500" />
                 <input 
@@ -186,8 +229,13 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, shopifyOrders = [], adSpe
                   className="text-sm text-slate-700 bg-transparent border-none focus:ring-0 outline-none w-28 font-medium cursor-pointer"
                 />
             </div>
-            <button className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors shadow-sm">
-              <Filter size={16} /> Filter
+            <button 
+                onClick={handleExportPDF}
+                disabled={isExporting}
+                className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors shadow-sm disabled:opacity-70"
+            >
+              {isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+              {isExporting ? 'Generating...' : 'Export PDF'}
             </button>
         </div>
       </div>

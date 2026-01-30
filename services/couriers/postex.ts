@@ -18,9 +18,10 @@ export class PostExAdapter implements CourierAdapter {
         url += `?${query}`;
     }
 
-    // 1. Try Local API (Vercel)
+    // 1. Try Local API (Vercel) first
     try {
         const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+        // Only try local proxy if we are likely in an environment that supports it (relative path)
         const res = await fetch(proxyUrl, options);
         if (res.ok) {
              const contentType = res.headers.get('content-type');
@@ -33,7 +34,9 @@ export class PostExAdapter implements CourierAdapter {
     }
 
     // 2. Public Proxies
+    // Added 'allorigins' as a reliable fallback
     const proxies = [
+        'https://api.allorigins.win/raw?url=',
         'https://corsproxy.io/?',
         'https://thingproxy.freeboard.io/fetch/', 
     ];
@@ -43,7 +46,7 @@ export class PostExAdapter implements CourierAdapter {
     for (const proxyBase of proxies) {
         try {
             let fetchUrl = '';
-             if (proxyBase.includes('corsproxy.io')) {
+             if (proxyBase.includes('corsproxy.io') || proxyBase.includes('allorigins')) {
                    fetchUrl = `${proxyBase}${encodeURIComponent(url)}`;
               } else {
                    fetchUrl = `${proxyBase}${url}`;
@@ -53,6 +56,7 @@ export class PostExAdapter implements CourierAdapter {
 
             if (!response.ok) {
                  if (response.status === 403) {
+                     // Some proxies return 403 if target forbids them
                      const text = await response.text();
                      if (text.includes('proxy')) throw new Error('Proxy Limit Exceeded');
                  }
@@ -64,7 +68,12 @@ export class PostExAdapter implements CourierAdapter {
                 return await response.json();
             } else {
                 const text = await response.text();
-                return JSON.parse(text);
+                // Try parsing JSON even if content-type is wrong
+                try {
+                    return JSON.parse(text);
+                } catch {
+                     throw new Error("Invalid JSON response via proxy");
+                }
             }
 
         } catch (e: any) {

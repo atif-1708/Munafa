@@ -86,8 +86,9 @@ export class ShopifyAdapter {
       }
 
       // 2. Fallback: Public Proxies
-      // Order matters: corsproxy.io is most reliable for headers
+      // Order matters: AllOrigins is very reliable for simple GETs
       const proxies = [
+          'https://api.allorigins.win/raw?url=',
           'https://corsproxy.io/?', 
           'https://thingproxy.freeboard.io/fetch/',
       ];
@@ -96,8 +97,8 @@ export class ShopifyAdapter {
           try {
               let fetchUrl = '';
               // URL Construction Logic
-              if (proxyBase.includes('corsproxy.io')) {
-                   // corsproxy.io expects encoded URL
+              if (proxyBase.includes('corsproxy.io') || proxyBase.includes('allorigins')) {
+                   // These expect encoded URL
                    fetchUrl = `${proxyBase}${encodeURIComponent(targetUrl)}`;
               } else {
                    fetchUrl = `${proxyBase}${targetUrl}`;
@@ -120,7 +121,11 @@ export class ShopifyAdapter {
               } else {
                   // Try parsing anyway, sometimes content-type is missing
                   const text = await res.text();
-                  return JSON.parse(text);
+                  try {
+                      return JSON.parse(text);
+                  } catch {
+                      // ignore
+                  }
               }
           } catch (e) {
               console.warn(`Proxy ${proxyBase} failed`, e);
@@ -162,4 +167,3 @@ export class ShopifyAdapter {
       return orders;
   }
 }
-        

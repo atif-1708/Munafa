@@ -214,74 +214,86 @@ const App: React.FC = () => {
         const finalProducts = [...savedProducts];
         const seenFingerprints = new Set(savedProducts.map(p => p.variant_fingerprint || p.sku));
 
-        // E. Fetch Shopify Data
+        // E. Fetch Shopify Data (Isolate failure)
         if (shopifyConfig) {
-            const shopifyAdapter = new ShopifyAdapter();
-            const rawShopifyOrders = await shopifyAdapter.fetchOrders(shopifyConfig);
-            setShopifyOrders(rawShopifyOrders);
+            try {
+                const shopifyAdapter = new ShopifyAdapter();
+                const rawShopifyOrders = await shopifyAdapter.fetchOrders(shopifyConfig);
+                setShopifyOrders(rawShopifyOrders);
+            } catch (e: any) {
+                console.error("Shopify Sync Error:", e);
+                // Don't kill the whole app, just log it. Maybe set partial error.
+            }
         }
 
-        // F. Fetch Live Orders from Courier
+        // F. Fetch Live Orders from Courier (Isolate failure)
         if (postExConfig) {
-            // Use existing config structure for PostEx
-            const postExAdapter = new PostExAdapter();
-            const rawOrders = await postExAdapter.fetchRecentOrders(postExConfig);
+            try {
+                // Use existing config structure for PostEx
+                const postExAdapter = new PostExAdapter();
+                const rawOrders = await postExAdapter.fetchRecentOrders(postExConfig);
 
-            // Merge Logic: Detect new products based on FINGERPRINT
-            rawOrders.forEach(o => {
-                const isRelevantForInventory = o.status !== OrderStatus.PENDING && o.status !== OrderStatus.BOOKED && o.status !== OrderStatus.CANCELLED;
-                if (!isRelevantForInventory) return;
+                // Merge Logic: Detect new products based on FINGERPRINT
+                rawOrders.forEach(o => {
+                    const isRelevantForInventory = o.status !== OrderStatus.PENDING && o.status !== OrderStatus.BOOKED && o.status !== OrderStatus.CANCELLED;
+                    if (!isRelevantForInventory) return;
 
-                o.items.forEach(item => {
-                    const fingerprint = item.variant_fingerprint || item.sku || 'unknown';
-                    if (!seenFingerprints.has(fingerprint)) {
-                        seenFingerprints.add(fingerprint);
-                        const uniqueId = (item.product_id && item.product_id !== 'unknown') ? item.product_id : fingerprint;
-                        finalProducts.push({
-                            id: uniqueId,
-                            shopify_id: 'unknown',
-                            title: item.product_name,
-                            sku: fingerprint, 
-                            variant_fingerprint: fingerprint,
-                            image_url: '',
-                            current_cogs: 0,
-                            cost_history: []
-                        });
-                    }
+                    o.items.forEach(item => {
+                        const fingerprint = item.variant_fingerprint || item.sku || 'unknown';
+                        if (!seenFingerprints.has(fingerprint)) {
+                            seenFingerprints.add(fingerprint);
+                            const uniqueId = (item.product_id && item.product_id !== 'unknown') ? item.product_id : fingerprint;
+                            finalProducts.push({
+                                id: uniqueId,
+                                shopify_id: 'unknown',
+                                title: item.product_name,
+                                sku: fingerprint, 
+                                variant_fingerprint: fingerprint,
+                                image_url: '',
+                                current_cogs: 0,
+                                cost_history: []
+                            });
+                        }
+                    });
                 });
-            });
 
-            const processedOrders = rawOrders.map(order => {
-                const rateCard = fetchedSettings.rates[order.courier] || fetchedSettings.rates[CourierName.POSTEX];
-                const isRto = order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED;
-                const updatedItems = order.items.map(item => {
-                    const productDef = finalProducts.find(p => (p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) || p.sku === item.sku);
-                    const historicalCogs = productDef ? getCostAtDate(productDef, order.created_at) : 0;
-                    return { ...item, cogs_at_time_of_order: historicalCogs };
+                const processedOrders = rawOrders.map(order => {
+                    const rateCard = fetchedSettings.rates[order.courier] || fetchedSettings.rates[CourierName.POSTEX];
+                    const isRto = order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED;
+                    const updatedItems = order.items.map(item => {
+                        const productDef = finalProducts.find(p => (p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) || p.sku === item.sku);
+                        const historicalCogs = productDef ? getCostAtDate(productDef, order.created_at) : 0;
+                        return { ...item, cogs_at_time_of_order: historicalCogs };
+                    });
+                    
+                    const taxAmount = order.status === OrderStatus.DELIVERED ? (order.cod_amount * (fetchedSettings.taxRate / 100)) : 0;
+
+                    return {
+                        ...order,
+                        items: updatedItems,
+                        packaging_cost: fetchedSettings.packagingCost,
+                        overhead_cost: fetchedSettings.overheadCost,
+                        tax_amount: taxAmount,
+                        courier_fee: rateCard.forward,
+                        rto_penalty: isRto ? rateCard.rto : 0
+                    };
                 });
                 
-                const taxAmount = order.status === OrderStatus.DELIVERED ? (order.cod_amount * (fetchedSettings.taxRate / 100)) : 0;
+                setOrders(processedOrders);
 
-                return {
-                    ...order,
-                    items: updatedItems,
-                    packaging_cost: fetchedSettings.packagingCost,
-                    overhead_cost: fetchedSettings.overheadCost,
-                    tax_amount: taxAmount,
-                    courier_fee: rateCard.forward,
-                    rto_penalty: isRto ? rateCard.rto : 0
-                };
-            });
-
-            setProducts(finalProducts);
-            setOrders(processedOrders);
+            } catch (e: any) {
+                console.error("PostEx Sync Error:", e);
+                // Don't set global error, just log. 
+                // Consider adding a notification "PostEx sync failed"
+            }
         } else {
             setOrders([]);
-            setProducts(finalProducts);
         }
 
+        setProducts(finalProducts);
+
       } catch (err: any) {
-        console.error("Data Sync Error", err);
+        console.error("General Data Sync Error", err);
         setError("Failed to sync data. " + (err.message || ""));
         setIsConfigured(true); 
       } finally {
