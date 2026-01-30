@@ -13,7 +13,7 @@ import Reconciliation from './pages/Reconciliation';
 import { PostExAdapter } from './services/couriers/postex';
 import { ShopifyAdapter } from './services/shopify'; 
 import { Order, Product, AdSpend, CourierName, SalesChannel, CourierConfig, OrderStatus, ShopifyOrder, IntegrationConfig } from './types';
-import { Loader2 } from 'lucide-react';
+import { Loader2, AlertTriangle, X } from 'lucide-react';
 import { supabase } from './services/supabase';
 import { getCostAtDate } from './services/calculator';
 import { COURIER_RATES, PACKAGING_COST_AVG } from './constants';
@@ -222,7 +222,7 @@ const App: React.FC = () => {
                 setShopifyOrders(rawShopifyOrders);
             } catch (e: any) {
                 console.error("Shopify Sync Error:", e);
-                // Don't kill the whole app, just log it. Maybe set partial error.
+                setError("Shopify Sync Failed: " + e.message);
             }
         }
 
@@ -283,8 +283,8 @@ const App: React.FC = () => {
 
             } catch (e: any) {
                 console.error("PostEx Sync Error:", e);
-                // Don't set global error, just log. 
-                // Consider adding a notification "PostEx sync failed"
+                // Only override error if it's the first error, otherwise append
+                setError(prev => prev ? prev + " | PostEx Sync Failed: " + e.message : "PostEx Sync Failed: " + e.message);
             }
         } else {
             setOrders([]);
@@ -459,7 +459,23 @@ const App: React.FC = () => {
           storeName={storeName}
           email={session?.user?.email || 'Guest User'}
       />
-      <main className="flex-1 ml-64 p-8">
+      <main className="flex-1 ml-64 p-8 relative">
+        {/* Global Error Banner */}
+        {error && (
+            <div className="mb-6 bg-red-50 border border-red-200 p-4 rounded-xl flex items-start justify-between animate-in fade-in slide-in-from-top-2 shadow-sm">
+               <div className="flex gap-3">
+                   <AlertTriangle className="shrink-0 text-red-600 mt-0.5" size={20} />
+                   <div>
+                       <h4 className="font-bold text-red-800 text-sm">Sync Error</h4>
+                       <p className="text-sm text-red-700 mt-0.5">{error}</p>
+                   </div>
+               </div>
+               <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600">
+                   <X size={18} />
+               </button>
+            </div>
+        )}
+
         <div className="max-w-7xl mx-auto">
           {(isConfigured || currentPage === 'integrations') && (
               <>

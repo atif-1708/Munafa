@@ -59,7 +59,7 @@ export class ShopifyAdapter {
         } catch (e) {
             console.error("Shopify sync error on page:", e);
             // If it's a critical auth error, stop. Otherwise, maybe just this page failed.
-            if ((e as Error).message.includes('Auth Failed')) {
+            if ((e as Error).message.includes('Auth Failed') || (e as Error).message.includes('Access denied')) {
                 throw e; // Stop the whole sync
             }
             hasMore = false; // Stop syncing on unknown error to prevent infinite loops
@@ -69,7 +69,7 @@ export class ShopifyAdapter {
     return allOrders;
   }
   
-  // Verify credentials by fetching shop details
+  // Verify credentials AND permissions by fetching one order
   async testConnection(config: SalesChannel): Promise<boolean> {
       if (!config.store_url || !config.access_token) return false;
       
@@ -79,7 +79,10 @@ export class ShopifyAdapter {
       let cleanUrl = config.store_url.replace(/^https?:\/\//, '').replace(/\/$/, '').trim();
       if (!cleanUrl.includes('.')) cleanUrl += '.myshopify.com';
 
-      const targetUrl = `https://${cleanUrl}/admin/api/2024-01/shop.json`;
+      // CHANGE: Fetch orders.json (limit=1) instead of shop.json.
+      // shop.json is public/readable with almost any scope.
+      // orders.json requires 'read_orders', which is what we actually need.
+      const targetUrl = `https://${cleanUrl}/admin/api/2024-01/orders.json?limit=1&fields=id`;
 
       try {
           const data = await this.fetchWithProxy(targetUrl, {
@@ -89,7 +92,8 @@ export class ShopifyAdapter {
                   'Content-Type': 'application/json',
               }
           });
-          return !!data.shop;
+          // If we get here and have 'orders' array, it works.
+          return Array.isArray(data.orders);
       } catch (e) {
           console.error("Shopify Connection Test Failed:", e);
           return false;
@@ -105,7 +109,9 @@ export class ShopifyAdapter {
           if (res.ok) {
               const contentType = res.headers.get('content-type');
               if (contentType && contentType.includes('application/json')) {
-                  return await res.json();
+                  const json = await res.json();
+                  if (json.errors) throw new Error("API Error: " + JSON.stringify(json.errors));
+                  return json;
               }
           }
       } catch (e) {
@@ -137,19 +143,7 @@ export class ShopifyAdapter {
                   // Store error and Try Next Proxy.
                   if (res.status === 401 || res.status === 403) {
                       const text = await res.text();
-                      // Only treat as definitive if the error body confirms it's from Shopify (JSON)
-                      // otherwise it might be the proxy blocking us.
-                      let isShopifyError = false;
-                      try {
-                          const json = JSON.parse(text);
-                          if (json.errors) isShopifyError = true;
-                      } catch {}
-
                       const msg = `Shopify Auth Failed (${res.status}): ${text}`;
-                      
-                      // If we are sure it hit Shopify (isShopifyError), we *could* stop, but 
-                      // sometimes proxies mess up requests leading to auth errors. 
-                      // Safer to try all proxies if one fails.
                       authError = new Error(msg);
                       continue; 
                   }
@@ -160,12 +154,29 @@ export class ShopifyAdapter {
 
               const text = await res.text();
               try {
-                  return JSON.parse(text);
-              } catch {
-                  // Not JSON? Proxy returned HTML error page. Try next.
+                  const json = JSON.parse(text);
+                  // Critical: Shopify might return 200 but with { "errors": "..." } in body
+                  if (json.errors) {
+                      const errStr = typeof json.errors === 'string' ? json.errors : JSON.stringify(json.errors);
+                      if (errStr.includes('scope') || errStr.includes('permission') || errStr.includes('access')) {
+                          authError = new Error(`Shopify Permissions Error: ${errStr}`);
+                          // If it's a permission error, no need to retry proxies, the token is the issue.
+                          throw authError; 
+                      }
+                      throw new Error(`Shopify API Error: ${errStr}`);
+                  }
+                  return json;
+              } catch (e: any) {
+                  // If we manually threw auth error above, rethrow it
+                  if (e.message.includes('Permissions Error')) throw e;
+                  // Otherwise, invalid JSON
                   continue;
               }
           } catch (e: any) {
+              if (e.message && e.message.includes('Permissions Error')) {
+                  authError = e;
+                  break; // Stop trying proxies if we know it's a permission issue
+              }
               networkError = e;
               // Network error, try next proxy
           }
