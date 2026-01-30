@@ -1,10 +1,9 @@
-
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { AdSpend, Product, MarketingConfig, CampaignMapping } from '../types';
 import { formatCurrency } from '../services/calculator';
 import { FacebookService } from '../services/facebook';
 import { supabase } from '../services/supabase';
-import { BarChart3, Plus, Trash2, Layers, Calendar, DollarSign, CalendarRange, RefreshCw, Facebook, AlertTriangle, Link, ArrowRight, X, CheckCircle2, LayoutGrid, ListFilter, Zap } from 'lucide-react';
+import { BarChart3, Plus, Trash2, Layers, Calendar, DollarSign, CalendarRange, RefreshCw, Facebook, AlertTriangle, Link, ArrowRight, X, CheckCircle2, LayoutGrid, ListFilter, Zap, Settings } from 'lucide-react';
 
 interface MarketingProps {
   adSpend: AdSpend[];
@@ -12,9 +11,10 @@ interface MarketingProps {
   onAddAdSpend: (ads: AdSpend[]) => void;
   onDeleteAdSpend: (id: string) => void;
   onSyncAdSpend?: (platform: string, start: string, end: string, ads: AdSpend[]) => void;
+  onNavigate?: (page: string) => void;
 }
 
-const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, onDeleteAdSpend, onSyncAdSpend }) => {
+const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, onDeleteAdSpend, onSyncAdSpend, onNavigate }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'facebook'>('overview');
   
   const [newAd, setNewAd] = useState<{
@@ -119,6 +119,9 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
       });
       return Array.from(uniqueGroups.entries()).map(([id, name]) => ({ id, name }));
   }, [products]);
+
+  // Filter standalone products (not in any group)
+  const standaloneProducts = useMemo(() => products.filter(p => !p.group_id), [products]);
 
   const generateUUID = () => {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -370,11 +373,13 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
                                     ))}
                                 </optgroup>
                             )}
-                            <optgroup label="Individual Variants">
-                                {products.map(p => (
-                                    <option key={p.id} value={p.id}>{p.title}</option>
-                                ))}
-                            </optgroup>
+                            {standaloneProducts.length > 0 && (
+                                <optgroup label="Individual Variants">
+                                    {standaloneProducts.map(p => (
+                                        <option key={p.id} value={p.id}>{p.title}</option>
+                                    ))}
+                                </optgroup>
+                            )}
                         </select>
                     </div>
                     <button type="submit" className="w-full bg-slate-900 text-white py-2 rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors">
@@ -500,12 +505,22 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
               </div>
 
               {syncError && (
-                   <div className="bg-red-50 border border-red-200 p-4 rounded-xl flex gap-3 text-sm text-red-800 animate-in fade-in slide-in-from-top-2">
-                       <AlertTriangle className="shrink-0 text-red-600" size={20} />
-                       <div>
-                           <p className="font-bold">Sync Error</p>
-                           <p>{syncError}</p>
+                   <div className="bg-red-50 border border-red-200 p-4 rounded-xl flex items-center justify-between animate-in fade-in slide-in-from-top-2">
+                       <div className="flex gap-3 text-sm text-red-800">
+                           <AlertTriangle className="shrink-0 text-red-600" size={20} />
+                           <div>
+                               <p className="font-bold">Sync Error</p>
+                               <p>{syncError}</p>
+                           </div>
                        </div>
+                       {onNavigate && (syncError.includes('Session') || syncError.includes('Permission')) && (
+                           <button 
+                                onClick={() => onNavigate('integrations')}
+                                className="flex items-center gap-2 bg-white border border-red-200 text-red-700 px-4 py-2 rounded-lg text-sm font-bold hover:bg-red-50 transition-colors"
+                           >
+                               <Settings size={14} /> Fix Connection
+                           </button>
+                       )}
                    </div>
               )}
 
@@ -580,11 +595,13 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
                                                       ))}
                                                   </optgroup>
                                               )}
-                                              <optgroup label="Individual Variants">
-                                                  {products.map(p => (
-                                                      <option key={p.id} value={p.id}>{p.title}</option>
-                                                  ))}
-                                              </optgroup>
+                                              {standaloneProducts.length > 0 && (
+                                                  <optgroup label="Individual Variants">
+                                                      {standaloneProducts.map(p => (
+                                                          <option key={p.id} value={p.id}>{p.title}</option>
+                                                      ))}
+                                                  </optgroup>
+                                              )}
                                           </select>
                                       </td>
                                   </tr>

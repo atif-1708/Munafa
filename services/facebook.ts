@@ -1,4 +1,3 @@
-
 import { MarketingConfig, AdSpend } from '../types';
 
 export class FacebookService {
@@ -51,7 +50,12 @@ export class FacebookService {
             const url = `https://graph.facebook.com/${this.API_VERSION}/me/adaccounts?fields=name,id&access_token=${token}`;
             const res = await fetch(url);
             const json = await res.json();
-            if (json.error) throw new Error(json.error.message);
+            if (json.error) {
+                 if (json.error.code === 190) {
+                     throw new Error("Session Expired. Please refresh your Access Token in Integrations.");
+                 }
+                 throw new Error(json.error.message);
+            }
             return json.data || [];
         } catch (e) {
             console.error("FB Get Accounts Error", e);
@@ -98,6 +102,9 @@ export class FacebookService {
                 // Handle specific permissions errors
                 if (json.error.code === 10 || json.error.code === 200 || json.error.code === 294) {
                      throw new Error(`Permission Error: ${json.error.message}. Ensure token has 'ads_read'.`);
+                }
+                if (json.error.code === 190) {
+                     throw new Error("Session Expired. Please update your Facebook Access Token in Integrations.");
                 }
                 throw new Error(`Facebook API Error: ${json.error.message}`);
             }

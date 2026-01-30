@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
@@ -463,7 +462,8 @@ const App: React.FC = () => {
                         products={products} 
                         onAddAdSpend={handleAddAdSpend} 
                         onDeleteAdSpend={handleDeleteAdSpend}
-                        onSyncAdSpend={handleSyncAdSpend} 
+                        onSyncAdSpend={handleSyncAdSpend}
+                        onNavigate={setCurrentPage}
                     />
                 )}
                 {currentPage === 'integrations' && <Integrations onConfigUpdate={() => setRefreshTrigger(p => p + 1)} />}
