@@ -1,3 +1,4 @@
+
 import React, { useMemo, useState } from 'react';
 import { Order, ShopifyOrder, Product, OrderStatus } from '../types';
 import { Package, ArrowRight, CheckCircle2, Truck, ClipboardCheck, AlertCircle, ChevronDown, ChevronRight, Calendar, User, Search, XCircle, Clock } from 'lucide-react';
@@ -74,6 +75,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
         if (orderDate < start || orderDate > end) return;
 
         const isShopifyCancelled = so.cancel_reason !== null;
+        const isShopifyFulfilled = so.fulfillment_status === 'fulfilled' || so.fulfillment_status === 'partial';
         
         const key = so.name.replace('#', '').trim();
         const courierOrder = courierMap.get(key);
@@ -111,7 +113,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
             // 2. Buckets (Mutually Exclusive for Reconciliation)
             if (isShopifyCancelled) {
                 pStat.cancelled += 1;
-            } else if (hasCourierData) {
+            } else if (isShopifyFulfilled) {
                 pStat.confirmed += 1;
             } else {
                 pStat.pending += 1;
@@ -138,6 +140,8 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                 displayStatus = 'CANCELLED';
             } else if (courierOrder) {
                 displayStatus = courierOrder.status;
+            } else if (isShopifyFulfilled) {
+                displayStatus = 'FULFILLED (NO TRACKING)';
             } else {
                 displayStatus = 'PENDING / MISSED';
                 isMissed = true;
@@ -222,7 +226,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                         
                         {/* Breakdown Columns */}
                         <th className="px-2 py-4 font-bold text-slate-700 text-center uppercase tracking-wider text-xs bg-blue-50/30">
-                             Confirmed
+                             Fulfilled
                         </th>
                         <th className="px-2 py-4 font-bold text-slate-700 text-center uppercase tracking-wider text-xs">
                              Cancelled
@@ -271,7 +275,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                                         {p.shopifyDemand}
                                     </td>
 
-                                    {/* Confirmed */}
+                                    {/* Confirmed / Fulfilled */}
                                     <td className="px-2 py-4 text-center bg-blue-50/10">
                                         <div className="flex flex-col items-center justify-center">
                                             <span className={`font-semibold ${p.confirmed > 0 ? 'text-blue-700' : 'text-slate-300'}`}>
@@ -424,6 +428,9 @@ const StatusBadge = ({ status, isMissed }: { status: string, isMissed: boolean }
     }
     if (status === 'CANCELLED') {
         return <span className="bg-slate-100 text-slate-500 px-2 py-0.5 rounded text-[10px] font-bold line-through">CANCELLED</span>;
+    }
+    if (status === 'FULFILLED (NO TRACKING)') {
+         return <span className="bg-blue-50 text-blue-600 px-2 py-0.5 rounded text-[10px] font-bold">FULFILLED (MANUAL)</span>;
     }
     
     // Normal Courier Statuses
