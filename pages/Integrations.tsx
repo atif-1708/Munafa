@@ -6,7 +6,7 @@ import { FacebookService } from '../services/facebook';
 import { supabase } from '../services/supabase';
 import { 
     CheckCircle2, AlertTriangle, Key, Globe, Loader2, Store, ArrowRight, 
-    RefreshCw, ShieldCheck, Link, Truck, Package, Info, Lock, Settings, ExternalLink, Facebook, HelpCircle 
+    RefreshCw, ShieldCheck, Link, Truck, Package, Info, Lock, Settings, ExternalLink, Facebook, HelpCircle, ChevronDown, ChevronUp 
 } from 'lucide-react';
 
 // Helper to get Env Vars safely
@@ -75,6 +75,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   const [fbManualToken, setFbManualToken] = useState('');
   const [availableAdAccounts, setAvailableAdAccounts] = useState<{id: string, name: string}[]>([]);
   const [isVerifyingFb, setIsVerifyingFb] = useState(false);
+  const [showFbGuide, setShowFbGuide] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [testingConnection, setTestingConnection] = useState<string | null>(null);
@@ -436,7 +437,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
           </h3>
           <div className={`
               relative overflow-hidden rounded-2xl border transition-all duration-300 max-w-2xl
-              ${shopifyConfig.is_active ? 'bg-green-50/50 border-green-200 shadow-sm' : 'bg-white border-slate-200 shadow-md hover:shadow-lg'}
+              ${shopifyConfig.is_active ? 'bg-green-100/30 border-green-200 shadow-sm' : 'bg-white border-slate-200 shadow-md hover:shadow-lg'}
           `}>
                <div className="p-8">
                   <div className="flex justify-between items-start mb-6">
@@ -598,10 +599,33 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                        <div className="space-y-4">
                            <div className="bg-blue-50 p-4 rounded-lg text-sm text-blue-800 flex gap-2">
                                <Info className="shrink-0 text-blue-600" size={18} />
-                               <p>
-                                   Use a <strong>System User Access Token</strong> (recommended) or Graph API token with <code>ads_read</code> and <code>read_insights</code> permissions.
-                               </p>
+                               <div>
+                                   <p className="mb-1">
+                                       Use a <strong>System User Access Token</strong> (recommended) or Graph API token with <code>ads_read</code> and <code>read_insights</code> permissions.
+                                   </p>
+                                   <button 
+                                        onClick={() => setShowFbGuide(!showFbGuide)}
+                                        className="text-xs font-bold text-blue-600 underline flex items-center gap-1 mt-1"
+                                   >
+                                        How to get a permanent token? {showFbGuide ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}
+                                   </button>
+                               </div>
                            </div>
+                           
+                           {/* Step by Step Guide */}
+                           {showFbGuide && (
+                               <div className="bg-white border border-blue-100 rounded-lg p-4 text-xs space-y-2 animate-in fade-in slide-in-from-top-2">
+                                   <p className="font-bold text-slate-700">Get a non-expiring System User Token:</p>
+                                   <ol className="list-decimal pl-4 space-y-1 text-slate-600">
+                                       <li>Go to <a href="https://business.facebook.com/settings/system-users" target="_blank" className="text-blue-600 underline">Business Settings > Users > System Users</a>.</li>
+                                       <li>Click <strong>Add</strong>, name it (e.g. "ProfitCalc"), set role to <strong>Admin</strong>.</li>
+                                       <li>Click <strong>Add Assets</strong> and assign your Ad Account (Full Control).</li>
+                                       <li>Click <strong>Generate New Token</strong>. Select your App.</li>
+                                       <li>Check permissions: <code>ads_read</code> and <code>read_insights</code>.</li>
+                                       <li>Click Generate and copy the token below.</li>
+                                   </ol>
+                               </div>
+                           )}
 
                            {!availableAdAccounts.length ? (
                                <>
