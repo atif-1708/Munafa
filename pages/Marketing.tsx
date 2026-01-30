@@ -1,19 +1,20 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { AdSpend, Product, MarketingConfig, CampaignMapping } from '../types';
 import { formatCurrency } from '../services/calculator';
 import { FacebookService } from '../services/facebook';
 import { supabase } from '../services/supabase';
-import { BarChart3, Plus, Trash2, Layers, Calendar, DollarSign, CalendarRange, RefreshCw, Facebook, AlertTriangle, Link, ArrowRight, X, CheckCircle2, LayoutGrid, ListFilter } from 'lucide-react';
+import { BarChart3, Plus, Trash2, Layers, Calendar, DollarSign, CalendarRange, RefreshCw, Facebook, AlertTriangle, Link, ArrowRight, X, CheckCircle2, LayoutGrid, ListFilter, Zap } from 'lucide-react';
 
 interface MarketingProps {
   adSpend: AdSpend[];
   products: Product[];
   onAddAdSpend: (ads: AdSpend[]) => void;
   onDeleteAdSpend: (id: string) => void;
+  onSyncAdSpend?: (platform: string, start: string, end: string, ads: AdSpend[]) => void;
 }
 
-const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, onDeleteAdSpend }) => {
+const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, onDeleteAdSpend, onSyncAdSpend }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'facebook'>('overview');
   
   const [newAd, setNewAd] = useState<{
@@ -45,7 +46,9 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
   const [fbConfig, setFbConfig] = useState<MarketingConfig | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [mappings, setMappings] = useState<CampaignMapping[]>([]);
+  const hasLoadedConfig = useRef(false);
 
+  // Load Config
   useEffect(() => {
       const loadConfig = async () => {
           const { data: { session } } = await supabase.auth.getSession();
@@ -55,10 +58,52 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
               
               const { data: mapData } = await supabase.from('campaign_mappings').select('*').eq('user_id', session.user.id);
               if(mapData) setMappings(mapData);
+              hasLoadedConfig.current = true;
           }
       };
       loadConfig();
   }, []);
+
+  // --- AUTO-SYNC LOGIC ---
+  useEffect(() => {
+      if (activeTab === 'facebook' && fbConfig?.is_active && hasLoadedConfig.current && onSyncAdSpend) {
+          // Debounce fetch to avoid flickering if user changes date quickly
+          const timer = setTimeout(() => {
+              fetchAndSyncFacebookData();
+          }, 300);
+          return () => clearTimeout(timer);
+      }
+  }, [activeTab, dateRange, fbConfig, mappings]); // Dependencies trigger auto-fetch
+
+  const fetchAndSyncFacebookData = async () => {
+      if (!fbConfig || !fbConfig.is_active || !fbConfig.ad_account_id) return;
+      if (!onSyncAdSpend) return;
+
+      setIsSyncing(true);
+      try {
+          const svc = new FacebookService();
+          const start = dateRange.start;
+          const end = dateRange.end;
+          
+          const fetchedAds = await svc.fetchInsights(fbConfig, start, end);
+          
+          const newEntries: AdSpend[] = fetchedAds.map(fetched => {
+              const mapping = mappings.find(m => m.campaign_id === fetched.campaign_id);
+              return {
+                  ...fetched,
+                  product_id: mapping?.product_id || undefined
+              };
+          });
+
+          // SYNC: Replace data for this range
+          onSyncAdSpend('Facebook', start, end, newEntries);
+
+      } catch (e) {
+          console.error(e);
+      } finally {
+          setIsSyncing(false);
+      }
+  };
 
   // Extract unique groups
   const groups = useMemo(() => {
@@ -119,52 +164,6 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
     setNewAd(prev => ({ ...prev, amount: '' }));
   };
 
-  const handleSyncFacebook = async () => {
-      if (!fbConfig || !fbConfig.is_active || !fbConfig.ad_account_id) return;
-      setIsSyncing(true);
-      try {
-          const svc = new FacebookService();
-          // Sync selected range or default
-          const start = dateRange.start;
-          const end = dateRange.end;
-          
-          const fetchedAds = await svc.fetchInsights(fbConfig, start, end);
-          
-          // Apply existing mappings & Deduplicate (Simple check based on date + campaign_id to avoid spamming demo data)
-          // In production, we'd use a unique constraint or check DB first.
-          // Here, we'll filter out ads that exactly match date & campaign_id & amount in current state (basic client-side dedup)
-          
-          const newEntries: AdSpend[] = [];
-          
-          fetchedAds.forEach(fetched => {
-              const exists = adSpend.some(existing => 
-                  existing.date === fetched.date && 
-                  existing.campaign_id === fetched.campaign_id && 
-                  Math.abs(existing.amount_spent - fetched.amount_spent) < 0.01
-              );
-              
-              if (!exists) {
-                  const mapping = mappings.find(m => m.campaign_id === fetched.campaign_id);
-                  newEntries.push({
-                      ...fetched,
-                      product_id: mapping?.product_id || undefined
-                  });
-              }
-          });
-
-          if (newEntries.length > 0) {
-              onAddAdSpend(newEntries); 
-          } else {
-              alert("No new data found for this period (or data already synced).");
-          }
-      } catch (e) {
-          console.error(e);
-          alert("Sync Failed. Check console.");
-      } finally {
-          setIsSyncing(false);
-      }
-  };
-
   const saveMapping = async (campaignId: string, campaignName: string, productId: string) => {
       const { data: { session } } = await supabase.auth.getSession();
       if(!session?.user) return;
@@ -182,20 +181,11 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
           ...mapping
       });
 
-      // 2. Update Local State
+      // 2. Update Local State (Will trigger re-sync in useEffect due to dependency)
       setMappings(prev => {
           const filtered = prev.filter(m => m.campaign_id !== campaignId);
           return [...filtered, mapping];
       });
-
-      // 3. Update Existing AdSpend in DB
-      await supabase.from('ad_spend')
-        .update({ product_id: productId || null })
-        .eq('user_id', session.user.id)
-        .eq('campaign_id', campaignId);
-      
-      // 4. Trigger Reload of page to refresh adSpend state (Simplest for now)
-      window.location.reload(); 
   };
 
   const filteredAds = useMemo(() => {
@@ -477,19 +467,28 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-blue-50 border border-blue-100 p-6 rounded-xl">
                   <div>
                       <h3 className="text-lg font-bold text-blue-900">Facebook Integration</h3>
-                      <p className="text-sm text-blue-700 mt-1">
-                          {fbConfig?.is_active ? 'Connected' : 'Not Connected'} 
-                          {fbConfig?.ad_account_id && ` • Account: ${fbConfig.ad_account_id}`}
-                      </p>
+                      <div className="flex items-center gap-2 mt-1">
+                          <p className="text-sm text-blue-700">
+                              {fbConfig?.is_active ? 'Connected' : 'Not Connected'} 
+                              {fbConfig?.ad_account_id && ` • Account: ${fbConfig.ad_account_id}`}
+                          </p>
+                          {isSyncing ? (
+                              <span className="flex items-center gap-1 text-xs text-blue-600 font-bold bg-blue-100 px-2 py-0.5 rounded-full animate-pulse">
+                                  <RefreshCw size={10} className="animate-spin" /> Auto-syncing...
+                              </span>
+                          ) : (
+                              <span className="flex items-center gap-1 text-xs text-green-700 font-bold bg-green-100 px-2 py-0.5 rounded-full">
+                                  <CheckCircle2 size={10} /> Up to date
+                              </span>
+                          )}
+                      </div>
                   </div>
-                  <button 
-                    onClick={handleSyncFacebook}
-                    disabled={isSyncing || !fbConfig?.is_active}
-                    className="flex items-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm transition-all"
-                  >
-                      {isSyncing ? <RefreshCw className="animate-spin" size={18} /> : <RefreshCw size={18} />}
-                      {isSyncing ? 'Syncing...' : 'Sync Now'}
-                  </button>
+                  
+                  {/* Real Time Status Badge */}
+                  <div className="flex items-center gap-2 text-blue-800 bg-white/50 px-3 py-1.5 rounded-lg border border-blue-100 shadow-sm">
+                      <Zap size={16} className="text-yellow-500 fill-yellow-500" />
+                      <span className="text-xs font-bold uppercase tracking-wide">Live Data</span>
+                  </div>
               </div>
 
               {!fbConfig?.is_active && (
@@ -523,7 +522,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, onAddAdSpend, 
                               {facebookCampaigns.length === 0 && (
                                   <tr>
                                       <td colSpan={4} className="px-6 py-12 text-center text-slate-400">
-                                          No campaigns found in this period. Click 'Sync Now' to fetch data.
+                                          {isSyncing ? 'Fetching campaigns...' : 'No campaigns found in this period.'}
                                       </td>
                                   </tr>
                               )}

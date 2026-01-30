@@ -165,8 +165,9 @@ const App: React.FC = () => {
                     date: a.date,
                     platform: a.platform,
                     amount_spent: a.amount_spent,
-                    product_id: a.product_id || null
-                    // attributed_orders: a.attributed_orders
+                    product_id: a.product_id || null,
+                    campaign_id: a.campaign_id,
+                    campaign_name: a.campaign_name
                 })));
             }
         }
@@ -338,6 +339,46 @@ const App: React.FC = () => {
     }
   };
 
+  // NEW: Sync (Replace) Ad Spend for Real-time Updates
+  const handleSyncAdSpend = async (platform: string, startDate: string, endDate: string, newEntries: AdSpend[]) => {
+    // 1. Update Local State (Remove old entries in range, add new ones)
+    setAdSpend(prev => {
+        // Keep entries that are NOT (matching platform AND in date range)
+        const kept = prev.filter(a => 
+            !(a.platform === platform && a.date >= startDate && a.date <= endDate)
+        );
+        return [...kept, ...newEntries];
+    });
+
+    // 2. DB Sync
+    if (!isDemoMode && session?.user) {
+        try {
+            // A. Delete existing for range
+            await supabase.from('ad_spend')
+                .delete()
+                .eq('user_id', session.user.id)
+                .eq('platform', platform)
+                .gte('date', startDate)
+                .lte('date', endDate);
+
+            // B. Insert New
+            if (newEntries.length > 0) {
+                const dbPayload = newEntries.map(entry => ({
+                    id: entry.id,
+                    user_id: session.user.id,
+                    date: entry.date,
+                    platform: entry.platform,
+                    amount_spent: entry.amount_spent,
+                    product_id: entry.product_id || null,
+                    campaign_id: entry.campaign_id,
+                    campaign_name: entry.campaign_name
+                }));
+                await supabase.from('ad_spend').insert(dbPayload);
+            }
+        } catch (e) { console.error("DB Sync Error:", e); }
+    }
+  };
+
   const handleDeleteAdSpend = async (id: string) => {
     setAdSpend(prev => prev.filter(a => a.id !== id));
     if (!isDemoMode && session?.user) {
@@ -416,7 +457,15 @@ const App: React.FC = () => {
                 {currentPage === 'couriers' && <Couriers orders={orders} />}
                 {currentPage === 'profitability' && <Profitability orders={orders} products={products} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} />}
                 {currentPage === 'inventory' && <Inventory products={products} onUpdateProducts={handleUpdateProducts} />}
-                {currentPage === 'marketing' && <Marketing adSpend={adSpend} products={products} onAddAdSpend={handleAddAdSpend} onDeleteAdSpend={handleDeleteAdSpend} />}
+                {currentPage === 'marketing' && (
+                    <Marketing 
+                        adSpend={adSpend} 
+                        products={products} 
+                        onAddAdSpend={handleAddAdSpend} 
+                        onDeleteAdSpend={handleDeleteAdSpend}
+                        onSyncAdSpend={handleSyncAdSpend} 
+                    />
+                )}
                 {currentPage === 'integrations' && <Integrations onConfigUpdate={() => setRefreshTrigger(p => p + 1)} />}
                 {currentPage === 'settings' && <Settings />}
               </>
