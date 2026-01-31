@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer 
@@ -46,7 +47,7 @@ const ProfitChart: React.FC<ProfitChartProps> = ({ data }) => {
           <Legend />
           <Bar dataKey="revenue" stackId="a" fill="#22c55e" name="Revenue" radius={[0, 0, 4, 4]} />
           <Bar dataKey="profit" stackId="b" fill="#15803d" name="Net Profit" radius={[4, 4, 0, 0]} />
-          <Bar dataKey="expense" stackId="b" fill="#ef4444" name="Expenses (Ads+Ship+COGS)" radius={[4, 4, 0, 0]} />
+          <Bar dataKey="expense" stackId="b" fill="#ef4444" name="Expenses (Ads & Tax + Ship + COGS)" radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
     </div>

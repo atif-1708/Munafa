@@ -447,7 +447,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                 ['Total Ad Spend', formatCurrency(product.ad_spend_allocation), 'Includes Ad Tax'],
                 ['Facebook Purchases', product.marketing_purchases, '-'],
                 ['Actual CPR', formatCurrency(actualCpr), actualCpr > breakevenCpr ? 'Over Budget' : 'Profitable'],
-                ['Breakeven CPR', formatCurrency(breakevenCpr), 'Max Spend for 0 Profit (Cash Basis)']
+                ['Breakeven CPR', formatCurrency(breakevenCpr), 'Max Allowable CPR to hit 0 Net Profit (Cash)']
             ],
             theme: 'grid',
             headStyles: { fillColor: [124, 58, 237] }, // Purple

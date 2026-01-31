@@ -301,7 +301,7 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, shopifyOrders = [], adSpe
             <KPICard 
               title="Net Profit" 
               value={formatCurrency(metrics.net_profit)} 
-              subValue={`${metrics.roi.toFixed(1)}% ROI`}
+              subValue={`Real Cash Profit (${metrics.roi.toFixed(1)}% ROI)`}
               icon={Wallet} 
               color="emerald"
             />
