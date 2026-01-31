@@ -45,7 +45,7 @@ interface IntegrationsProps {
 const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   // 1. Separate State for Sales Channels
   const [shopifyConfig, setShopifyConfig] = useState<SalesChannel>({
-      id: '', platform: 'Shopify', store_url: '', api_key: '', access_token: '', is_active: false
+      id: '', platform: 'Shopify', store_url: '', access_token: '', is_active: false
   });
 
   // 2. Separate State for Couriers
@@ -86,7 +86,15 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                 .limit(1);
             
             if (salesData && salesData.length > 0) {
-                setShopifyConfig(salesData[0]);
+                // We map only the fields we care about
+                const data = salesData[0];
+                setShopifyConfig({
+                    id: data.id,
+                    platform: data.platform,
+                    store_url: data.store_url,
+                    access_token: data.access_token,
+                    is_active: data.is_active
+                });
             }
 
             // B. Fetch Couriers
@@ -186,18 +194,16 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   const handleManualConnect = async (verified: boolean = false) => {
       setErrorMessage(null);
       if (!shopifyConfig.store_url || !shopifyConfig.access_token) {
-          setErrorMessage("Please enter Store URL, API Key, and Access Token");
+          setErrorMessage("Please enter Store URL and Access Token");
           return;
       }
       
       const cleanUrl = validateShopifyUrl(shopifyConfig.store_url);
       const token = shopifyConfig.access_token.trim();
-      const apiKey = shopifyConfig.api_key ? shopifyConfig.api_key.trim() : '';
 
       const updatedConfig: SalesChannel = {
           ...shopifyConfig,
           store_url: cleanUrl,
-          api_key: apiKey,
           access_token: token,
           is_active: true,
           platform: 'Shopify'
@@ -228,11 +234,11 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
           return false;
       }
 
+      // REMOVED api_key from payload to prevent "Column not found" error
       const payload = {
           user_id: session.user.id,
           platform: config.platform,
           store_url: config.store_url,
-          api_key: config.api_key,
           access_token: config.access_token,
           scope: config.scope,
           is_active: config.is_active
@@ -516,7 +522,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                <CheckCircle2 size={20} className="text-green-500" />
                            </div>
                            <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-500">
-                               <p className="font-mono truncate">Client ID: {shopifyConfig.api_key || 'N/A'}</p>
                                <p className="font-mono truncate">Token: ••••••••••••••••••••••{shopifyConfig.access_token.slice(-4)}</p>
                            </div>
                            <button onClick={handleDisconnectShopify} className="text-sm text-red-600 hover:text-red-700 hover:underline">
@@ -559,7 +564,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                             </li>
                                             <li>Click <strong>Save</strong> (top right), then go to the <strong>API credentials</strong> tab.</li>
                                             <li>Click <strong>Install app</strong>.</li>
-                                            <li>Copy the <strong>API Key</strong> (Client ID) and <strong>Admin API access token</strong> (starts with <code>shpat_</code>).</li>
+                                            <li>Copy the <strong>Admin API access token</strong> (starts with <code>shpat_</code>).</li>
                                         </ol>
                                     </div>
                                 )}
@@ -584,22 +589,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                     <p className="text-[10px] text-slate-400 mt-1.5 ml-1">
                                         Do not use your custom domain (e.g. brand.com). Use the internal Shopify domain.
                                     </p>
-                                </div>
-
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                                        API Key / Client ID <span className="text-slate-400 font-normal">(Optional but recommended)</span>
-                                    </label>
-                                    <div className="relative">
-                                        <Hash className="absolute left-4 top-3.5 text-slate-400" size={18} />
-                                        <input 
-                                            type="text"
-                                            placeholder="e.g. 7f8a3..."
-                                            className="w-full pl-11 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none text-sm transition-all font-mono"
-                                            value={shopifyConfig.api_key || ''}
-                                            onChange={(e) => setShopifyConfig({...shopifyConfig, api_key: e.target.value})}
-                                        />
-                                    </div>
                                 </div>
 
                                 <div>

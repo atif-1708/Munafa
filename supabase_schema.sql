@@ -57,13 +57,12 @@ alter table ad_spend enable row level security;
 drop policy if exists "Users can all own ad_spend" on ad_spend;
 create policy "Users can all own ad_spend" on ad_spend for all using ( auth.uid() = user_id );
 
--- 4. SALES CHANNELS TABLE (NEW: For Shopify, WooCommerce, etc)
+-- 4. SALES CHANNELS TABLE (UPDATED: Removed api_key to match manual integration)
 create table if not exists sales_channels (
   id uuid default uuid_generate_v4() primary key,
   user_id uuid references auth.users on delete cascade not null,
   platform text not null check (platform in ('Shopify', 'WooCommerce')),
   store_url text not null,
-  api_key text, -- New: Client ID / Public Key
   access_token text, -- OAuth Token / Admin Token
   scope text,
   is_active boolean default true,
