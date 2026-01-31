@@ -63,7 +63,6 @@ const App: React.FC = () => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-       // Only update state if session ID or User ID changes to prevent re-renders on token refresh
        setSession((prev: any) => {
            if (prev?.access_token === session?.access_token) return prev;
            return session;
@@ -77,7 +76,6 @@ const App: React.FC = () => {
   const recalculateOrderCosts = useCallback((currentOrders: Order[], currentProducts: Product[]) => {
     return currentOrders.map(order => {
         const updatedItems = order.items.map(item => {
-            // MATCHING STRATEGY: Fingerprint -> SKU -> ID
             const productDef = 
                 currentProducts.find(p => p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) ||
                 currentProducts.find(p => p.sku === item.sku) || 
@@ -136,7 +134,7 @@ const App: React.FC = () => {
         }
         setSettings(fetchedSettings);
 
-        // B. Fetch SAVED Products (Database Source of Truth)
+        // B. Fetch SAVED Products
         let savedProducts: Product[] = [];
         if (!isDemoMode) {
             const { data: productData } = await supabase.from('products').select('*').eq('user_id', user.id);
@@ -177,18 +175,20 @@ const App: React.FC = () => {
         let shopifyConfig: SalesChannel | undefined;
         
         if (!isDemoMode) {
-             // 1. Fetch Sales Channels (New)
+             // 1. Fetch Sales Channels - Use limit(1) instead of single() to avoid duplicate row errors
              const { data: salesData } = await supabase
                 .from('sales_channels')
                 .select('*')
                 .eq('user_id', user.id)
                 .eq('is_active', true)
                 .eq('platform', 'Shopify')
-                .single();
+                .limit(1);
              
-             if (salesData) shopifyConfig = salesData;
+             if (salesData && salesData.length > 0) {
+                 shopifyConfig = salesData[0];
+             }
 
-             // 2. Fetch Courier Configs (OLD TABLE 'integration_configs')
+             // 2. Fetch Courier Configs
              const { data: courierData } = await supabase
                 .from('integration_configs')
                 .select('*')
@@ -224,16 +224,16 @@ const App: React.FC = () => {
                 console.error("Shopify Sync Error:", e);
                 setError("Shopify Sync Failed: " + e.message);
             }
+        } else {
+            setShopifyOrders([]);
         }
 
         // F. Fetch Live Orders from Courier (Isolate failure)
         if (postExConfig) {
             try {
-                // Use existing config structure for PostEx
                 const postExAdapter = new PostExAdapter();
                 const rawOrders = await postExAdapter.fetchRecentOrders(postExConfig);
 
-                // Merge Logic: Detect new products based on FINGERPRINT
                 rawOrders.forEach(o => {
                     const isRelevantForInventory = o.status !== OrderStatus.PENDING && o.status !== OrderStatus.BOOKED && o.status !== OrderStatus.CANCELLED;
                     if (!isRelevantForInventory) return;
@@ -283,7 +283,6 @@ const App: React.FC = () => {
 
             } catch (e: any) {
                 console.error("PostEx Sync Error:", e);
-                // Only override error if it's the first error, otherwise append
                 setError(prev => prev ? prev + " | PostEx Sync Failed: " + e.message : "PostEx Sync Failed: " + e.message);
             }
         } else {
@@ -305,16 +304,11 @@ const App: React.FC = () => {
   }, [session?.user?.id, isDemoMode, refreshTrigger]);
 
   const handleUpdateProducts = async (updatedProducts: Product[]) => {
-    // 1. Optimistic Update
     const updatedIds = new Set(updatedProducts.map(p => p.id));
     const newProducts = products.map(p => updatedIds.has(p.id) ? updatedProducts.find(u => u.id === p.id)! : p);
     setProducts(newProducts);
-
-    // 2. Recalculate Orders
     const newOrders = recalculateOrderCosts(orders, newProducts);
     setOrders(newOrders);
-
-    // 3. Persist to Database
     if (!isDemoMode && session?.user) {
         try {
             const upsertData = updatedProducts.map(p => ({
@@ -351,29 +345,21 @@ const App: React.FC = () => {
     }
   };
 
-  // NEW: Sync (Replace) Ad Spend for Real-time Updates
   const handleSyncAdSpend = async (platform: string, startDate: string, endDate: string, newEntries: AdSpend[]) => {
-    // 1. Update Local State (Remove old entries in range, add new ones)
     setAdSpend(prev => {
-        // Keep entries that are NOT (matching platform AND in date range)
         const kept = prev.filter(a => 
             !(a.platform === platform && a.date >= startDate && a.date <= endDate)
         );
         return [...kept, ...newEntries];
     });
-
-    // 2. DB Sync
     if (!isDemoMode && session?.user) {
         try {
-            // A. Delete existing for range
             await supabase.from('ad_spend')
                 .delete()
                 .eq('user_id', session.user.id)
                 .eq('platform', platform)
                 .gte('date', startDate)
                 .lte('date', endDate);
-
-            // B. Insert New
             if (newEntries.length > 0) {
                 const dbPayload = newEntries.map(entry => ({
                     id: entry.id,
@@ -402,7 +388,6 @@ const App: React.FC = () => {
     e.preventDefault();
     setAuthLoading(true);
     setAuthMessage(null);
-
     if (authMode === 'login') {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) setAuthMessage({ type: 'error', text: error.message });
@@ -460,7 +445,6 @@ const App: React.FC = () => {
           email={session?.user?.email || 'Guest User'}
       />
       <main className="flex-1 ml-64 p-8 relative">
-        {/* Global Error Banner */}
         {error && (
             <div className="mb-6 bg-red-50 border border-red-200 p-4 rounded-xl flex items-start justify-between animate-in fade-in slide-in-from-top-2 shadow-sm">
                <div className="flex gap-3">

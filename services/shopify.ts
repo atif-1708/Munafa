@@ -123,20 +123,18 @@ export class ShopifyAdapter {
       } catch (e) {}
 
       // 2. Fallback: Public Proxies
-      // IMPORTANT: corsproxy.io works but can be flaky. Added allorigins as fallback for GET requests.
+      // IMPORTANT: corsproxy.io works but can be flaky. 
+      // Replaced allorigins with CodeTabs (supports headers better)
       const proxies = [
         { base: 'https://corsproxy.io/?', encode: true },
         { base: 'https://thingproxy.freeboard.io/fetch/', encode: false },
-        { base: 'https://api.allorigins.win/raw?url=', encode: true }, // Good for GET, strips headers sometimes
+        { base: 'https://api.codetabs.com/v1/proxy?quest=', encode: true } 
       ];
 
       let lastError: Error | null = null;
 
       for (const proxy of proxies) {
           try {
-              // Note: allorigins only supports GET effectively for this use case.
-              if (proxy.base.includes('allorigins') && options.method !== 'GET') continue;
-
               const fetchUrl = proxy.encode ? `${proxy.base}${encodeURIComponent(targetUrl)}` : `${proxy.base}${targetUrl}`;
 
               const res = await fetch(fetchUrl, {
@@ -149,7 +147,6 @@ export class ShopifyAdapter {
               // Handle HTTP Errors
               if (!res.ok) {
                   // If 401/403, it might be the proxy stripping headers OR actual auth failure.
-                  // We try the next proxy just in case.
                   if (res.status === 401 || res.status === 403) {
                        lastError = new Error(`Auth Failed (${res.status}): ${text}`);
                        continue;
