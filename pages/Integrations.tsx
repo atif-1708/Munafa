@@ -218,12 +218,12 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
            </div>
       )}
 
-      {/* CORE PLATFORMS GRID (SHOPIFY & FACEBOOK) */}
+      {/* CORE PLATFORMS GRID (SHOPIFY & FACEBOOK & TIKTOK) */}
       <section>
           <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
               <Grid2X2 className="text-slate-500" size={20} /> Core Platforms
           </h3>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
               
               {/* SHOPIFY CARD */}
               <div className={`
@@ -384,6 +384,48 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                       </div>
                   </div>
               </div>
+
+              {/* TIKTOK CARD (Coming Soon) */}
+              <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                  {/* Overlay */}
+                  <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] z-10 flex flex-col items-center justify-center text-slate-500">
+                        <Lock size={32} className="mb-3 opacity-50" />
+                        <span className="text-sm font-bold bg-slate-100 px-4 py-1.5 rounded-full border border-slate-200 shadow-sm">Coming Soon</span>
+                  </div>
+
+                  <div className="p-8 h-full flex flex-col opacity-50">
+                      <div className="flex justify-between items-start mb-6">
+                          <div className="flex items-center gap-4">
+                              <div className="w-14 h-14 bg-black rounded-xl flex items-center justify-center text-white shadow-sm">
+                                  {/* Simple TikTok Symbol Representation */}
+                                  <svg viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8">
+                                      <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z"/>
+                                  </svg>
+                              </div>
+                              <div>
+                                  <h3 className="font-bold text-xl text-slate-900">TikTok Ads</h3>
+                                  <p className="text-sm text-slate-500">Marketing Source</p>
+                              </div>
+                          </div>
+                      </div>
+                      
+                      <div className="flex-1 space-y-4">
+                           <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-2">Access Token</label>
+                                <input 
+                                    type="text"
+                                    disabled
+                                    className="w-full px-4 py-3 border border-slate-300 rounded-xl bg-slate-50"
+                                    placeholder="Disabled"
+                                />
+                            </div>
+                            <button disabled className="w-full bg-slate-200 text-slate-500 py-3 rounded-xl text-sm font-bold">
+                                Connect TikTok
+                            </button>
+                      </div>
+                  </div>
+              </div>
+
           </div>
       </section>
 
