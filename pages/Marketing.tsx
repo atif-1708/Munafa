@@ -91,7 +91,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
   }, [activeTab, dateRange, fbConfig, tiktokConfig, mappings, exchangeRate]); // Add exchangeRate dependency to re-sync when rate changes
 
   const fetchAndSyncFacebookData = async () => {
-      if (!fbConfig || !fbConfig.is_active || !fbConfig.ad_account_id) return;
+      if (!fbConfig || !fbConfig.is_active || !fbConfig.ad_account_ids || fbConfig.ad_account_ids.length === 0) return;
       if (!onSyncAdSpend) return;
 
       setIsSyncing(true);
@@ -124,7 +124,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
   };
 
   const fetchAndSyncTikTokData = async () => {
-      if (!tiktokConfig || !tiktokConfig.is_active || !tiktokConfig.ad_account_id) return;
+      if (!tiktokConfig || !tiktokConfig.is_active || !tiktokConfig.ad_account_ids || tiktokConfig.ad_account_ids.length === 0) return;
       if (!onSyncAdSpend) return;
 
       setIsSyncing(true);
@@ -577,7 +577,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                       <div className="flex items-center gap-2 mt-1">
                           <p className="text-sm text-blue-700">
                               {fbConfig?.is_active ? 'Connected' : 'Not Connected'} 
-                              {fbConfig?.ad_account_id && ` • Account: ${fbConfig.ad_account_id}`}
+                              {fbConfig?.ad_account_ids && fbConfig.ad_account_ids.length > 0 && ` • ${fbConfig.ad_account_ids.length} Accounts`}
                           </p>
                           {isSyncing ? (
                               <span className="flex items-center gap-1 text-xs text-blue-600 font-bold bg-blue-100 px-2 py-0.5 rounded-full animate-pulse">
@@ -678,7 +678,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                       <div className="flex items-center gap-2 mt-1">
                           <p className="text-sm text-slate-600">
                               {tiktokConfig?.is_active ? 'Connected' : 'Not Connected'} 
-                              {tiktokConfig?.ad_account_id && ` • Advertiser: ${tiktokConfig.ad_account_id}`}
+                              {tiktokConfig?.ad_account_ids && tiktokConfig.ad_account_ids.length > 0 && ` • Advertiser: ${tiktokConfig.ad_account_ids[0]}`}
                           </p>
                           {isSyncing ? (
                               <span className="flex items-center gap-1 text-xs text-slate-600 font-bold bg-slate-200 px-2 py-0.5 rounded-full animate-pulse">

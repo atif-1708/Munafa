@@ -66,7 +66,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   
   // Facebook State
   const [fbConfig, setFbConfig] = useState<MarketingConfig>({
-      id: '', platform: 'Facebook', access_token: '', is_active: false
+      id: '', platform: 'Facebook', access_token: '', ad_account_ids: [], is_active: false
   });
   const [fbManualToken, setFbManualToken] = useState('');
   const [availableAdAccounts, setAvailableAdAccounts] = useState<{id: string, name: string}[]>([]);
@@ -74,7 +74,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
 
   // TikTok State
   const [tiktokConfig, setTiktokConfig] = useState<MarketingConfig>({
-    id: '', platform: 'TikTok', access_token: '', is_active: false
+    id: '', platform: 'TikTok', access_token: '', ad_account_ids: [], is_active: false
   });
   const [availableTikTokAccounts, setAvailableTikTokAccounts] = useState<{id: string, name: string}[]>([]);
   const [isVerifyingTikTok, setIsVerifyingTikTok] = useState(false);
@@ -205,10 +205,23 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
       setIsVerifyingFb(false);
   };
 
+  const toggleFbAccount = (accountId: string) => {
+      const current = new Set(fbConfig.ad_account_ids || []);
+      if (current.has(accountId)) current.delete(accountId);
+      else current.add(accountId);
+      setFbConfig({ ...fbConfig, ad_account_ids: Array.from(current) });
+  };
+
   const handleSaveFbConfig = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      if(session?.user && fbConfig.ad_account_id) {
-         const payload = { user_id: session.user.id, platform: 'Facebook', access_token: fbConfig.access_token, ad_account_id: fbConfig.ad_account_id, is_active: true };
+      if(session?.user && fbConfig.ad_account_ids.length > 0) {
+         const payload = { 
+             user_id: session.user.id, 
+             platform: 'Facebook', 
+             access_token: fbConfig.access_token, 
+             ad_account_ids: fbConfig.ad_account_ids, 
+             is_active: true 
+         };
          const { data: existing } = await supabase.from('marketing_configs').select('id').eq('user_id', session.user.id).limit(1);
          if (existing && existing.length > 0) await supabase.from('marketing_configs').update(payload).eq('id', existing[0].id);
          else await supabase.from('marketing_configs').insert(payload);
@@ -218,7 +231,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   };
 
   const disconnectFacebook = async () => {
-      setFbConfig({ id: '', platform: 'Facebook', access_token: '', is_active: false });
+      setFbConfig({ id: '', platform: 'Facebook', access_token: '', ad_account_ids: [], is_active: false });
       const { data: { session } } = await supabase.auth.getSession();
       if(session?.user) await supabase.from('marketing_configs').delete().eq('user_id', session.user.id);
   };
@@ -241,10 +254,10 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
 
   const handleSaveTikTokConfig = async () => {
     const { data: { session } } = await supabase.auth.getSession();
-    if(session?.user && tiktokConfig.ad_account_id) {
+    if(session?.user && tiktokConfig.ad_account_ids.length > 0) {
        // We only need to update the Ad Account ID, as the token is already saved by the backend callback
        await supabase.from('marketing_configs')
-        .update({ ad_account_id: tiktokConfig.ad_account_id })
+        .update({ ad_account_ids: tiktokConfig.ad_account_ids })
         .eq('user_id', session.user.id)
         .eq('platform', 'TikTok');
 
@@ -254,7 +267,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   };
 
   const disconnectTikTok = async () => {
-      setTiktokConfig({ id: '', platform: 'TikTok', access_token: '', is_active: false });
+      setTiktokConfig({ id: '', platform: 'TikTok', access_token: '', ad_account_ids: [], is_active: false });
       const { data: { session } } = await supabase.auth.getSession();
       if(session?.user) await supabase.from('marketing_configs').delete().eq('user_id', session.user.id).eq('platform', 'TikTok');
   };
@@ -387,8 +400,8 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                         <Settings size={20} />
                                     </div>
                                     <div className="flex-1 min-w-0">
-                                        <label className="text-xs text-slate-500 font-bold uppercase mb-1 block">Connected Account</label>
-                                        <p className="text-sm font-bold text-slate-900">{fbConfig.ad_account_id}</p>
+                                        <label className="text-xs text-slate-500 font-bold uppercase mb-1 block">Connected Accounts</label>
+                                        <p className="text-sm font-bold text-slate-900">{fbConfig.ad_account_ids?.length || 0} Accounts</p>
                                     </div>
                                 </div>
                                 <button onClick={disconnectFacebook} className="text-sm text-red-600 hover:text-red-700 hover:underline">
@@ -421,21 +434,27 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                 ) : (
                                     <>
                                         <div>
-                                            <label className="block text-sm font-bold text-slate-700 mb-2">Select Ad Account</label>
-                                            <select 
-                                                className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-white"
-                                                value={fbConfig.ad_account_id || ''}
-                                                onChange={(e) => setFbConfig({...fbConfig, ad_account_id: e.target.value})}
-                                            >
-                                                <option value="">-- Select Account --</option>
-                                                {availableAdAccounts.map(acc => (
-                                                    <option key={acc.id} value={acc.id}>{acc.name} ({acc.id})</option>
-                                                ))}
-                                            </select>
+                                            <label className="block text-sm font-bold text-slate-700 mb-2">Select Ad Accounts</label>
+                                            <div className="max-h-60 overflow-y-auto border border-slate-200 rounded-xl p-2 space-y-1 bg-white">
+                                               {availableAdAccounts.map(acc => (
+                                                  <label key={acc.id} className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-lg cursor-pointer transition-colors select-none">
+                                                      <input 
+                                                          type="checkbox" 
+                                                          checked={fbConfig.ad_account_ids?.includes(acc.id) || false}
+                                                          onChange={() => toggleFbAccount(acc.id)}
+                                                          className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
+                                                      />
+                                                      <span className="text-sm text-slate-700 font-medium">{acc.name} <span className="text-slate-400 font-normal text-xs">({acc.id})</span></span>
+                                                  </label>
+                                               ))}
+                                            </div>
+                                            <div className="text-right mt-1">
+                                                <span className="text-xs text-slate-500">{fbConfig.ad_account_ids?.length || 0} selected</span>
+                                            </div>
                                         </div>
                                         <div className="flex gap-3">
-                                            <button onClick={() => { setAvailableAdAccounts([]); setFbConfig({...fbConfig, ad_account_id: ''}); }} className="flex-1 px-4 py-3 border border-slate-300 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50">Back</button>
-                                            <button onClick={handleSaveFbConfig} disabled={isVerifyingFb || !fbConfig.ad_account_id} className="flex-2 w-full bg-[#1877F2] text-white py-3.5 rounded-xl text-sm font-bold hover:bg-[#166fe5] transition-all flex items-center justify-center gap-2 disabled:opacity-50">Save Configuration</button>
+                                            <button onClick={() => { setAvailableAdAccounts([]); setFbConfig({...fbConfig, ad_account_ids: []}); }} className="flex-1 px-4 py-3 border border-slate-300 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50">Back</button>
+                                            <button onClick={handleSaveFbConfig} disabled={isVerifyingFb || fbConfig.ad_account_ids.length === 0} className="flex-2 w-full bg-[#1877F2] text-white py-3.5 rounded-xl text-sm font-bold hover:bg-[#166fe5] transition-all flex items-center justify-center gap-2 disabled:opacity-50">Save Configuration</button>
                                         </div>
                                     </>
                                 )}
@@ -480,8 +499,8 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                             <label className="block text-sm font-bold text-slate-700 mb-2">Select Advertiser</label>
                                             <select 
                                                 className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-black outline-none bg-white"
-                                                value={tiktokConfig.ad_account_id || ''}
-                                                onChange={(e) => setTiktokConfig({...tiktokConfig, ad_account_id: e.target.value})}
+                                                value={tiktokConfig.ad_account_ids[0] || ''}
+                                                onChange={(e) => setTiktokConfig({...tiktokConfig, ad_account_ids: [e.target.value]})}
                                             >
                                                 <option value="">-- Select Advertiser --</option>
                                                 {availableTikTokAccounts.map(acc => (
@@ -489,7 +508,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                                 ))}
                                             </select>
                                         </div>
-                                        <button onClick={handleSaveTikTokConfig} disabled={!tiktokConfig.ad_account_id} className="w-full bg-black text-white py-3.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50">Update Configuration</button>
+                                        <button onClick={handleSaveTikTokConfig} disabled={tiktokConfig.ad_account_ids.length === 0} className="w-full bg-black text-white py-3.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50">Update Configuration</button>
                                     </>
                                 ) : (
                                     <div className="flex items-center gap-3 p-4 bg-white rounded-xl border border-slate-200 shadow-sm">
@@ -498,7 +517,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                         </div>
                                         <div className="flex-1 min-w-0">
                                             <label className="text-xs text-slate-500 font-bold uppercase mb-1 block">Connected Account</label>
-                                            <p className="text-sm font-bold text-slate-900">{tiktokConfig.ad_account_id || 'Pending Selection'}</p>
+                                            <p className="text-sm font-bold text-slate-900">{tiktokConfig.ad_account_ids[0] || 'Pending Selection'}</p>
                                         </div>
                                     </div>
                                 )}

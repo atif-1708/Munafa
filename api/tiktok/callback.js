@@ -49,14 +49,14 @@ export default async function handler(req, res) {
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // If advertiser_ids are returned immediately, pick the first one, otherwise let user select in UI
-    const defaultAdAccount = (advertiser_ids && advertiser_ids.length > 0) ? advertiser_ids[0] : null;
+    // If advertiser_ids are returned immediately, pick the first one as default but store in array
+    const defaultAdAccountIds = (advertiser_ids && advertiser_ids.length > 0) ? [advertiser_ids[0]] : [];
 
     const { error } = await supabase.from('marketing_configs').upsert({
         user_id: userId,
         platform: 'TikTok',
         access_token: access_token,
-        ad_account_id: defaultAdAccount, // Can be updated later in UI
+        ad_account_ids: defaultAdAccountIds, // Store as JSONB array
         is_active: true
     }, { onConflict: 'user_id, platform' });
 

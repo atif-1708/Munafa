@@ -110,12 +110,13 @@ drop policy if exists "Users can all own settings" on app_settings;
 create policy "Users can all own settings" on app_settings for all using ( auth.uid() = user_id );
 
 -- 7. Marketing Configs (Facebook, TikTok, Google)
+-- Updated: ad_account_ids (jsonb) replaces ad_account_id
 create table if not exists marketing_configs (
   id uuid default uuid_generate_v4() primary key,
   user_id uuid references auth.users on delete cascade not null,
   platform text not null, -- 'Facebook', 'TikTok', 'Google'
   access_token text,
-  ad_account_id text,
+  ad_account_ids jsonb, -- Stores array of strings ['act_123', 'act_456']
   is_active boolean default false,
   created_at timestamptz default now(),
   unique(user_id, platform)

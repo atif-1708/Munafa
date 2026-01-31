@@ -85,9 +85,11 @@ export class TikTokService {
             return this.getMockCampaigns(startDate, endDate, exchangeRate);
         }
 
-        if (!config.ad_account_id) {
+        // Updated: Use the first account from the array
+        if (!config.ad_account_ids || config.ad_account_ids.length === 0) {
             throw new Error("No Advertiser ID selected");
         }
+        const advertiserId = config.ad_account_ids[0];
 
         try {
             const url = `${this.BASE_URL}/report/integrated/get/`;
@@ -95,7 +97,7 @@ export class TikTokService {
             // TikTok API Request
             // Metric: spend (USD), conversion (Total Complete Payment)
             const params = new URLSearchParams({
-                advertiser_id: config.ad_account_id,
+                advertiser_id: advertiserId,
                 report_type: 'BASIC',
                 data_level: 'AUCTION_CAMPAIGN',
                 dimensions: JSON.stringify(['campaign_id', 'stat_time_day']),

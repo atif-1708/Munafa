@@ -125,7 +125,7 @@ export interface MarketingConfig {
     id: string;
     platform: 'Facebook' | 'TikTok' | 'Google';
     access_token: string;
-    ad_account_id?: string;
+    ad_account_ids: string[]; // Changed from string to string[] for multi-account support
     is_active: boolean;
 }
 
