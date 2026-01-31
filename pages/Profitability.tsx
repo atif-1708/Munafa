@@ -215,15 +215,15 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
   [filteredData, products, adsTaxRate]);
 
   // 3. Group Logic (Aggregating Variants into Groups)
-  //    AND FILTERING: Only show items with Dispatch > 0
+  //    AND FILTERING: Only show items with Dispatch > 0 OR Ads > 0
   const groupedStats = useMemo(() => {
       const groups = new Map<string, GroupedProductPerformance>();
       const singles: GroupedProductPerformance[] = [];
 
       rawStats.forEach(stat => {
-          // Filter Condition: Must have been dispatched (Sold, Return, or InTransit)
+          // Filter Condition: Must have been dispatched (Sold, Return, or InTransit) OR have marketing spend
           const totalDispatched = stat.units_sold + stat.units_returned + stat.units_in_transit;
-          if (totalDispatched === 0) return;
+          if (totalDispatched === 0 && stat.ad_spend_allocation === 0) return;
 
           if (stat.group_id && stat.group_name) {
               if (!groups.has(stat.group_id)) {
@@ -443,7 +443,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                     )) : (
                         <tr>
                             <td colSpan={9} className="px-6 py-12 text-center text-slate-400">
-                                No active products found (with dispatched orders) in this date range.
+                                No active products found (with dispatched orders or marketing spend) in this date range.
                             </td>
                         </tr>
                     )}
