@@ -330,9 +330,8 @@ export const calculateProductPerformance = (
              p.units_returned += item.quantity;
              p.shipping_cost_allocation += (shippingPerItem * item.quantity); 
              
-             if (order.status === OrderStatus.RTO_INITIATED) {
-                 p.cash_in_stock += (historicalCogs * item.quantity);
-             }
+             // CASH STUCK UPDATE: Include Returned stock as stuck until re-processed
+             p.cash_in_stock += (historicalCogs * item.quantity);
         }
         // Delivered Logic
         else if (order.status === OrderStatus.DELIVERED) {

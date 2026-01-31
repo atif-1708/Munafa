@@ -2,7 +2,7 @@
 import React, { useMemo, useState } from 'react';
 import { Order, Product, AdSpend } from '../types';
 import { calculateProductPerformance, formatCurrency, ProductPerformance } from '../services/calculator';
-import { Package, Eye, X, Banknote, ShoppingBag, CheckCircle2, RotateCcw, Clock, Layers, ChevronDown, ChevronRight, CornerDownRight, ArrowUpRight, TrendingUp, AlertCircle, Calendar, Target, Download, Loader2 } from 'lucide-react';
+import { Package, Eye, X, Banknote, ShoppingBag, CheckCircle2, RotateCcw, Clock, Layers, ChevronDown, ChevronRight, CornerDownRight, ArrowUpRight, TrendingUp, AlertCircle, Calendar, Target, Download, Loader2, Coins, Receipt, ArrowRight, Truck } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -372,6 +372,28 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
     }
   };
 
+  // Helper for Detail View Stats
+  const getDetailStats = (p: ProductPerformance) => {
+      const totalUnits = p.units_sold + p.units_returned + p.units_in_transit;
+      
+      // Calculate Breakeven CPR: (Margin before Ads) / Orders
+      // Margin Before Ads = Revenue - COGS - Shipping - Overhead - Tax
+      const marginBeforeAds = p.gross_revenue - p.cogs_total - p.shipping_cost_allocation - p.overhead_allocation - p.tax_allocation;
+      
+      // We divide by 'Total Units' or 'Purchases' to see how much we *could* have spent per order to break even
+      // Using 'marketing_purchases' is better if available (actual Pixel fires), otherwise fall back to units_sold (delivered) or totalUnits (dispatched)
+      // Standard Breakeven CPA = (Avg Order Value - Avg COGS - Avg Ship)
+      // Here: MarginBeforeAds / (marketing_purchases || units_sold || 1)
+      const denominator = p.marketing_purchases > 0 ? p.marketing_purchases : (p.units_sold > 0 ? p.units_sold : 1);
+      const breakevenCpr = marginBeforeAds / denominator;
+      
+      const actualCpr = p.marketing_purchases > 0 ? p.ad_spend_allocation / p.marketing_purchases : 0;
+      
+      const pCent = (part: number, total: number) => total > 0 ? `${Math.round((part/total)*100)}%` : '0%';
+
+      return { totalUnits, breakevenCpr, actualCpr, pCent };
+  };
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -443,79 +465,151 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
             </table>
         </div>
 
-        {/* --- Details Modal --- */}
-        {selectedProduct && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-                <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
-                    <div className="p-6 border-b border-slate-100 flex justify-between items-start bg-slate-50">
-                        <div>
-                            <h3 className="text-xl font-bold text-slate-900 leading-tight mb-1">{selectedProduct.title}</h3>
-                            <p className="text-sm text-slate-500 font-mono">{selectedProduct.sku !== 'GROUP' ? selectedProduct.sku : 'Product Group'}</p>
+        {/* --- Details Modal (Re-designed) --- */}
+        {selectedProduct && (() => {
+            const { totalUnits, breakevenCpr, actualCpr, pCent } = getDetailStats(selectedProduct);
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+                    <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                        {/* Header */}
+                        <div className="p-6 border-b border-slate-100 flex justify-between items-start bg-slate-50">
+                            <div>
+                                <h3 className="text-xl font-bold text-slate-900 leading-tight mb-1">{selectedProduct.title}</h3>
+                                <p className="text-sm text-slate-500 font-mono">{selectedProduct.sku !== 'GROUP' ? selectedProduct.sku : 'Product Group'}</p>
+                            </div>
+                            <button onClick={() => setSelectedProduct(null)} className="text-slate-400 hover:text-slate-600">
+                                <X size={24} />
+                            </button>
                         </div>
-                        <button onClick={() => setSelectedProduct(null)} className="text-slate-400 hover:text-slate-600">
-                            <X size={24} />
-                        </button>
-                    </div>
-                    
-                    <div className="p-6 overflow-y-auto">
-                        <div className="grid grid-cols-2 gap-4 mb-6">
-                            <div className="bg-green-50 p-4 rounded-xl border border-green-100">
-                                <p className="text-xs font-bold text-green-700 uppercase">Net Profit</p>
-                                <p className="text-2xl font-bold text-green-800 mt-1">{formatCurrency(selectedProduct.net_profit)}</p>
-                            </div>
-                            <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
-                                <p className="text-xs font-bold text-blue-700 uppercase">Revenue</p>
-                                <p className="text-2xl font-bold text-blue-800 mt-1">{formatCurrency(selectedProduct.gross_revenue)}</p>
-                            </div>
-                        </div>
-
-                        <div className="space-y-3 text-sm">
-                            <div className="flex justify-between py-2 border-b border-slate-50">
-                                <span className="text-slate-600 flex items-center gap-2"><ShoppingBag size={14}/> Units Sold</span>
-                                <span className="font-bold">{selectedProduct.units_sold}</span>
-                            </div>
-                            <div className="flex justify-between py-2 border-b border-slate-50">
-                                <span className="text-slate-600 flex items-center gap-2"><RotateCcw size={14}/> Returns (RTO)</span>
-                                <span className="font-bold text-red-600">{selectedProduct.units_returned}</span>
-                            </div>
+                        
+                        <div className="p-6 overflow-y-auto space-y-6">
                             
-                            <div className="pt-4 pb-2 font-bold text-slate-800">Expense Breakdown</div>
-                            
-                            <div className="flex justify-between py-1">
-                                <span className="text-slate-500">COGS (Product Cost)</span>
-                                <span>- {formatCurrency(selectedProduct.cogs_total)}</span>
-                            </div>
-                            <div className="flex justify-between py-1">
-                                <span className="text-slate-500">Shipping & Packaging</span>
-                                <span>- {formatCurrency(selectedProduct.shipping_cost_allocation)}</span>
-                            </div>
-                            <div className="flex justify-between py-1">
-                                <span className="text-slate-500">Marketing Ads</span>
-                                <span>- {formatCurrency(selectedProduct.ad_spend_allocation)}</span>
-                            </div>
-                            <div className="flex justify-between py-1">
-                                <span className="text-slate-500">Overhead & Ops</span>
-                                <span>- {formatCurrency(selectedProduct.overhead_allocation)}</span>
-                            </div>
-                            <div className="flex justify-between py-1">
-                                <span className="text-slate-500">Taxes</span>
-                                <span>- {formatCurrency(selectedProduct.tax_allocation)}</span>
-                            </div>
-                            
-                            <div className="mt-4 pt-3 border-t border-dashed border-slate-200">
-                                <div className="flex justify-between py-1 text-indigo-600 font-medium">
-                                    <span className="flex items-center gap-2"><Clock size={14}/> Cash Stuck (In Transit)</span>
-                                    <span>{formatCurrency(selectedProduct.cash_in_stock)}</span>
+                            {/* 1. KPI Cards */}
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100 flex flex-col justify-between">
+                                    <p className="text-xs font-bold text-emerald-700 uppercase tracking-wide flex items-center gap-1">
+                                        <Banknote size={14}/> Net Profit
+                                    </p>
+                                    <p className="text-2xl font-bold text-emerald-800 mt-2">{formatCurrency(selectedProduct.net_profit)}</p>
+                                    <div className="text-xs font-medium text-emerald-600 mt-1">
+                                        {selectedProduct.gross_revenue > 0 ? ((selectedProduct.net_profit / selectedProduct.gross_revenue) * 100).toFixed(0) : 0}% Margin
+                                    </div>
                                 </div>
-                                <p className="text-[10px] text-slate-400 mt-1">
-                                    This amount is essentially "Asset in Transit". It is not deducted from Profit, but it is not yet "Cash in Hand".
+                                <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 flex flex-col justify-between">
+                                    <p className="text-xs font-bold text-indigo-700 uppercase tracking-wide flex items-center gap-1">
+                                        <Coins size={14}/> Gross Profit
+                                    </p>
+                                    <p className="text-2xl font-bold text-indigo-800 mt-2">{formatCurrency(selectedProduct.gross_profit)}</p>
+                                    <div className="text-xs font-medium text-indigo-600 mt-1">Before Cash Stuck</div>
+                                </div>
+                                <div className="bg-purple-50 p-4 rounded-xl border border-purple-100 flex flex-col justify-between">
+                                    <p className="text-xs font-bold text-purple-700 uppercase tracking-wide flex items-center gap-1">
+                                        <Target size={14}/> Ad Spend
+                                    </p>
+                                    <p className="text-2xl font-bold text-purple-800 mt-2">{formatCurrency(selectedProduct.ad_spend_allocation)}</p>
+                                    <div className="text-xs font-medium text-purple-600 mt-1">
+                                        {selectedProduct.marketing_purchases} FB Purchases
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* 2. Order Funnel Section */}
+                            <div>
+                                <h4 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
+                                    <ShoppingBag size={18} className="text-slate-500"/> Order Status
+                                </h4>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-center">
+                                        <div className="text-xs text-slate-500 font-bold uppercase">Total</div>
+                                        <div className="text-lg font-bold text-slate-800">{totalUnits}</div>
+                                    </div>
+                                    <div className="bg-green-50 p-3 rounded-lg border border-green-100 text-center">
+                                        <div className="text-xs text-green-700 font-bold uppercase">Delivered</div>
+                                        <div className="text-lg font-bold text-green-800">{selectedProduct.units_sold}</div>
+                                        <div className="text-[10px] text-green-600">{pCent(selectedProduct.units_sold, totalUnits)}</div>
+                                    </div>
+                                    <div className="bg-red-50 p-3 rounded-lg border border-red-100 text-center">
+                                        <div className="text-xs text-red-700 font-bold uppercase">Returned</div>
+                                        <div className="text-lg font-bold text-red-800">{selectedProduct.units_returned}</div>
+                                        <div className="text-[10px] text-red-600">{pCent(selectedProduct.units_returned, totalUnits)}</div>
+                                    </div>
+                                    <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 text-center">
+                                        <div className="text-xs text-blue-700 font-bold uppercase">In Transit</div>
+                                        <div className="text-lg font-bold text-blue-800">{selectedProduct.units_in_transit}</div>
+                                        <div className="text-[10px] text-blue-600">{pCent(selectedProduct.units_in_transit, totalUnits)}</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* 3. Marketing Efficiency (CPR Breakdown) */}
+                            <div>
+                                <h4 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
+                                    <Target size={18} className="text-slate-500"/> Marketing Efficiency
+                                </h4>
+                                <div className="flex gap-4">
+                                    <div className="flex-1 border border-slate-200 rounded-lg p-3 flex justify-between items-center">
+                                        <div>
+                                            <p className="text-xs text-slate-500 font-medium">Actual CPR</p>
+                                            <p className="text-xl font-bold text-slate-800">{formatCurrency(actualCpr)}</p>
+                                        </div>
+                                        <div className={`text-xs font-bold px-2 py-1 rounded ${actualCpr > breakevenCpr ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                                            {actualCpr > breakevenCpr ? 'Over Budget' : 'Profitable'}
+                                        </div>
+                                    </div>
+                                    <div className="flex-1 border border-slate-200 rounded-lg p-3">
+                                        <p className="text-xs text-slate-500 font-medium">Breakeven CPR</p>
+                                        <p className="text-xl font-bold text-slate-600">{formatCurrency(breakevenCpr)}</p>
+                                    </div>
+                                </div>
+                                <p className="text-xs text-slate-400 mt-2">
+                                    * Breakeven CPR is the max you can spend per order to make 0 profit. Calculated as (Gross Margin / Orders).
                                 </p>
                             </div>
+
+                            {/* 4. Expense Breakdown */}
+                            <div className="border-t border-slate-100 pt-4">
+                                <h4 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
+                                    <Receipt size={18} className="text-slate-500"/> Expense Breakdown
+                                </h4>
+                                <div className="space-y-2 text-sm">
+                                    <div className="flex justify-between py-1.5 border-b border-slate-50">
+                                        <span className="text-slate-600">Product Cost (COGS)</span>
+                                        <span className="font-medium text-slate-900">- {formatCurrency(selectedProduct.cogs_total)}</span>
+                                    </div>
+                                    <div className="flex justify-between py-1.5 border-b border-slate-50">
+                                        <span className="text-slate-600">Shipping & Packaging</span>
+                                        <span className="font-medium text-slate-900">- {formatCurrency(selectedProduct.shipping_cost_allocation)}</span>
+                                    </div>
+                                    <div className="flex justify-between py-1.5 border-b border-slate-50">
+                                        <span className="text-slate-600">Marketing Ads</span>
+                                        <span className="font-medium text-slate-900">- {formatCurrency(selectedProduct.ad_spend_allocation)}</span>
+                                    </div>
+                                    <div className="flex justify-between py-1.5 border-b border-slate-50">
+                                        <span className="text-slate-600">Fixed Overhead</span>
+                                        <span className="font-medium text-slate-900">- {formatCurrency(selectedProduct.overhead_allocation)}</span>
+                                    </div>
+                                    <div className="flex justify-between py-1.5 border-b border-slate-50">
+                                        <span className="text-slate-600">Taxes</span>
+                                        <span className="font-medium text-slate-900">- {formatCurrency(selectedProduct.tax_allocation)}</span>
+                                    </div>
+                                    
+                                    <div className="mt-4 p-3 bg-indigo-50 rounded-lg border border-indigo-100">
+                                        <div className="flex justify-between items-center text-indigo-700 font-bold">
+                                            <span className="flex items-center gap-2"><Clock size={16}/> Cash Stuck (Inventory)</span>
+                                            <span>{formatCurrency(selectedProduct.cash_in_stock)}</span>
+                                        </div>
+                                        <p className="text-[11px] text-indigo-600/70 mt-1 leading-snug">
+                                            Cost of inventory currently in the courier network (In Transit + Returned). This is an asset, not an expense, but it reduces your immediate cash flow.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
                         </div>
                     </div>
                 </div>
-            </div>
-        )}
+            );
+        })()}
     </div>
   );
 };
