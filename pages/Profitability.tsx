@@ -322,9 +322,6 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
         
         const tableRows: any[] = [];
         
-        // Flatten data if it's the main list, OR if it's a single item passed in array
-        // We will just export the top-level items (Groups/Singles) for clarity, or the single selected product.
-        
         dataToExport.forEach(item => {
              const totalDispatched = item.units_sold + item.units_returned + item.units_in_transit;
              const p = (val: number) => totalDispatched > 0 ? `(${((val/totalDispatched)*100).toFixed(0)}%)` : '';
@@ -363,6 +360,105 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
     } catch (e) {
         console.error("PDF Error", e);
         alert("Could not generate report");
+    } finally {
+        setIsExporting(false);
+    }
+  };
+
+  const handleDetailExport = (product: GroupedProductPerformance) => {
+    setIsExporting(true);
+    try {
+        const doc = new jsPDF();
+        
+        // Brand Header
+        doc.setTextColor(20, 83, 45); 
+        doc.setFontSize(18);
+        doc.text("MunafaBakhsh Karobaar", 14, 15);
+        
+        doc.setFontSize(10);
+        doc.setTextColor(100);
+        doc.text("Product Performance Report", 14, 20);
+
+        doc.setDrawColor(200);
+        doc.line(14, 25, 196, 25);
+
+        // Product Title Header
+        doc.setTextColor(0);
+        doc.setFontSize(14);
+        doc.text(`${storeName} - ${product.title}`, 14, 35);
+        
+        doc.setFontSize(10);
+        doc.setTextColor(100);
+        doc.text(`Period: ${dateRange.start} to ${dateRange.end} | SKU: ${product.sku}`, 14, 41);
+
+        const { totalUnits, breakevenCpr, actualCpr, pCent } = getDetailStats(product);
+
+        // 1. KPI Summary
+        autoTable(doc, {
+            startY: 50,
+            head: [['Metric', 'Value', 'Note']],
+            body: [
+                ['Net Profit', formatCurrency(product.net_profit), `${product.gross_revenue > 0 ? ((product.net_profit / product.gross_revenue) * 100).toFixed(0) : 0}% Margin`],
+                ['Gross Profit', formatCurrency(product.gross_profit), 'Before Cash Stuck'],
+                ['Total Revenue', formatCurrency(product.gross_revenue), `${product.units_sold} Units Sold`],
+                ['Return on Investment', `${product.cogs_total + product.shipping_cost_allocation + product.ad_spend_allocation > 0 ? ((product.net_profit / (product.cogs_total + product.shipping_cost_allocation + product.ad_spend_allocation)) * 100).toFixed(0) : 0}%`, 'Profit / Total Costs']
+            ],
+            theme: 'striped',
+            headStyles: { fillColor: [22, 163, 74] },
+            columnStyles: { 0: { fontStyle: 'bold' }, 1: { fontStyle: 'bold' } }
+        });
+
+        // 2. Order Funnel
+        autoTable(doc, {
+            startY: (doc as any).lastAutoTable.finalY + 10,
+            head: [['Order Status', 'Count', 'Percentage']],
+            body: [
+                ['Total Dispatched', totalUnits, '100%'],
+                ['Delivered', product.units_sold, pCent(product.units_sold, totalUnits)],
+                ['Returned', product.units_returned, pCent(product.units_returned, totalUnits)],
+                ['In Transit', product.units_in_transit, pCent(product.units_in_transit, totalUnits)]
+            ],
+            theme: 'grid',
+            headStyles: { fillColor: [30, 41, 59] }, // Slate 800
+        });
+
+        // 3. Marketing
+        autoTable(doc, {
+            startY: (doc as any).lastAutoTable.finalY + 10,
+            head: [['Marketing Metric', 'Value', 'Status']],
+            body: [
+                ['Total Ad Spend', formatCurrency(product.ad_spend_allocation), '-'],
+                ['Facebook Purchases', product.marketing_purchases, '-'],
+                ['Actual CPR', formatCurrency(actualCpr), actualCpr > breakevenCpr ? 'Over Budget' : 'Profitable'],
+                ['Breakeven CPR', formatCurrency(breakevenCpr), 'Max allowable spend']
+            ],
+            theme: 'grid',
+            headStyles: { fillColor: [124, 58, 237] }, // Purple
+        });
+
+        // 4. Expense Breakdown
+        autoTable(doc, {
+            startY: (doc as any).lastAutoTable.finalY + 10,
+            head: [['Expense Category', 'Amount']],
+            body: [
+                ['COGS (Product Cost)', formatCurrency(product.cogs_total)],
+                ['Shipping & Packaging', formatCurrency(product.shipping_cost_allocation)],
+                ['Marketing Ads', formatCurrency(product.ad_spend_allocation)],
+                ['Fixed Overhead', formatCurrency(product.overhead_allocation)],
+                ['Taxes', formatCurrency(product.tax_allocation)],
+                ['Cash Stuck (Asset)', formatCurrency(product.cash_in_stock)]
+            ],
+            theme: 'plain',
+            columnStyles: { 1: { halign: 'right', fontStyle: 'bold' } },
+            didParseCell: function(data) {
+                if (data.row.index === 5) data.cell.styles.textColor = [79, 70, 229]; // Indigo for Cash Stuck
+            }
+        });
+
+        doc.save(`${product.title.replace(/\s/g, '_')}_Detail_Report.pdf`);
+    } catch (e) {
+        console.error(e);
+        alert("Error generating detail PDF");
     } finally {
         setIsExporting(false);
     }
@@ -465,7 +561,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                             </div>
                             <div className="flex items-center gap-3">
                                 <button 
-                                    onClick={() => handleExportPDF([selectedProduct as GroupedProductPerformance], 'Product Detail Report')}
+                                    onClick={() => handleDetailExport(selectedProduct as GroupedProductPerformance)}
                                     className="flex items-center gap-1.5 bg-white text-slate-700 border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-50"
                                 >
                                     <Download size={14} /> Download PDF
