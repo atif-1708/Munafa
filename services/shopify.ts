@@ -95,7 +95,8 @@ export class ShopifyAdapter {
                   method: 'GET',
                   headers: {
                       'X-Shopify-Access-Token': token,
-                      'Content-Type': 'application/json'
+                      'Content-Type': 'application/json',
+                      'User-Agent': 'MunafaBakhsh-App/1.0'
                   }
               });
 
@@ -114,8 +115,8 @@ export class ShopifyAdapter {
               
               if (!res.ok) {
                   // If it's a 401, it's definitely an auth error, don't retry other proxies
-                  if (res.status === 401) throw new Error("Invalid Access Token. Please check your credentials.");
-                  if (res.status === 404) throw new Error("Store URL not found. Check your shop name.");
+                  if (res.status === 401) throw new Error(`Invalid Access Token for ${targetUrl}. Please check credentials.`);
+                  if (res.status === 404) throw new Error(`Store URL not found (${targetUrl}). Check shop name.`);
                   
                   // For 500s or 403s (often proxy issues), we throw to catch block to try next proxy
                   throw new Error(`API ${res.status}: ${text}`);

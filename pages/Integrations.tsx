@@ -111,8 +111,9 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
       }
 
       // Validation
-      if (!token.startsWith('shpat_') && !token.startsWith('demo_')) {
-          const confirm = window.confirm("Your token doesn't start with 'shpat_'. This usually means it's an API Key, not an Access Token. Are you sure?");
+      // Accept 'shpat_' (Admin Access Token), 'shpss_' (Private App Password), 'demo_'
+      if (!token.startsWith('shpat_') && !token.startsWith('shpss_') && !token.startsWith('demo_')) {
+          const confirm = window.confirm("Your token doesn't start with 'shpat_' or 'shpss_'. This format is unusual for Shopify. Are you sure you want to proceed?");
           if (!confirm) {
               setTestingConnection(null);
               return;
@@ -326,20 +327,38 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                     <div className="relative">
                                         <input 
                                             type="password"
-                                            placeholder="shpat_xxxxxxxxxxxxxxxxxxxxxxxx"
+                                            placeholder="shpat_... or shpss_..."
                                             className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none text-sm font-mono"
                                             value={shopifyConfig.access_token || ''}
                                             onChange={(e) => setShopifyConfig({...shopifyConfig, access_token: e.target.value})}
                                         />
-                                        {shopifyConfig.access_token && !shopifyConfig.access_token.startsWith('shpat_') && !shopifyConfig.access_token.startsWith('demo_') && (
-                                            <div className="absolute right-3 top-3.5 text-orange-500" title="Token usually starts with 'shpat_'">
-                                                <AlertTriangle size={16} />
-                                            </div>
+                                        
+                                        {/* Dynamic Status Icons */}
+                                        <div className="absolute right-3 top-3.5">
+                                            {shopifyConfig.access_token && shopifyConfig.access_token.startsWith('shpat_') && (
+                                                <div className="text-green-600" title="Valid Admin Token Format"><CheckCircle2 size={16} /></div>
+                                            )}
+                                            {shopifyConfig.access_token && shopifyConfig.access_token.startsWith('shpss_') && (
+                                                <div className="text-blue-600" title="Valid Private App Format"><Key size={16} /></div>
+                                            )}
+                                            {shopifyConfig.access_token && !shopifyConfig.access_token.startsWith('shpat_') && !shopifyConfig.access_token.startsWith('shpss_') && !shopifyConfig.access_token.startsWith('demo_') && (
+                                                <div className="text-orange-500" title="Unusual Token Format"><AlertTriangle size={16} /></div>
+                                            )}
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Helper Text */}
+                                    <div className="flex flex-col gap-1 mt-1.5">
+                                        {shopifyConfig.access_token.startsWith('shpss_') ? (
+                                             <p className="text-[10px] text-blue-600 font-medium flex items-center gap-1">
+                                                <Info size={10} /> Detected: Legacy Private App Password. Ensure permissions are set in the Private App settings.
+                                             </p>
+                                        ) : (
+                                            <p className="text-[10px] text-slate-400 flex items-center gap-1">
+                                                <Info size={10} /> Ensure you selected <strong>read_orders</strong> and <strong>read_products</strong> scopes.
+                                            </p>
                                         )}
                                     </div>
-                                    <p className="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
-                                        <Info size={10} /> Ensure you selected <strong>read_orders</strong> and <strong>read_products</strong> scopes.
-                                    </p>
                                 </div>
                            </div>
                             
