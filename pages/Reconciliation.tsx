@@ -1,7 +1,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { Order, ShopifyOrder, Product, OrderStatus } from '../types';
-import { Search, Download, CheckCircle2, AlertTriangle, XCircle, ArrowRight, Package } from 'lucide-react';
+import { Search, Download, Package, AlertCircle, CheckCircle2, Truck, XCircle, Clock, ArrowRight } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -12,107 +12,143 @@ interface ReconciliationProps {
   storeName?: string;
 }
 
+interface ProductStat {
+  id: string;
+  title: string;
+  sku: string;
+  total_ordered: number;
+  pending_fulfillment: number;
+  fulfilled: number;
+  cancelled: number;
+  dispatched: number;
+  delivered: number;
+  rto: number;
+}
+
 const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierOrders, storeName = 'My Store' }) => {
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Merge Data
-  const mergedData = useMemo(() => {
-    const map = new Map<string, { shopify?: ShopifyOrder; courier?: Order }>();
-
-    // 1. Map Shopify Orders
-    shopifyOrders.forEach(so => {
-        const key = so.name.replace('#', '').trim();
-        if (!map.has(key)) map.set(key, {});
-        map.get(key)!.shopify = so;
-    });
-
-    // 2. Map Courier Orders
+  // 1. Build Product Statistics
+  const productStats = useMemo(() => {
+    const stats = new Map<string, ProductStat>();
+    
+    // Create a lookup map for Courier Orders (by Shopify Order Number)
+    const courierMap = new Map<string, Order>();
     courierOrders.forEach(co => {
+        // Normalize keys: "#1001" -> "1001"
         const key = co.shopify_order_number.replace('#', '').trim();
-        if (!map.has(key)) map.set(key, {});
-        map.get(key)!.courier = co;
+        courierMap.set(key, co);
     });
 
-    // 3. Convert to Array
-    const rows = Array.from(map.entries()).map(([key, val]) => {
-        const date = val.shopify?.created_at || val.courier?.created_at || new Date().toISOString();
-        
-        // Status Logic
-        let status = 'MATCHED';
-        const sStatus = val.shopify?.fulfillment_status || 'unfulfilled';
-        const cStatus = val.courier?.status;
+    shopifyOrders.forEach(order => {
+        // Normalize key
+        const orderKey = order.name.replace('#', '').trim();
+        const courierOrder = courierMap.get(orderKey);
 
-        if (!val.shopify) status = 'ORPHAN_COURIER';
-        else if (!val.courier) {
-            status = val.shopify.cancel_reason ? 'CANCELLED_SHOPIFY' : 'MISSING_COURIER';
-        } else {
-            // Both exist
-            if (cStatus === OrderStatus.DELIVERED && sStatus !== 'fulfilled') status = 'STATUS_MISMATCH';
-            if ((cStatus === OrderStatus.RETURNED || cStatus === OrderStatus.RTO_INITIATED) && sStatus === 'fulfilled') status = 'RTO_MISMATCH';
-            
-            // Financial Check
-            const sTotal = parseFloat(val.shopify.total_price);
-            const cTotal = val.courier.cod_amount;
-            if (Math.abs(sTotal - cTotal) > 10) status = 'PRICE_MISMATCH';
+        const isCancelled = order.cancel_reason !== null;
+        const isFulfilled = order.fulfillment_status === 'fulfilled';
+        const isPending = !isCancelled && !isFulfilled; // Roughly "Unfulfilled"
+
+        // Courier Status Flags
+        let isDispatched = false;
+        let isDelivered = false;
+        let isRto = false;
+
+        if (courierOrder) {
+            // If it exists in courier and isn't just 'Booked' or 'Cancelled', we consider it dispatched/handed over
+            if (courierOrder.status !== OrderStatus.PENDING && courierOrder.status !== OrderStatus.CANCELLED) {
+                isDispatched = true;
+            }
+            if (courierOrder.status === OrderStatus.DELIVERED) isDelivered = true;
+            if (courierOrder.status === OrderStatus.RETURNED || courierOrder.status === OrderStatus.RTO_INITIATED) isRto = true;
         }
 
-        return {
-            id: key,
-            date,
-            shopify: val.shopify,
-            courier: val.courier,
-            status
-        };
+        order.line_items.forEach(item => {
+            const key = item.sku || item.title; // Grouping Key
+
+            if (!stats.has(key)) {
+                stats.set(key, {
+                    id: String(item.variant_id),
+                    title: item.title,
+                    sku: item.sku || 'N/A',
+                    total_ordered: 0,
+                    pending_fulfillment: 0,
+                    fulfilled: 0,
+                    cancelled: 0,
+                    dispatched: 0,
+                    delivered: 0,
+                    rto: 0
+                });
+            }
+
+            const stat = stats.get(key)!;
+            const qty = item.quantity;
+
+            stat.total_ordered += qty;
+
+            if (isCancelled) {
+                stat.cancelled += qty;
+            } else {
+                if (isPending) stat.pending_fulfillment += qty;
+                if (isFulfilled) stat.fulfilled += qty;
+
+                // Courier Metrics (Only apply if valid order)
+                if (isDispatched) stat.dispatched += qty;
+                if (isDelivered) stat.delivered += qty;
+                if (isRto) stat.rto += qty;
+            }
+        });
     });
 
-    return rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
+    return Array.from(stats.values()).sort((a,b) => b.total_ordered - a.total_ordered);
   }, [shopifyOrders, courierOrders]);
 
-  const filteredRows = useMemo(() => {
-      return mergedData.filter(row => {
-          if (!searchTerm) return true;
-          const term = searchTerm.toLowerCase();
-          return row.id.includes(term) || 
-                 row.shopify?.customer?.first_name?.toLowerCase().includes(term) ||
-                 row.courier?.tracking_number?.toLowerCase().includes(term);
-      });
-  }, [mergedData, searchTerm]);
+  // 2. Filter
+  const filteredStats = useMemo(() => {
+      return productStats.filter(p => 
+          p.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
+          p.sku.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+  }, [productStats, searchTerm]);
 
   const handleExport = () => {
     const doc = new jsPDF();
-    doc.text(`${storeName} - Reconciliation`, 14, 15);
+    doc.text(`${storeName} - Product Performance`, 14, 15);
     
-    const rows = filteredRows.map(r => [
-        r.id,
-        new Date(r.date).toLocaleDateString(),
-        r.shopify ? r.shopify.financial_status : '-',
-        r.courier ? r.courier.status : '-',
-        r.status
+    const rows = filteredStats.map(r => [
+        r.title,
+        r.sku,
+        r.total_ordered,
+        r.pending_fulfillment,
+        r.fulfilled,
+        r.dispatched,
+        r.delivered,
+        r.rto
     ]);
 
     autoTable(doc, {
-        head: [['Order #', 'Date', 'Shopify Pay', 'Courier', 'Match Status']],
+        head: [['Product', 'SKU', 'Total', 'Pending', 'Fulfilled', 'Dispatched', 'Delivered', 'RTO']],
         body: rows,
-        startY: 25
+        startY: 25,
+        styles: { fontSize: 8 }
     });
-    doc.save('Reconciliation.pdf');
+    doc.save('Shopify_Product_Stats.pdf');
   };
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-           <h2 className="text-2xl font-bold text-slate-900">Reconciliation</h2>
-           <p className="text-slate-500 text-sm">Compare Shopify bookings with Courier reality.</p>
+           <h2 className="text-2xl font-bold text-slate-900">Shopify Product Stats</h2>
+           <p className="text-slate-500 text-sm">Inventory flow analysis: From Order to Delivery.</p>
         </div>
         <div className="flex gap-2">
             <div className="relative">
                 <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
                 <input 
                     type="text" 
-                    placeholder="Search Order #..." 
-                    className="pl-10 pr-4 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-brand-500"
+                    placeholder="Search Product..." 
+                    className="pl-10 pr-4 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-brand-500 w-64"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                 />
@@ -125,56 +161,90 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
 
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50 border-b border-slate-200 text-slate-700">
+            <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 uppercase text-xs font-bold tracking-wider">
                 <tr>
-                    <th className="px-6 py-4">Order Details</th>
-                    <th className="px-6 py-4">Shopify State</th>
-                    <th className="px-6 py-4">Courier State</th>
-                    <th className="px-6 py-4">Financials</th>
-                    <th className="px-6 py-4">Match Analysis</th>
+                    <th className="px-6 py-4 w-[25%]">Product Details</th>
+                    <th className="px-4 py-4 text-center text-slate-500">Total</th>
+                    <th className="px-4 py-4 text-center text-orange-600 bg-orange-50/50">Pending</th>
+                    <th className="px-4 py-4 text-center text-blue-600 bg-blue-50/50">Fulfilled</th>
+                    <th className="px-4 py-4 text-center text-red-400">Cancelled</th>
+                    <th className="px-1 py-4 w-6"></th> {/* Arrow */}
+                    <th className="px-4 py-4 text-center text-purple-600 bg-purple-50/50">Dispatched</th>
+                    <th className="px-4 py-4 text-center text-green-600 bg-green-50/50">Delivered</th>
+                    <th className="px-4 py-4 text-center text-red-600 bg-red-50/50">RTO</th>
                 </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-                {filteredRows.length === 0 ? (
-                    <tr><td colSpan={5} className="px-6 py-8 text-center text-slate-400">No data found.</td></tr>
-                ) : filteredRows.map(row => (
-                    <tr key={row.id} className="hover:bg-slate-50 transition-colors">
+                {filteredStats.length === 0 ? (
+                    <tr><td colSpan={9} className="px-6 py-12 text-center text-slate-400">No products found.</td></tr>
+                ) : filteredStats.map((item, idx) => (
+                    <tr key={idx} className="hover:bg-slate-50 transition-colors">
                         <td className="px-6 py-4">
-                            <div className="font-bold text-slate-900">#{row.id}</div>
-                            <div className="text-xs text-slate-500">{new Date(row.date).toLocaleDateString()}</div>
-                        </td>
-                        
-                        <td className="px-6 py-4">
-                            {row.shopify ? (
-                                <div>
-                                    <div className={`text-xs font-bold uppercase ${row.shopify.fulfillment_status === 'fulfilled' ? 'text-green-600' : 'text-yellow-600'}`}>
-                                        {row.shopify.fulfillment_status || 'Unfulfilled'}
-                                    </div>
-                                    <div className="text-xs text-slate-400">{row.shopify.financial_status}</div>
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded bg-slate-100 flex items-center justify-center text-slate-400 shrink-0">
+                                    <Package size={18} />
                                 </div>
-                            ) : <span className="text-slate-300">-</span>}
-                        </td>
-
-                        <td className="px-6 py-4">
-                             {row.courier ? (
-                                <div>
-                                    <div className={`text-xs font-bold uppercase ${
-                                        row.courier.status === 'DELIVERED' ? 'text-green-600' :
-                                        row.courier.status.includes('RETURN') ? 'text-red-600' : 'text-blue-600'
-                                    }`}>
-                                        {row.courier.status.replace('_', ' ')}
-                                    </div>
-                                    <div className="text-xs text-slate-400">{row.courier.tracking_number}</div>
+                                <div className="min-w-0">
+                                    <div className="font-medium text-slate-900 truncate max-w-[250px]" title={item.title}>{item.title}</div>
+                                    <div className="text-xs text-slate-400 font-mono">{item.sku}</div>
                                 </div>
-                            ) : <span className="text-red-400 text-xs font-bold">Not Found</span>}
+                            </div>
                         </td>
 
-                        <td className="px-6 py-4 font-mono text-slate-700">
-                            {row.shopify?.total_price || row.courier?.cod_amount || 0}
+                        {/* Shopify Stats */}
+                        <td className="px-4 py-4 text-center font-bold text-slate-800">
+                            {item.total_ordered}
+                        </td>
+                        <td className="px-4 py-4 text-center bg-orange-50/30">
+                            <span className={`inline-block font-medium ${item.pending_fulfillment > 0 ? 'text-orange-600' : 'text-slate-300'}`}>
+                                {item.pending_fulfillment}
+                            </span>
+                        </td>
+                        <td className="px-4 py-4 text-center bg-blue-50/30">
+                             <span className={`inline-block font-medium ${item.fulfilled > 0 ? 'text-blue-600' : 'text-slate-300'}`}>
+                                {item.fulfilled}
+                            </span>
+                        </td>
+                        <td className="px-4 py-4 text-center">
+                            <span className={`inline-block ${item.cancelled > 0 ? 'text-red-400 font-medium' : 'text-slate-200'}`}>
+                                {item.cancelled}
+                            </span>
                         </td>
 
-                        <td className="px-6 py-4">
-                            <StatusBadge status={row.status} />
+                        {/* Spacer/Arrow */}
+                        <td className="px-1 py-4 text-center text-slate-300">
+                            <ArrowRight size={14} />
+                        </td>
+
+                        {/* Courier Stats */}
+                         <td className="px-4 py-4 text-center bg-purple-50/30">
+                            <span className={`inline-block font-medium ${item.dispatched > 0 ? 'text-purple-600' : 'text-slate-300'}`}>
+                                {item.dispatched}
+                            </span>
+                        </td>
+                         <td className="px-4 py-4 text-center bg-green-50/30">
+                            <div className="flex flex-col items-center">
+                                <span className={`font-bold ${item.delivered > 0 ? 'text-green-600' : 'text-slate-300'}`}>
+                                    {item.delivered}
+                                </span>
+                                {item.dispatched > 0 && (
+                                    <span className="text-[10px] text-green-600/70">
+                                        {Math.round((item.delivered / item.dispatched) * 100)}%
+                                    </span>
+                                )}
+                            </div>
+                        </td>
+                         <td className="px-4 py-4 text-center bg-red-50/30">
+                             <div className="flex flex-col items-center">
+                                <span className={`font-bold ${item.rto > 0 ? 'text-red-600' : 'text-slate-300'}`}>
+                                    {item.rto}
+                                </span>
+                                {item.dispatched > 0 && item.rto > 0 && (
+                                    <span className="text-[10px] text-red-400">
+                                        {Math.round((item.rto / item.dispatched) * 100)}%
+                                    </span>
+                                )}
+                            </div>
                         </td>
                     </tr>
                 ))}
@@ -184,22 +254,5 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
     </div>
   );
 };
-
-const StatusBadge = ({ status }: { status: string }) => {
-    switch(status) {
-        case 'MATCHED': 
-            return <span className="inline-flex items-center gap-1 text-green-700 bg-green-50 px-2 py-1 rounded text-xs font-bold"><CheckCircle2 size={12} /> Verified</span>;
-        case 'MISSING_COURIER': 
-            return <span className="inline-flex items-center gap-1 text-red-700 bg-red-50 px-2 py-1 rounded text-xs font-bold"><AlertTriangle size={12} /> Not Shipped</span>;
-        case 'ORPHAN_COURIER': 
-            return <span className="inline-flex items-center gap-1 text-orange-700 bg-orange-50 px-2 py-1 rounded text-xs font-bold"><Package size={12} /> Unknown Order</span>;
-        case 'CANCELLED_SHOPIFY':
-             return <span className="text-slate-400 text-xs font-medium">Cancelled (Ignore)</span>;
-        case 'PRICE_MISMATCH':
-             return <span className="inline-flex items-center gap-1 text-yellow-700 bg-yellow-50 px-2 py-1 rounded text-xs font-bold"><AlertTriangle size={12} /> Price Diff</span>;
-        default: 
-            return <span className="inline-flex items-center gap-1 text-yellow-700 bg-yellow-50 px-2 py-1 rounded text-xs font-bold"><AlertTriangle size={12} /> Status Mismatch</span>;
-    }
-}
 
 export default Reconciliation;
