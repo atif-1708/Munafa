@@ -7,7 +7,7 @@ import { FacebookService } from '../services/facebook';
 import { supabase } from '../services/supabase';
 import { 
     CheckCircle2, AlertTriangle, Key, Globe, Loader2, Store, ArrowRight, 
-    RefreshCw, ShieldCheck, Link, Truck, Info, Settings, Facebook, ExternalLink, Zap
+    RefreshCw, ShieldCheck, Link, Truck, Info, Settings, Facebook, ExternalLink, Zap, Lock
 } from 'lucide-react';
 
 const COURIER_META: Record<string, { color: string, bg: string, border: string, icon: string, label: string, desc: string }> = {
@@ -284,7 +284,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
           </div>
       </section>
 
-      {/* COURIER SECTION (Keep Existing UI) */}
+      {/* COURIER SECTION */}
       <section>
         <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2 mt-8">
             <Truck className="text-slate-500" size={20} /> Logistics Partners
@@ -294,8 +294,18 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                 const config = courierConfigs[courierName];
                 const meta = COURIER_META[courierName];
                 const isActive = config.is_active;
+                const isComingSoon = courierName !== CourierName.POSTEX; // Only PostEx is active
+
                 return (
                     <div key={courierName} className={`relative overflow-hidden rounded-xl border transition-all duration-300 flex flex-col ${isActive ? `${meta.bg} ${meta.border} shadow-sm` : 'bg-white border-slate-200 shadow-sm hover:shadow-md'}`}>
+                        {/* Coming Soon Overlay */}
+                        {isComingSoon && (
+                            <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] z-10 flex flex-col items-center justify-center text-slate-500">
+                                <Lock size={24} className="mb-2 opacity-50" />
+                                <span className="text-sm font-bold bg-slate-100 px-3 py-1 rounded-full border border-slate-200">Coming Soon</span>
+                            </div>
+                        )}
+                        
                         <div className="p-6 flex-1">
                             <div className="flex justify-between items-start mb-4">
                                 <div className="flex items-center gap-3">
@@ -308,8 +318,21 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                 <button onClick={() => saveCourierConfig(courierName, false)} className="w-full py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-bold hover:bg-red-50 hover:text-red-600 transition-colors">Disconnect</button>
                             ) : (
                                 <div className="space-y-3">
-                                    <input type="password" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" placeholder="API Key" value={config.api_token} onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], api_token: e.target.value } }))} />
-                                    <button onClick={() => handleConnectCourier(courierName)} disabled={testingConnection === courierName} className="w-full py-2.5 bg-slate-900 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-2">{testingConnection === courierName ? <Loader2 className="animate-spin" size={14}/> : 'Connect'}</button>
+                                    <input 
+                                        type="password" 
+                                        disabled={isComingSoon}
+                                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm disabled:bg-slate-50" 
+                                        placeholder="API Key" 
+                                        value={config.api_token} 
+                                        onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], api_token: e.target.value } }))} 
+                                    />
+                                    <button 
+                                        onClick={() => handleConnectCourier(courierName)} 
+                                        disabled={testingConnection === courierName || isComingSoon} 
+                                        className="w-full py-2.5 bg-slate-900 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {testingConnection === courierName ? <Loader2 className="animate-spin" size={14}/> : 'Connect'}
+                                    </button>
                                 </div>
                             )}
                         </div>

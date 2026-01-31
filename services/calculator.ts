@@ -237,37 +237,45 @@ export const calculateProductPerformance = (
     adSpend: AdSpend[] = [],
     adsTaxRate: number = 0
 ): ProductPerformance[] => {
+  // Aggregate by TITLE instead of SKU/ID
   const perf: Record<string, ProductPerformance> = {};
 
-  // 1. Initialize
+  // 1. Initialize from Product Definitions (Merging by Title)
   products.forEach(p => {
-    // Sum relevant ads (DIRECT MATCH ONLY - Group ads handled in Profitability.tsx view)
+    const lookupKey = p.title; // PRIMARY KEY IS TITLE
+
+    if (!perf[lookupKey]) {
+        perf[lookupKey] = {
+            id: p.title, // ID is Title for aggregation
+            title: p.title,
+            sku: 'VARIOUS', // Indicates merged SKUs
+            group_id: p.group_id,
+            group_name: p.group_name,
+            units_sold: 0, 
+            units_returned: 0,
+            units_in_transit: 0,
+            gross_revenue: 0, 
+            cogs_total: 0,
+            gross_profit: 0,
+            cash_in_stock: 0,
+            shipping_cost_allocation: 0,
+            overhead_allocation: 0,
+            tax_allocation: 0,
+            ad_spend_allocation: 0,
+            marketing_purchases: 0, 
+            net_profit: 0,
+            rto_rate: 0
+        };
+    }
+
+    // Accumulate Ad Spend linked to specific variant IDs
     const relevantAds = adSpend.filter(a => a.product_id === p.id);
     const rawAdSpend = relevantAds.reduce((sum, a) => sum + a.amount_spent, 0);
-    const adPurchases = relevantAds.reduce((sum, a) => sum + (a.purchases || 0), 0); // Aggregate purchases
+    const adPurchases = relevantAds.reduce((sum, a) => sum + (a.purchases || 0), 0);
     const totalAdSpend = rawAdSpend * (1 + adsTaxRate / 100);
-    
-    // Key by Fingerprint (preferred) or SKU
-    const lookupKey = p.variant_fingerprint || p.sku;
 
-    perf[lookupKey] = {
-      id: p.id, title: p.title, sku: p.sku, 
-      group_id: p.group_id, group_name: p.group_name,
-      units_sold: 0, 
-      units_returned: 0,
-      units_in_transit: 0,
-      gross_revenue: 0, 
-      cogs_total: 0,
-      gross_profit: 0,
-      cash_in_stock: 0,
-      shipping_cost_allocation: 0,
-      overhead_allocation: 0,
-      tax_allocation: 0,
-      ad_spend_allocation: totalAdSpend,
-      marketing_purchases: adPurchases, // Set aggregated purchases
-      net_profit: 0,
-      rto_rate: 0
-    };
+    perf[lookupKey].ad_spend_allocation += totalAdSpend;
+    perf[lookupKey].marketing_purchases += adPurchases;
   });
 
   // 2. Process Courier Orders (Financials)
@@ -275,8 +283,6 @@ export const calculateProductPerformance = (
     const itemCount = order.items.length;
     if (itemCount === 0) return;
 
-    // Shipping Allocation Logic: Even split per item
-    // NOTE: We only allocate shipping cost if the order is in a chargeable status
     const isChargeable = order.status !== OrderStatus.CANCELLED && 
                          order.status !== OrderStatus.PENDING &&
                          order.status !== OrderStatus.BOOKED;
@@ -290,19 +296,20 @@ export const calculateProductPerformance = (
     const taxPerItem = order.status === OrderStatus.DELIVERED ? (order.tax_amount / itemCount) : 0;
 
     order.items.forEach(item => {
-        // MATCHING: Fingerprint -> SKU -> ID
+        // Find exact product def for Costing (using SKU/ID)
         const productDef = 
             products.find(p => p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) || 
             products.find(p => p.sku === item.sku) ||
             products.find(p => p.id === item.product_id);
         
-        // Lookup Key (Consistently use fingerprint if available)
-        const key = item.variant_fingerprint || item.sku || item.product_id;
+        // Key for Aggregation is TITLE
+        // If productDef found, use its title. If not, use product_name from order item.
+        const key = productDef ? productDef.title : item.product_name;
         
         if (!perf[key]) {
-             // If unknown product found in orders (Dynamic Creation)
+             // If unknown product title found in orders
              perf[key] = {
-                 id: item.product_id, title: item.product_name, sku: item.sku || 'N/A',
+                 id: key, title: key, sku: 'UNKNOWN',
                  units_sold: 0, units_returned: 0, units_in_transit: 0,
                  gross_revenue: 0, cogs_total: 0, gross_profit: 0, cash_in_stock: 0,
                  shipping_cost_allocation: 0, overhead_allocation: 0, tax_allocation: 0,
@@ -311,11 +318,10 @@ export const calculateProductPerformance = (
         }
         
         const p = perf[key];
-        // Historical COGS calculation
+        // Historical COGS calculation using specific variant definition
         const historicalCogs = productDef ? getCostAtDate(productDef, order.created_at) : item.cogs_at_time_of_order;
 
         if (isChargeable) {
-            // Apply overhead to all dispatched items
             p.overhead_allocation += (overheadPerItem * item.quantity);
         }
 
@@ -324,8 +330,6 @@ export const calculateProductPerformance = (
              p.units_returned += item.quantity;
              p.shipping_cost_allocation += (shippingPerItem * item.quantity); 
              
-             // Inventory: If explicitly RETURNED, it's back in stock (no cash stuck).
-             // If RTO_INITIATED, it's still floating (cash stuck).
              if (order.status === OrderStatus.RTO_INITIATED) {
                  p.cash_in_stock += (historicalCogs * item.quantity);
              }
@@ -336,7 +340,7 @@ export const calculateProductPerformance = (
              p.gross_revenue += (item.sale_price * item.quantity);
              p.cogs_total += (historicalCogs * item.quantity); // Realized Cost
              p.shipping_cost_allocation += (shippingPerItem * item.quantity);
-             p.tax_allocation += (taxPerItem * item.quantity); // Tax applies only on success
+             p.tax_allocation += (taxPerItem * item.quantity);
         }
         // In Transit / Dispatched
         else if (isChargeable) {
@@ -349,14 +353,10 @@ export const calculateProductPerformance = (
 
   return Object.values(perf)
     .map(p => {
-      // Net Profit = Revenue - All Expenses (Realized COGS, Shipping, Overhead, Tax, Ads) - Stuck Stock
+      // Net Profit = Revenue - Expenses
       const expenses = p.cogs_total + p.shipping_cost_allocation + p.overhead_allocation + p.tax_allocation + p.ad_spend_allocation;
       
       p.net_profit = p.gross_revenue - expenses - p.cash_in_stock;
-
-      // Gross Profit (Modified) -> NOW SUBTRACTS ADS.
-      // Logic: Net Profit + Cash Stuck (Asset).
-      // This is effectively: Revenue - Realized Expenses (including Ads).
       p.gross_profit = p.net_profit + p.cash_in_stock;
       
       const closed_orders = p.units_sold + p.units_returned;
@@ -364,5 +364,5 @@ export const calculateProductPerformance = (
       
       return p;
     })
-    .sort((a, b) => b.net_profit - a.net_profit); // Sort by Net Profit descending
+    .sort((a, b) => b.net_profit - a.net_profit);
 };

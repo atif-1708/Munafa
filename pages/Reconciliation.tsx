@@ -86,13 +86,13 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
         // Logic: ONLY count the first item in the order as requested
         if (order.line_items.length > 0) {
             const item = order.line_items[0];
-            const key = item.sku || item.title; // Grouping Key
+            const key = item.title; // Grouping Key: TITLE ONLY
 
             if (!stats.has(key)) {
                 stats.set(key, {
                     id: String(item.variant_id),
                     title: item.title,
-                    sku: item.sku || 'N/A',
+                    sku: 'VARIOUS', // Merged
                     total_ordered: 0,
                     pending_fulfillment: 0,
                     fulfilled: 0,
