@@ -2,198 +2,137 @@
 import { SalesChannel, ShopifyOrder } from '../types';
 
 export class ShopifyAdapter {
+  
+  /**
+   * Fetches orders from Shopify with pagination.
+   * Handles CORS via proxy.
+   */
   async fetchOrders(config: SalesChannel): Promise<ShopifyOrder[]> {
     if (!config.store_url || !config.access_token) return [];
     
     const accessToken = config.access_token.trim();
-    
-    // Simulation Mode
-    if (accessToken.startsWith('demo_')) {
-        return this.getMockOrders();
-    }
+    if (accessToken.startsWith('demo_')) return this.getMockOrders();
 
+    const domain = this.cleanShopUrl(config.store_url);
     const twoMonthsAgo = new Date();
     twoMonthsAgo.setDate(twoMonthsAgo.getDate() - 60);
     
-    let cleanUrl = config.store_url.replace(/^https?:\/\//, '').replace(/\/$/, '').trim();
-    if (cleanUrl.includes('/')) cleanUrl = cleanUrl.split('/')[0];
-    if (!cleanUrl.includes('.')) cleanUrl += '.myshopify.com';
-
     let allOrders: ShopifyOrder[] = [];
-    let sinceId = 0;
-    let hasMore = true;
+    let nextUrl: string | null = `https://${domain}/admin/api/2023-10/orders.json?status=any&limit=250&created_at_min=${twoMonthsAgo.toISOString()}`;
 
-    // Pagination Loop: Fetch until no more pages
-    while (hasMore) {
-        const endpoint = `orders.json?status=any&limit=250&created_at_min=${twoMonthsAgo.toISOString()}&since_id=${sinceId}&fields=id,name,created_at,financial_status,fulfillment_status,cancel_reason,total_price,line_items,customer`;
-        const targetUrl = `https://${cleanUrl}/admin/api/2024-01/${endpoint}`;
+    // Safety limit to prevent infinite loops
+    let pages = 0;
+    const MAX_PAGES = 20; 
 
-        try {
-            const data = await this.fetchWithProxy(targetUrl, {
-                method: 'GET',
-                headers: {
-                    'X-Shopify-Access-Token': accessToken,
-                    'Content-Type': 'application/json',
+    try {
+        while (nextUrl && pages < MAX_PAGES) {
+            const data = await this.fetchSafe(nextUrl, accessToken);
+            
+            if (data.orders) {
+                allOrders = [...allOrders, ...data.orders];
+                
+                // Pagination: Shopify uses Link header usually, but for simple ID-based:
+                if (data.orders.length === 250) {
+                    const lastId = data.orders[data.orders.length - 1].id;
+                    nextUrl = `https://${domain}/admin/api/2023-10/orders.json?status=any&limit=250&created_at_min=${twoMonthsAgo.toISOString()}&since_id=${lastId}`;
+                } else {
+                    nextUrl = null;
                 }
-            });
-            
-            // Check for explicit Shopify errors in body (200 OK but error body)
-            if (data.errors) {
-                 throw new Error(JSON.stringify(data.errors));
+            } else {
+                nextUrl = null;
             }
-
-            const batch = data.orders || [];
-            
-            if (batch.length > 0) {
-                allOrders = [...allOrders, ...batch];
-                sinceId = batch[batch.length - 1].id;
-            }
-
-            if (batch.length < 250) {
-                hasMore = false;
-            }
-            
-            if (allOrders.length > 20000) { 
-                console.warn("Hit safety limit of 20,000 orders for sync.");
-                hasMore = false; 
-            }
-
-        } catch (e: any) {
-            console.error("Shopify sync error on page:", e);
-            // If it's a critical auth error, stop.
-            if (e.message.includes('Invalid API key') || e.message.includes('access token') || e.message.includes('401')) {
-                throw new Error("Shopify Auth Failed. Please check your Access Token and Permissions.");
-            }
-            // For other errors (like network), stop pagination but return what we have
-            hasMore = false; 
+            pages++;
         }
+    } catch (e: any) {
+        console.error("Shopify Fetch Error:", e);
+        throw new Error(e.message || "Failed to sync with Shopify");
     }
 
     return allOrders;
   }
   
-  async testConnection(config: SalesChannel): Promise<boolean> {
-      if (!config.store_url || !config.access_token) return false;
+  /**
+   * Validates credentials by fetching a single order.
+   */
+  async testConnection(config: SalesChannel): Promise<{ success: boolean; message?: string }> {
+      if (!config.store_url || !config.access_token) {
+          return { success: false, message: "Missing URL or Token" };
+      }
       
-      const accessToken = config.access_token.trim();
-      if (accessToken.startsWith('demo_')) return true;
+      if (config.access_token.startsWith('demo_')) return { success: true };
 
-      let cleanUrl = config.store_url.replace(/^https?:\/\//, '').replace(/\/$/, '').trim();
-      if (cleanUrl.includes('/')) cleanUrl = cleanUrl.split('/')[0];
-      if (!cleanUrl.includes('.')) cleanUrl += '.myshopify.com';
-
-      // Use orders.json to verify read_orders scope. 
-      // This is the specific permission we need.
-      const targetUrl = `https://${cleanUrl}/admin/api/2024-01/orders.json?limit=1&fields=id`;
+      const domain = this.cleanShopUrl(config.store_url);
+      const url = `https://${domain}/admin/api/2023-10/orders.json?limit=1&fields=id`;
 
       try {
-          const data = await this.fetchWithProxy(targetUrl, {
-              method: 'GET',
-              headers: {
-                  'X-Shopify-Access-Token': accessToken,
-                  'Content-Type': 'application/json',
-              }
-          });
-          
-          if (data.errors) {
-              console.error("Shopify Test Error Body:", data.errors);
-              return false;
+          const data = await this.fetchSafe(url, config.access_token);
+          if (Array.isArray(data.orders)) {
+              return { success: true };
           }
-          
-          // Successful response MUST contain "orders" array (even if empty)
-          return Array.isArray(data.orders);
-      } catch (e) {
-          console.error("Shopify Connection Test Failed:", e);
-          return false;
+          return { success: false, message: "Invalid response format from Shopify." };
+      } catch (e: any) {
+          return { success: false, message: e.message };
       }
   }
 
-  // Robust Fetcher
-  private async fetchWithProxy(targetUrl: string, options: RequestInit): Promise<any> {
-      // 1. Try Local API (Vercel/Next/Custom Server)
-      try {
-          const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
-          const res = await fetch(proxyUrl, options);
-          if (res.ok) {
-              const contentType = res.headers.get('content-type');
-              if (contentType && contentType.includes('application/json')) {
-                  return await res.json();
-              }
+  // --- Helpers ---
+
+  private cleanShopUrl(url: string): string {
+      let clean = url.trim().toLowerCase();
+      clean = clean.replace(/^https?:\/\//, '');
+      clean = clean.replace(/\/$/, '');
+      if (clean.includes('/')) clean = clean.split('/')[0];
+      if (!clean.includes('.')) clean += '.myshopify.com';
+      return clean;
+  }
+
+  private async fetchSafe(targetUrl: string, token: string): Promise<any> {
+      // We use corsproxy.io as the primary stable proxy for headers
+      const proxyBase = "https://corsproxy.io/?";
+      const encodedUrl = encodeURIComponent(targetUrl);
+      const fetchUrl = `${proxyBase}${encodedUrl}`;
+
+      const res = await fetch(fetchUrl, {
+          method: 'GET',
+          headers: {
+              'X-Shopify-Access-Token': token,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
           }
-      } catch (e) {}
+      });
 
-      // 2. Fallback: Public Proxies
-      // IMPORTANT: corsproxy.io works but can be flaky. 
-      // Replaced allorigins with CodeTabs (supports headers better)
-      const proxies = [
-        { base: 'https://corsproxy.io/?', encode: true },
-        { base: 'https://thingproxy.freeboard.io/fetch/', encode: false },
-        { base: 'https://api.codetabs.com/v1/proxy?quest=', encode: true } 
-      ];
+      const text = await res.text();
 
-      let lastError: Error | null = null;
-
-      for (const proxy of proxies) {
-          try {
-              const fetchUrl = proxy.encode ? `${proxy.base}${encodeURIComponent(targetUrl)}` : `${proxy.base}${targetUrl}`;
-
-              const res = await fetch(fetchUrl, {
-                  ...options,
-                  credentials: 'omit'
-              });
-              
-              const text = await res.text();
-
-              // Handle HTTP Errors
-              if (!res.ok) {
-                  // If 401/403, it might be the proxy stripping headers OR actual auth failure.
-                  if (res.status === 401 || res.status === 403) {
-                       lastError = new Error(`Auth Failed (${res.status}): ${text}`);
-                       continue;
-                  }
-                  
-                  // Other errors (500, 404, etc)
-                  lastError = new Error(`Proxy Error ${res.status}: ${text}`);
-                  continue; 
-              }
-
-              // Try parsing JSON
-              try {
-                  return JSON.parse(text);
-              } catch {
-                  // If not JSON, it might be a proxy error page
-                  lastError = new Error("Invalid JSON response from proxy");
-                  continue;
-              }
-
-          } catch (e: any) {
-              lastError = e;
-          }
+      if (!res.ok) {
+          if (res.status === 401) throw new Error("Unauthorized: Invalid API Access Token.");
+          if (res.status === 404) throw new Error("Store Not Found: Check your Store URL.");
+          if (res.status === 403) throw new Error("Forbidden: Token lacks 'read_orders' permission.");
+          throw new Error(`Shopify API Error ${res.status}: ${text}`);
       }
 
-      // If we are here, all proxies failed.
-      throw lastError || new Error("Unable to connect to Shopify. Please check your internet connection.");
+      try {
+          return JSON.parse(text);
+      } catch {
+          throw new Error("Invalid JSON received from Shopify.");
+      }
   }
 
   private getMockOrders(): ShopifyOrder[] {
-      // ... (Keep existing mock data)
       const orders: ShopifyOrder[] = [];
       const now = new Date();
-      for(let i=0; i<50; i++) {
+      for(let i=0; i<30; i++) {
           const date = new Date();
-          date.setDate(now.getDate() - Math.floor(Math.random() * 30));
-          const isCancelled = Math.random() > 0.9;
-          const isUnfulfilled = !isCancelled && Math.random() > 0.8;
+          date.setDate(now.getDate() - i);
           orders.push({
-              id: 10000 + i,
+              id: 1000 + i,
               name: `#${1000 + i}`,
               created_at: date.toISOString(),
-              financial_status: 'pending',
-              fulfillment_status: isCancelled ? null : (isUnfulfilled ? null : 'fulfilled'),
-              cancel_reason: isCancelled ? 'customer' : null,
-              total_price: '3500.00',
+              financial_status: i % 3 === 0 ? 'paid' : 'pending',
+              fulfillment_status: i % 4 === 0 ? 'fulfilled' : null,
+              cancel_reason: i === 5 ? 'customer' : null,
+              total_price: '2500.00',
               line_items: [{
-                  id: 999000 + i, title: 'Wireless Earbuds Pro', quantity: 1, sku: 'AUDIO-001', price: '3500.00', variant_id: 123, product_id: 456
+                  id: 999000 + i, title: 'Demo Product', quantity: 1, sku: 'DEMO-001', price: '2500.00', variant_id: 1, product_id: 101
               }]
           });
       }
