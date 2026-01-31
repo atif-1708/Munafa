@@ -365,6 +365,23 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
     }
   };
 
+  // Helper for Detail View Stats
+  const getDetailStats = (p: ProductPerformance) => {
+      const totalUnits = p.units_sold + p.units_returned + p.units_in_transit;
+      
+      // Calculate Margin available for Ads (using Net Profit Cash Basis definition: Revenue - COGS - Ship - Overhead - Tax - CashStuck)
+      // If we spend exactly this amount on ads, Net Profit (Cash) will be 0.
+      const marginForAds = p.gross_revenue - p.cogs_total - p.shipping_cost_allocation - p.overhead_allocation - p.tax_allocation - p.cash_in_stock;
+      
+      const denominator = p.marketing_purchases > 0 ? p.marketing_purchases : (p.units_sold > 0 ? p.units_sold : 1);
+      const breakevenCpr = marginForAds / denominator;
+      
+      const actualCpr = p.marketing_purchases > 0 ? p.ad_spend_allocation / p.marketing_purchases : 0;
+      const pCent = (part: number, total: number) => total > 0 ? `${Math.round((part/total)*100)}%` : '0%';
+
+      return { totalUnits, breakevenCpr, actualCpr, pCent };
+  };
+
   const handleDetailExport = (product: GroupedProductPerformance) => {
     setIsExporting(true);
     try {
@@ -427,10 +444,10 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
             startY: (doc as any).lastAutoTable.finalY + 10,
             head: [['Marketing Metric', 'Value', 'Status']],
             body: [
-                ['Total Ad Spend', formatCurrency(product.ad_spend_allocation), '-'],
+                ['Total Ad Spend', formatCurrency(product.ad_spend_allocation), 'Includes Ad Tax'],
                 ['Facebook Purchases', product.marketing_purchases, '-'],
                 ['Actual CPR', formatCurrency(actualCpr), actualCpr > breakevenCpr ? 'Over Budget' : 'Profitable'],
-                ['Breakeven CPR', formatCurrency(breakevenCpr), 'Max allowable spend']
+                ['Breakeven CPR', formatCurrency(breakevenCpr), 'Max Spend for 0 Profit (Cash Basis)']
             ],
             theme: 'grid',
             headStyles: { fillColor: [124, 58, 237] }, // Purple
@@ -443,9 +460,9 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
             body: [
                 ['COGS (Product Cost)', formatCurrency(product.cogs_total)],
                 ['Shipping & Packaging', formatCurrency(product.shipping_cost_allocation)],
-                ['Marketing Ads', formatCurrency(product.ad_spend_allocation)],
+                ['Marketing Ads (Incl. Tax)', formatCurrency(product.ad_spend_allocation)],
                 ['Fixed Overhead', formatCurrency(product.overhead_allocation)],
-                ['Taxes', formatCurrency(product.tax_allocation)],
+                ['Courier/Sales Tax', formatCurrency(product.tax_allocation)],
                 ['Cash Stuck (Asset)', formatCurrency(product.cash_in_stock)]
             ],
             theme: 'plain',
@@ -462,19 +479,6 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
     } finally {
         setIsExporting(false);
     }
-  };
-
-  // Helper for Detail View Stats
-  const getDetailStats = (p: ProductPerformance) => {
-      const totalUnits = p.units_sold + p.units_returned + p.units_in_transit;
-      
-      const marginBeforeAds = p.gross_revenue - p.cogs_total - p.shipping_cost_allocation - p.overhead_allocation - p.tax_allocation;
-      const denominator = p.marketing_purchases > 0 ? p.marketing_purchases : (p.units_sold > 0 ? p.units_sold : 1);
-      const breakevenCpr = marginBeforeAds / denominator;
-      const actualCpr = p.marketing_purchases > 0 ? p.ad_spend_allocation / p.marketing_purchases : 0;
-      const pCent = (part: number, total: number) => total > 0 ? `${Math.round((part/total)*100)}%` : '0%';
-
-      return { totalUnits, breakevenCpr, actualCpr, pCent };
   };
 
   return (
@@ -639,7 +643,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                 <div className="flex gap-4">
                                     <div className="flex-1 border border-slate-200 rounded-lg p-3 flex justify-between items-center">
                                         <div>
-                                            <p className="text-xs text-slate-500 font-medium">Actual CPR</p>
+                                            <p className="text-xs text-slate-500 font-medium">Actual CPR (Incl. Tax)</p>
                                             <p className="text-xl font-bold text-slate-800">{formatCurrency(actualCpr)}</p>
                                         </div>
                                         <div className={`text-xs font-bold px-2 py-1 rounded ${actualCpr > breakevenCpr ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
@@ -647,12 +651,12 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                         </div>
                                     </div>
                                     <div className="flex-1 border border-slate-200 rounded-lg p-3">
-                                        <p className="text-xs text-slate-500 font-medium">Breakeven CPR</p>
+                                        <p className="text-xs text-slate-500 font-medium">Breakeven CPR (Max)</p>
                                         <p className="text-xl font-bold text-slate-600">{formatCurrency(breakevenCpr)}</p>
                                     </div>
                                 </div>
                                 <p className="text-xs text-slate-400 mt-2">
-                                    * Breakeven CPR is the max you can spend per order to make 0 profit. Calculated as (Gross Margin / Orders).
+                                    * Breakeven CPR is the max you can spend per order to hit 0 Net Profit (Calculated as Margin - Cash Stuck / Orders).
                                 </p>
                             </div>
 
@@ -671,7 +675,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                         <span className="font-medium text-slate-900">- {formatCurrency(selectedProduct.shipping_cost_allocation)}</span>
                                     </div>
                                     <div className="flex justify-between py-1.5 border-b border-slate-50">
-                                        <span className="text-slate-600">Marketing Ads</span>
+                                        <span className="text-slate-600">Marketing Ads (Incl. Tax)</span>
                                         <span className="font-medium text-slate-900">- {formatCurrency(selectedProduct.ad_spend_allocation)}</span>
                                     </div>
                                     <div className="flex justify-between py-1.5 border-b border-slate-50">
@@ -679,7 +683,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                         <span className="font-medium text-slate-900">- {formatCurrency(selectedProduct.overhead_allocation)}</span>
                                     </div>
                                     <div className="flex justify-between py-1.5 border-b border-slate-50">
-                                        <span className="text-slate-600">Taxes</span>
+                                        <span className="text-slate-600">Courier/Sales Tax</span>
                                         <span className="font-medium text-slate-900">- {formatCurrency(selectedProduct.tax_allocation)}</span>
                                     </div>
                                     
