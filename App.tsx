@@ -24,6 +24,7 @@ const App: React.FC = () => {
   const [isDemoMode, setIsDemoMode] = useState(false);
   
   // Login State
+  // Defaulting to 'login' and effectively disabling toggle in UI
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -392,6 +393,7 @@ const App: React.FC = () => {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) setAuthMessage({ type: 'error', text: error.message });
     } else {
+        // Signup logic is kept but inaccessible via UI
         const { error } = await supabase.auth.signUp({ email, password });
         if (error) {
             setAuthMessage({ type: 'error', text: error.message });
@@ -411,23 +413,31 @@ const App: React.FC = () => {
      return (
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
             <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md border border-slate-200">
-                <div className="text-center mb-6">
+                <div className="text-center mb-8">
                     <h1 className="text-3xl font-bold text-brand-600 tracking-tight">MunafaBakhsh</h1>
                     <p className="text-slate-500 mt-2">eCommerce Profit Intelligence</p>
                 </div>
-                <div className="flex bg-slate-100 p-1 rounded-lg mb-6">
-                    <button onClick={() => { setAuthMode('login'); setAuthMessage(null); }} className={`flex-1 py-2 text-sm font-medium rounded-md ${authMode === 'login' ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Log In</button>
-                    <button onClick={() => { setAuthMode('signup'); setAuthMessage(null); }} className={`flex-1 py-2 text-sm font-medium rounded-md ${authMode === 'signup' ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Sign Up</button>
-                </div>
+                
+                <h2 className="text-lg font-semibold text-slate-700 mb-4 text-center">Sign In</h2>
+
                 <form onSubmit={handleAuth} className="space-y-4">
-                    <input type="email" required className="w-full px-4 py-2 border rounded-lg" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" />
-                    <input type="password" required className="w-full px-4 py-2 border rounded-lg" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" />
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Email Address</label>
+                        <input type="email" required className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-brand-500 outline-none" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@example.com" />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Password</label>
+                        <input type="password" required className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-brand-500 outline-none" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" />
+                    </div>
+                    
                     {authMessage && <div className={`p-3 rounded-lg text-sm ${authMessage.type === 'error' ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>{authMessage.text}</div>}
-                    <button type="submit" className="w-full bg-brand-600 text-white py-2 rounded-lg">{authMode === 'login' ? 'Log In' : 'Create Account'}</button>
+                    
+                    <button type="submit" className="w-full bg-brand-600 text-white py-2.5 rounded-lg font-bold hover:bg-brand-700 transition-colors shadow-lg shadow-brand-900/20">
+                        Log In
+                    </button>
                 </form>
-                <div className="mt-6 border-t border-slate-100 pt-4 text-center">
-                    <button onClick={() => setIsDemoMode(true)} className="text-brand-600 text-sm hover:underline font-medium">Continue as Guest</button>
-                </div>
+                
+                {/* Guest & Signup removed as per request */}
             </div>
         </div>
     );
