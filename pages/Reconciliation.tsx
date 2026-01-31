@@ -1,10 +1,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { Order, ShopifyOrder, Product, OrderStatus } from '../types';
-import { 
-    AlertTriangle, CheckCircle2, Search, Download, Filter, 
-    ArrowRightLeft, PackageCheck, PackageX, ExternalLink, RefreshCw 
-} from 'lucide-react';
+import { Search, Download, CheckCircle2, AlertTriangle, XCircle, ArrowRight, Package } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -15,327 +12,194 @@ interface ReconciliationProps {
   storeName?: string;
 }
 
-type ReconStatus = 'MATCHED' | 'MISMATCH_STATUS' | 'MISSING_IN_COURIER' | 'MISSING_IN_SHOPIFY';
-
-interface ReconItem {
-    id: string; // Shopify Order Name as ID
-    date: string;
-    shopifyOrder: ShopifyOrder | null;
-    courierOrder: Order | null;
-    status: ReconStatus;
-    financialMatch: boolean;
-}
-
-const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierOrders, products, storeName = 'My Store' }) => {
-  const [activeTab, setActiveTab] = useState<'ALL' | 'ISSUES' | 'MATCHED'>('ISSUES');
+const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierOrders, storeName = 'My Store' }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [isExporting, setIsExporting] = useState(false);
 
-  // 1. Build Reconciliation Logic
-  const reconciliationData = useMemo(() => {
-      const data: ReconItem[] = [];
-      const courierMap = new Map<string, Order>();
+  // Merge Data
+  const mergedData = useMemo(() => {
+    const map = new Map<string, { shopify?: ShopifyOrder; courier?: Order }>();
 
-      // Normalize Courier Orders for Lookup
-      courierOrders.forEach(co => {
-          // Normalize: Remove #, trim
-          const key = co.shopify_order_number.replace('#', '').trim().toLowerCase();
-          courierMap.set(key, co);
-      });
+    // 1. Map Shopify Orders
+    shopifyOrders.forEach(so => {
+        const key = so.name.replace('#', '').trim();
+        if (!map.has(key)) map.set(key, {});
+        map.get(key)!.shopify = so;
+    });
 
-      // Process Shopify Orders
-      shopifyOrders.forEach(so => {
-          const key = so.name.replace('#', '').trim().toLowerCase();
-          const co = courierMap.get(key);
-          
-          let status: ReconStatus = 'MATCHED';
-          let financialMatch = true;
+    // 2. Map Courier Orders
+    courierOrders.forEach(co => {
+        const key = co.shopify_order_number.replace('#', '').trim();
+        if (!map.has(key)) map.set(key, {});
+        map.get(key)!.courier = co;
+    });
 
-          const isShopifyCancelled = so.cancel_reason !== null;
-          const isShopifyFulfilled = so.fulfillment_status === 'fulfilled';
+    // 3. Convert to Array
+    const rows = Array.from(map.entries()).map(([key, val]) => {
+        const date = val.shopify?.created_at || val.courier?.created_at || new Date().toISOString();
+        
+        // Status Logic
+        let status = 'MATCHED';
+        const sStatus = val.shopify?.fulfillment_status || 'unfulfilled';
+        const cStatus = val.courier?.status;
 
-          if (!co) {
-              // Exclude cancelled shopify orders from "Missing" alerts
-              if (isShopifyCancelled) status = 'MATCHED'; // Technically matched as "No Action Needed"
-              else status = 'MISSING_IN_COURIER';
-              financialMatch = false;
-          } else {
-              // We have both
-              const coIsDelivered = co.status === OrderStatus.DELIVERED;
-              
-              // Status Mismatch Logic
-              if (coIsDelivered && !isShopifyFulfilled) status = 'MISMATCH_STATUS';
-              if (co.status === OrderStatus.RETURNED && isShopifyFulfilled) status = 'MISMATCH_STATUS';
+        if (!val.shopify) status = 'ORPHAN_COURIER';
+        else if (!val.courier) {
+            status = val.shopify.cancel_reason ? 'CANCELLED_SHOPIFY' : 'MISSING_COURIER';
+        } else {
+            // Both exist
+            if (cStatus === OrderStatus.DELIVERED && sStatus !== 'fulfilled') status = 'STATUS_MISMATCH';
+            if ((cStatus === OrderStatus.RETURNED || cStatus === OrderStatus.RTO_INITIATED) && sStatus === 'fulfilled') status = 'RTO_MISMATCH';
+            
+            // Financial Check
+            const sTotal = parseFloat(val.shopify.total_price);
+            const cTotal = val.courier.cod_amount;
+            if (Math.abs(sTotal - cTotal) > 10) status = 'PRICE_MISMATCH';
+        }
 
-              // Financial Check
-              // If Courier Delivered, did we get money? (Simulated via cod_amount check)
-              if (coIsDelivered && parseFloat(so.total_price) !== co.cod_amount) {
-                  financialMatch = false; 
-              }
-              
-              // Remove from map to find "Missing in Shopify" later
-              courierMap.delete(key);
-          }
+        return {
+            id: key,
+            date,
+            shopify: val.shopify,
+            courier: val.courier,
+            status
+        };
+    });
 
-          data.push({
-              id: so.name,
-              date: so.created_at,
-              shopifyOrder: so,
-              courierOrder: co || null,
-              status,
-              financialMatch
-          });
-      });
+    return rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-      // Remaining Courier Orders (orphans)
-      courierMap.forEach((co) => {
-          data.push({
-              id: co.shopify_order_number,
-              date: co.created_at,
-              shopifyOrder: null,
-              courierOrder: co,
-              status: 'MISSING_IN_SHOPIFY',
-              financialMatch: false
-          });
-      });
-
-      return data.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [shopifyOrders, courierOrders]);
 
-  // 2. Filter Data
-  const filteredData = useMemo(() => {
-      let filtered = reconciliationData;
-
-      // Tab Filter
-      if (activeTab === 'ISSUES') {
-          filtered = filtered.filter(i => i.status !== 'MATCHED' || !i.financialMatch);
-      } else if (activeTab === 'MATCHED') {
-          filtered = filtered.filter(i => i.status === 'MATCHED');
-      }
-
-      // Search Filter
-      if (searchTerm) {
+  const filteredRows = useMemo(() => {
+      return mergedData.filter(row => {
+          if (!searchTerm) return true;
           const term = searchTerm.toLowerCase();
-          filtered = filtered.filter(i => 
-              i.id.toLowerCase().includes(term) || 
-              i.courierOrder?.tracking_number.toLowerCase().includes(term) ||
-              i.shopifyOrder?.customer?.city?.toLowerCase().includes(term)
-          );
-      }
+          return row.id.includes(term) || 
+                 row.shopify?.customer?.first_name?.toLowerCase().includes(term) ||
+                 row.courier?.tracking_number?.toLowerCase().includes(term);
+      });
+  }, [mergedData, searchTerm]);
 
-      return filtered;
-  }, [reconciliationData, activeTab, searchTerm]);
-
-  // PDF Export
-  const handleExportPDF = () => {
-    setIsExporting(true);
+  const handleExport = () => {
     const doc = new jsPDF();
+    doc.text(`${storeName} - Reconciliation`, 14, 15);
     
-    doc.setFontSize(16);
-    doc.text(`${storeName} - Reconciliation Report`, 14, 15);
-    doc.setFontSize(10);
-    doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 22);
-
-    const rows = filteredData.map(item => [
-        item.id,
-        new Date(item.date).toLocaleDateString(),
-        item.shopifyOrder ? item.shopifyOrder.financial_status : 'N/A',
-        item.courierOrder ? item.courierOrder.status : 'N/A',
-        item.status.replace(/_/g, ' '),
-        item.courierOrder ? item.courierOrder.tracking_number : '-'
+    const rows = filteredRows.map(r => [
+        r.id,
+        new Date(r.date).toLocaleDateString(),
+        r.shopify ? r.shopify.financial_status : '-',
+        r.courier ? r.courier.status : '-',
+        r.status
     ]);
 
     autoTable(doc, {
-        head: [['Order #', 'Date', 'Shopify Pay', 'Courier Status', 'Recon Status', 'Tracking']],
+        head: [['Order #', 'Date', 'Shopify Pay', 'Courier', 'Match Status']],
         body: rows,
-        startY: 28,
+        startY: 25
     });
-
-    doc.save('Reconciliation_Report.pdf');
-    setIsExporting(false);
+    doc.save('Reconciliation.pdf');
   };
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto pb-12">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <div>
-                <h2 className="text-2xl font-bold text-slate-900">Order Reconciliation</h2>
-                <p className="text-slate-500 text-sm">Match Shopify records with Courier execution to find leaks.</p>
-            </div>
-            <div className="flex gap-2">
-                 <div className="relative">
-                    <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
-                    <input 
-                        type="text" 
-                        placeholder="Search Order #..." 
-                        className="pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-slate-500 w-64"
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                    />
-                </div>
-                <button 
-                    onClick={handleExportPDF}
-                    disabled={isExporting}
-                    className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-800 disabled:opacity-70"
-                >
-                    {isExporting ? <RefreshCw className="animate-spin" size={16}/> : <Download size={16} />} Export
-                </button>
-            </div>
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <div>
+           <h2 className="text-2xl font-bold text-slate-900">Reconciliation</h2>
+           <p className="text-slate-500 text-sm">Compare Shopify bookings with Courier reality.</p>
         </div>
-
-        {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-                <div>
-                    <p className="text-xs font-bold text-slate-500 uppercase">Total Orders</p>
-                    <h3 className="text-2xl font-bold text-slate-900">{reconciliationData.length}</h3>
-                </div>
-                <div className="bg-slate-100 p-3 rounded-lg text-slate-600"><Filter size={20}/></div>
+        <div className="flex gap-2">
+            <div className="relative">
+                <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
+                <input 
+                    type="text" 
+                    placeholder="Search Order #..." 
+                    className="pl-10 pr-4 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-brand-500"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                />
             </div>
-            <div className="bg-red-50 p-4 rounded-xl border border-red-100 shadow-sm flex items-center justify-between">
-                <div>
-                    <p className="text-xs font-bold text-red-600 uppercase">Missing / Issues</p>
-                    <h3 className="text-2xl font-bold text-red-700">
-                        {reconciliationData.filter(i => i.status !== 'MATCHED').length}
-                    </h3>
-                </div>
-                <div className="bg-white p-3 rounded-lg text-red-500"><AlertTriangle size={20}/></div>
-            </div>
-            <div className="bg-green-50 p-4 rounded-xl border border-green-100 shadow-sm flex items-center justify-between">
-                <div>
-                    <p className="text-xs font-bold text-green-600 uppercase">Perfect Match</p>
-                    <h3 className="text-2xl font-bold text-green-700">
-                        {reconciliationData.filter(i => i.status === 'MATCHED').length}
-                    </h3>
-                </div>
-                <div className="bg-white p-3 rounded-lg text-green-500"><CheckCircle2 size={20}/></div>
-            </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="border-b border-slate-200 flex gap-6">
-            <button 
-                onClick={() => setActiveTab('ISSUES')}
-                className={`pb-3 text-sm font-medium transition-colors border-b-2 ${activeTab === 'ISSUES' ? 'border-red-500 text-red-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
-            >
-                Action Required ({reconciliationData.filter(i => i.status !== 'MATCHED').length})
-            </button>
-            <button 
-                onClick={() => setActiveTab('MATCHED')}
-                className={`pb-3 text-sm font-medium transition-colors border-b-2 ${activeTab === 'MATCHED' ? 'border-green-500 text-green-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
-            >
-                Matched
-            </button>
-            <button 
-                onClick={() => setActiveTab('ALL')}
-                className={`pb-3 text-sm font-medium transition-colors border-b-2 ${activeTab === 'ALL' ? 'border-slate-500 text-slate-800' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
-            >
-                All Orders
+            <button onClick={handleExport} className="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2">
+                <Download size={16} /> Export
             </button>
         </div>
+      </div>
 
-        {/* Table */}
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <table className="w-full text-left text-sm">
-                <thead className="bg-slate-50 border-b border-slate-200">
-                    <tr>
-                        <th className="px-6 py-4 font-semibold text-slate-700">Order Details</th>
-                        <th className="px-6 py-4 font-semibold text-slate-700">Shopify Status</th>
-                        <th className="px-6 py-4 font-semibold text-slate-700">Courier Status</th>
-                        <th className="px-6 py-4 font-semibold text-slate-700">Recon Result</th>
-                        <th className="px-6 py-4 font-semibold text-slate-700 text-right">Action</th>
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <table className="w-full text-left text-sm">
+            <thead className="bg-slate-50 border-b border-slate-200 text-slate-700">
+                <tr>
+                    <th className="px-6 py-4">Order Details</th>
+                    <th className="px-6 py-4">Shopify State</th>
+                    <th className="px-6 py-4">Courier State</th>
+                    <th className="px-6 py-4">Financials</th>
+                    <th className="px-6 py-4">Match Analysis</th>
+                </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+                {filteredRows.length === 0 ? (
+                    <tr><td colSpan={5} className="px-6 py-8 text-center text-slate-400">No data found.</td></tr>
+                ) : filteredRows.map(row => (
+                    <tr key={row.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-6 py-4">
+                            <div className="font-bold text-slate-900">#{row.id}</div>
+                            <div className="text-xs text-slate-500">{new Date(row.date).toLocaleDateString()}</div>
+                        </td>
+                        
+                        <td className="px-6 py-4">
+                            {row.shopify ? (
+                                <div>
+                                    <div className={`text-xs font-bold uppercase ${row.shopify.fulfillment_status === 'fulfilled' ? 'text-green-600' : 'text-yellow-600'}`}>
+                                        {row.shopify.fulfillment_status || 'Unfulfilled'}
+                                    </div>
+                                    <div className="text-xs text-slate-400">{row.shopify.financial_status}</div>
+                                </div>
+                            ) : <span className="text-slate-300">-</span>}
+                        </td>
+
+                        <td className="px-6 py-4">
+                             {row.courier ? (
+                                <div>
+                                    <div className={`text-xs font-bold uppercase ${
+                                        row.courier.status === 'DELIVERED' ? 'text-green-600' :
+                                        row.courier.status.includes('RETURN') ? 'text-red-600' : 'text-blue-600'
+                                    }`}>
+                                        {row.courier.status.replace('_', ' ')}
+                                    </div>
+                                    <div className="text-xs text-slate-400">{row.courier.tracking_number}</div>
+                                </div>
+                            ) : <span className="text-red-400 text-xs font-bold">Not Found</span>}
+                        </td>
+
+                        <td className="px-6 py-4 font-mono text-slate-700">
+                            {row.shopify?.total_price || row.courier?.cod_amount || 0}
+                        </td>
+
+                        <td className="px-6 py-4">
+                            <StatusBadge status={row.status} />
+                        </td>
                     </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                    {filteredData.length === 0 ? (
-                         <tr><td colSpan={5} className="px-6 py-12 text-center text-slate-400">No orders found.</td></tr>
-                    ) : (
-                        filteredData.map((item, idx) => (
-                            <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                                <td className="px-6 py-4">
-                                    <div className="font-bold text-slate-900">{item.id}</div>
-                                    <div className="text-xs text-slate-500">{new Date(item.date).toLocaleDateString()}</div>
-                                    {item.shopifyOrder?.line_items[0] && (
-                                        <div className="text-[10px] text-slate-400 mt-1 truncate max-w-[200px]">
-                                            {item.shopifyOrder.line_items[0].title}
-                                        </div>
-                                    )}
-                                </td>
-                                
-                                {/* Shopify Column */}
-                                <td className="px-6 py-4">
-                                    {item.shopifyOrder ? (
-                                        <div className="space-y-1">
-                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                                                item.shopifyOrder.fulfillment_status === 'fulfilled' ? 'bg-green-100 text-green-700' : 
-                                                item.shopifyOrder.cancel_reason ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
-                                            }`}>
-                                                {item.shopifyOrder.cancel_reason ? 'Cancelled' : (item.shopifyOrder.fulfillment_status || 'Unfulfilled')}
-                                            </span>
-                                            <div className="text-xs text-slate-500 font-medium">
-                                                {item.shopifyOrder.financial_status} • {item.shopifyOrder.total_price}
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <span className="text-slate-300 italic">Not in Shopify</span>
-                                    )}
-                                </td>
-
-                                {/* Courier Column */}
-                                <td className="px-6 py-4">
-                                    {item.courierOrder ? (
-                                        <div className="space-y-1">
-                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                                                item.courierOrder.status === 'DELIVERED' ? 'bg-green-100 text-green-700' :
-                                                item.courierOrder.status === 'RETURNED' ? 'bg-red-100 text-red-700' :
-                                                'bg-blue-50 text-blue-600'
-                                            }`}>
-                                                {item.courierOrder.status.replace('_', ' ')}
-                                            </span>
-                                            <div className="text-xs text-slate-500 font-medium">
-                                                {item.courierOrder.courier} • {item.courierOrder.tracking_number}
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <span className="text-red-400 text-xs font-bold flex items-center gap-1">
-                                            <PackageX size={14}/> Not Found
-                                        </span>
-                                    )}
-                                </td>
-
-                                {/* Result Column */}
-                                <td className="px-6 py-4">
-                                    <ReconBadge status={item.status} />
-                                </td>
-
-                                <td className="px-6 py-4 text-right">
-                                    <button className="text-slate-400 hover:text-brand-600">
-                                        <ExternalLink size={16} />
-                                    </button>
-                                </td>
-                            </tr>
-                        ))
-                    )}
-                </tbody>
-            </table>
-        </div>
+                ))}
+            </tbody>
+        </table>
+      </div>
     </div>
   );
 };
 
-const ReconBadge = ({ status }: { status: ReconStatus }) => {
+const StatusBadge = ({ status }: { status: string }) => {
     switch(status) {
         case 'MATCHED': 
-            return <div className="flex items-center gap-1 text-green-700 text-xs font-bold"><CheckCircle2 size={14}/> Verified</div>;
-        case 'MISSING_IN_COURIER':
-            return <div className="flex items-center gap-1 text-red-600 text-xs font-bold"><AlertTriangle size={14}/> Missing in Courier</div>;
-        case 'MISSING_IN_SHOPIFY':
-            return <div className="flex items-center gap-1 text-orange-600 text-xs font-bold"><ArrowRightLeft size={14}/> Orphan in Courier</div>;
-        case 'MISMATCH_STATUS':
-            return <div className="flex items-center gap-1 text-yellow-600 text-xs font-bold"><PackageCheck size={14}/> Status Mismatch</div>;
-        default: return null;
+            return <span className="inline-flex items-center gap-1 text-green-700 bg-green-50 px-2 py-1 rounded text-xs font-bold"><CheckCircle2 size={12} /> Verified</span>;
+        case 'MISSING_COURIER': 
+            return <span className="inline-flex items-center gap-1 text-red-700 bg-red-50 px-2 py-1 rounded text-xs font-bold"><AlertTriangle size={12} /> Not Shipped</span>;
+        case 'ORPHAN_COURIER': 
+            return <span className="inline-flex items-center gap-1 text-orange-700 bg-orange-50 px-2 py-1 rounded text-xs font-bold"><Package size={12} /> Unknown Order</span>;
+        case 'CANCELLED_SHOPIFY':
+             return <span className="text-slate-400 text-xs font-medium">Cancelled (Ignore)</span>;
+        case 'PRICE_MISMATCH':
+             return <span className="inline-flex items-center gap-1 text-yellow-700 bg-yellow-50 px-2 py-1 rounded text-xs font-bold"><AlertTriangle size={12} /> Price Diff</span>;
+        default: 
+            return <span className="inline-flex items-center gap-1 text-yellow-700 bg-yellow-50 px-2 py-1 rounded text-xs font-bold"><AlertTriangle size={12} /> Status Mismatch</span>;
     }
-};
+}
 
 export default Reconciliation;
