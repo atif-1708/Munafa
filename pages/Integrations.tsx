@@ -7,7 +7,7 @@ import { FacebookService } from '../services/facebook';
 import { supabase } from '../services/supabase';
 import { 
     CheckCircle2, AlertTriangle, Key, Globe, Loader2, Store, ArrowRight, 
-    RefreshCw, ShieldCheck, Link, Truck, Info, Settings, Facebook, ChevronDown, ChevronUp, Lock, HelpCircle, Hash, ExternalLink 
+    RefreshCw, ShieldCheck, Link, Truck, Info, Settings, Facebook, ExternalLink, Zap
 } from 'lucide-react';
 
 const COURIER_META: Record<string, { color: string, bg: string, border: string, icon: string, label: string, desc: string }> = {
@@ -62,7 +62,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   const [loading, setLoading] = useState(true);
   const [testingConnection, setTestingConnection] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isSavingShopify, setIsSavingShopify] = useState(false);
 
   useEffect(() => {
     const loadConfigs = async () => {
@@ -98,88 +97,43 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     loadConfigs();
   }, []);
 
-  const handleTestShopify = async () => {
+  const handleShopifyConnect = async () => {
       setErrorMessage(null);
       setTestingConnection('Shopify');
-      
-      const token = shopifyConfig.access_token.trim();
+
       let url = shopifyConfig.store_url.trim();
-      if (!url.includes('.')) {
-          setErrorMessage("Invalid URL. Format: yourstore.myshopify.com");
+      if (!url) {
+          setErrorMessage("Please enter your store URL.");
           setTestingConnection(null);
           return;
       }
 
-      // Validation
-      // Accept 'shpat_' (Admin Access Token), 'shpss_' (Private App Password), 'demo_'
-      if (!token.startsWith('shpat_') && !token.startsWith('shpss_') && !token.startsWith('demo_')) {
-          const confirm = window.confirm("Your token doesn't start with 'shpat_' or 'shpss_'. This format is unusual for Shopify. Are you sure you want to proceed?");
-          if (!confirm) {
-              setTestingConnection(null);
-              return;
-          }
-      }
+      // Cleanup URL for user friendliness (e.g. if they pasted full https link)
+      url = url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      if (url.includes('/')) url = url.split('/')[0];
+      // Append .myshopify.com if missing
+      const finalShop = url.includes('.') ? url : `${url}.myshopify.com`;
 
-      try {
-          const adapter = new ShopifyAdapter();
-          const result = await adapter.testConnection({ ...shopifyConfig, store_url: url, access_token: token });
-          if (result.success) await handleManualConnect(); 
-          else setErrorMessage(`Connection Failed: ${result.message}`);
-      } catch (e: any) {
-          setErrorMessage("Connection Error: " + e.message);
-      } finally {
-          setTestingConnection(null);
-      }
-  };
-
-  const handleManualConnect = async () => {
-      setErrorMessage(null);
-      setIsSavingShopify(true);
       const { data: { session } } = await supabase.auth.getSession();
-      
       if (!session?.user) {
-          setErrorMessage("You must be logged in.");
-          setIsSavingShopify(false);
+          setErrorMessage("You must be logged in to connect.");
+          setTestingConnection(null);
           return;
       }
 
-      const payload = {
-          user_id: session.user.id,
-          platform: 'Shopify',
-          store_url: shopifyConfig.store_url,
-          access_token: shopifyConfig.access_token,
-          scope: 'read_orders,read_products,read_customers',
-          is_active: true
-      };
-      
-      const { data: existing } = await supabase.from('sales_channels').select('id').eq('user_id', session.user.id).eq('platform', 'Shopify').limit(1);
-      
-      if (existing && existing.length > 0) {
-          await supabase.from('sales_channels').update(payload).eq('id', existing[0].id);
-      } else {
-          await supabase.from('sales_channels').insert(payload);
-      }
-      
-      setShopifyConfig({ ...shopifyConfig, is_active: true });
-      if (onConfigUpdate) onConfigUpdate();
-      setIsSavingShopify(false);
+      // Redirect to Backend OAuth Handler
+      const host = window.location.origin; // e.g. https://myapp.vercel.app
+      window.location.href = `${host}/api/shopify/login?shop=${finalShop}&userId=${session.user.id}`;
   };
 
   const handleDisconnectShopify = async () => {
-      if (!window.confirm("Disconnect Shopify?")) return;
+      if (!window.confirm("Disconnect Shopify? This will stop order syncing.")) return;
       setShopifyConfig({ ...shopifyConfig, access_token: '', is_active: false });
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-           await supabase.from('sales_channels').update({ is_active: false }).eq('user_id', session.user.id).eq('platform', 'Shopify');
+           await supabase.from('sales_channels').update({ is_active: false, access_token: null }).eq('user_id', session.user.id).eq('platform', 'Shopify');
+           if (onConfigUpdate) onConfigUpdate();
       }
-  };
-
-  const openShopifyAdmin = () => {
-      if(!shopifyConfig.store_url) return;
-      let clean = shopifyConfig.store_url.replace(/^https?:\/\//, '').replace(/\/$/, '');
-      if (clean.includes('/')) clean = clean.split('/')[0];
-      if (!clean.includes('.')) clean += '.myshopify.com';
-      window.open(`https://${clean}/admin/settings/apps/development`, '_blank');
   };
 
   const saveCourierConfig = async (courierId: string, isActive: boolean) => {
@@ -271,7 +225,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                           </div>
                           <div>
                               <h3 className="font-bold text-xl text-slate-900">Shopify Integration</h3>
-                              <p className="text-sm text-slate-500">Sync Orders, Customers & Products</p>
+                              <p className="text-sm text-slate-500">Official App Connection</p>
                           </div>
                       </div>
                       {shopifyConfig.is_active && (
@@ -299,7 +253,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                            <div className="space-y-4">
                                 <div>
                                     <label className="block text-sm font-bold text-slate-700 mb-2">
-                                        1. Enter Store URL
+                                        Enter Store URL
                                     </label>
                                     <div className="flex items-center gap-2">
                                         <input 
@@ -309,65 +263,19 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                             value={shopifyConfig.store_url || ''}
                                             onChange={(e) => setShopifyConfig({...shopifyConfig, store_url: e.target.value})}
                                         />
-                                        <button 
-                                            onClick={openShopifyAdmin}
-                                            disabled={!shopifyConfig.store_url || shopifyConfig.store_url.length < 3}
-                                            className="px-4 py-3 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold hover:bg-slate-200 disabled:opacity-50 whitespace-nowrap"
-                                        >
-                                            Open Admin <ExternalLink size={12} className="inline ml-1"/>
-                                        </button>
                                     </div>
-                                    <p className="text-xs text-slate-400 mt-1">Enter URL, then click "Open Admin" to generate your token.</p>
-                                </div>
-
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                                        2. Paste Access Token
-                                    </label>
-                                    <div className="relative">
-                                        <input 
-                                            type="password"
-                                            placeholder="shpat_... or shpss_..."
-                                            className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none text-sm font-mono"
-                                            value={shopifyConfig.access_token || ''}
-                                            onChange={(e) => setShopifyConfig({...shopifyConfig, access_token: e.target.value})}
-                                        />
-                                        
-                                        {/* Dynamic Status Icons */}
-                                        <div className="absolute right-3 top-3.5">
-                                            {shopifyConfig.access_token && shopifyConfig.access_token.startsWith('shpat_') && (
-                                                <div className="text-green-600" title="Valid Admin Token Format"><CheckCircle2 size={16} /></div>
-                                            )}
-                                            {shopifyConfig.access_token && shopifyConfig.access_token.startsWith('shpss_') && (
-                                                <div className="text-blue-600" title="Valid Private App Format"><Key size={16} /></div>
-                                            )}
-                                            {shopifyConfig.access_token && !shopifyConfig.access_token.startsWith('shpat_') && !shopifyConfig.access_token.startsWith('shpss_') && !shopifyConfig.access_token.startsWith('demo_') && (
-                                                <div className="text-orange-500" title="Unusual Token Format"><AlertTriangle size={16} /></div>
-                                            )}
-                                        </div>
-                                    </div>
-                                    
-                                    {/* Helper Text */}
-                                    <div className="flex flex-col gap-1 mt-1.5">
-                                        {shopifyConfig.access_token.startsWith('shpss_') ? (
-                                             <p className="text-[10px] text-blue-600 font-medium flex items-center gap-1">
-                                                <Info size={10} /> Detected: Legacy Private App Password. Ensure permissions are set in the Private App settings.
-                                             </p>
-                                        ) : (
-                                            <p className="text-[10px] text-slate-400 flex items-center gap-1">
-                                                <Info size={10} /> Ensure you selected <strong>read_orders</strong> and <strong>read_products</strong> scopes.
-                                            </p>
-                                        )}
-                                    </div>
+                                    <p className="text-xs text-slate-400 mt-2 flex items-center gap-1">
+                                        <Info size={12} /> You will be redirected to Shopify to approve the connection.
+                                    </p>
                                 </div>
                            </div>
                             
                             <button 
-                                onClick={handleTestShopify}
-                                disabled={testingConnection === 'Shopify' || !shopifyConfig.store_url || !shopifyConfig.access_token}
+                                onClick={handleShopifyConnect}
+                                disabled={testingConnection === 'Shopify' || !shopifyConfig.store_url}
                                 className="w-full bg-[#95BF47] text-white py-3 rounded-xl text-sm font-bold hover:bg-[#86ad3e] transition-all flex items-center justify-center gap-2 disabled:opacity-50 mt-2"
                             >
-                                {testingConnection === 'Shopify' ? <Loader2 className="animate-spin" size={16} /> : <ShieldCheck size={16} />}
+                                {testingConnection === 'Shopify' ? <Loader2 className="animate-spin" size={16} /> : <Zap size={16} />}
                                 Connect Store
                             </button>
                       </div>
