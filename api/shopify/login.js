@@ -8,12 +8,12 @@ export default async function handler(req, res) {
 
   // Sanitize shop URL
   const shopRegex = /^[a-zA-Z0-9][a-zA-Z0-9\-]*\.myshopify\.com$/;
-  const cleanShop = shop.replace(/^https?:\/\//, '').replace(/\/$/, '');
+  let cleanShop = shop.replace(/^https?:\/\//, '').replace(/\/$/, '');
   
   // If user enters 'my-store', append .myshopify.com
-  const finalShop = cleanShop.includes('.') ? cleanShop : `${cleanShop}.myshopify.com`;
+  cleanShop = cleanShop.includes('.') ? cleanShop : `${cleanShop}.myshopify.com`;
 
-  if (!shopRegex.test(finalShop)) {
+  if (!shopRegex.test(cleanShop)) {
     return res.status(400).send("Invalid shop domain. Please format as 'your-store.myshopify.com'");
   }
 
@@ -21,8 +21,14 @@ export default async function handler(req, res) {
   const scopes = 'read_orders,read_products,read_customers';
   
   // Construct Redirect URI (Must match Shopify App Settings)
-  // In Vercel, use system env var or fallback to localhost
-  const host = process.env.HOST || `https://${req.headers.host}`;
+  // In Vercel, use system env var or fallback to request host
+  let host = process.env.HOST || `https://${req.headers.host}`;
+  
+  // SAFETY: Remove trailing slash if present in env var to avoid double slashes (e.g. .com//api)
+  if (host.endsWith('/')) {
+      host = host.slice(0, -1);
+  }
+  
   const redirectUri = `${host}/api/shopify/callback`;
 
   // Generate a random nonce
@@ -33,7 +39,7 @@ export default async function handler(req, res) {
   const state = Buffer.from(JSON.stringify({ nonce, userId })).toString('base64');
 
   // Build the Shopify Auth URL
-  const installUrl = `https://${finalShop}/admin/oauth/authorize?client_id=${apiKey}&scope=${scopes}&state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`;
+  const installUrl = `https://${cleanShop}/admin/oauth/authorize?client_id=${apiKey}&scope=${scopes}&state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`;
 
   res.redirect(installUrl);
 }
