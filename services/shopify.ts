@@ -5,7 +5,7 @@ export class ShopifyAdapter {
   
   /**
    * Fetches the last 250 orders from Shopify.
-   * Uses a robust proxy to bypass CORS restrictions in the browser.
+   * Uses a robust proxy system with fallbacks to bypass CORS restrictions.
    */
   async fetchOrders(config: SalesChannel): Promise<ShopifyOrder[]> {
     if (!config.store_url || !config.access_token) return [];
@@ -29,7 +29,7 @@ export class ShopifyAdapter {
         
         if (data && Array.isArray(data.orders)) {
             return data.orders;
-        } else if (data.errors) {
+        } else if (data && data.errors) {
             console.error("Shopify API Error:", data.errors);
             throw new Error("Shopify Refused: " + JSON.stringify(data.errors));
         }
@@ -56,10 +56,10 @@ export class ShopifyAdapter {
 
       try {
           const data = await this.fetchWithProxy(url, config.access_token);
-          if (data.shop) {
+          if (data && data.shop) {
               return { success: true };
           }
-          return { success: false, message: "Invalid response from Shopify." };
+          return { success: false, message: "Invalid response from Shopify. Ensure token has 'read_products' or 'read_orders' scope." };
       } catch (e: any) {
           return { success: false, message: e.message };
       }
@@ -77,35 +77,68 @@ export class ShopifyAdapter {
   }
 
   private async fetchWithProxy(targetUrl: string, token: string): Promise<any> {
-      // Primary Proxy: corsproxy.io (Best for Headers)
-      // We double encode to ensure the query params inside targetUrl are preserved
-      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+      // List of proxies to try in order. 
+      // 1. Local API (Best for Production/Vercel)
+      // 2. corsproxy.io (Fast Public Proxy)
+      // 3. thingproxy (Backup Public Proxy)
+      const proxies = [
+          `/api/proxy?url=${encodeURIComponent(targetUrl)}`,
+          `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+          `https://thingproxy.freeboard.io/fetch/${targetUrl}`
+      ];
 
-      try {
-          const res = await fetch(proxyUrl, {
-              method: 'GET',
-              headers: {
-                  'X-Shopify-Access-Token': token,
-                  'Content-Type': 'application/json'
-              }
-          });
+      let lastError: Error | null = null;
 
-          const text = await res.text();
-
-          if (!res.ok) {
-              if (res.status === 401) throw new Error("Invalid Access Token");
-              if (res.status === 404) throw new Error("Store URL not found");
-              throw new Error(`API ${res.status}: ${text}`);
-          }
-
+      for (const proxyUrl of proxies) {
           try {
-              return JSON.parse(text);
-          } catch {
-              throw new Error("Invalid JSON response from Proxy");
+              const res = await fetch(proxyUrl, {
+                  method: 'GET',
+                  headers: {
+                      'X-Shopify-Access-Token': token,
+                      'Content-Type': 'application/json'
+                  }
+              });
+
+              // Handle HTML errors (like 404 from SPA routing or Proxy error pages)
+              const contentType = res.headers.get('content-type');
+              const isJson = contentType && contentType.includes('application/json');
+              
+              if (!isJson) {
+                  // If we got HTML (e.g. Vercel 404), treat as network failure and try next proxy
+                  if (!res.ok) throw new Error(`Proxy Error: ${res.status}`);
+                  // If 200 OK but HTML, it's likely a SPA fallback, ignore.
+                  throw new Error("Received HTML instead of JSON");
+              }
+
+              const text = await res.text();
+              
+              if (!res.ok) {
+                  // If it's a 401, it's definitely an auth error, don't retry other proxies
+                  if (res.status === 401) throw new Error("Invalid Access Token. Please check your credentials.");
+                  if (res.status === 404) throw new Error("Store URL not found. Check your shop name.");
+                  
+                  // For 500s or 403s (often proxy issues), we throw to catch block to try next proxy
+                  throw new Error(`API ${res.status}: ${text}`);
+              }
+
+              try {
+                  return JSON.parse(text);
+              } catch {
+                  throw new Error("Invalid JSON response from Proxy");
+              }
+
+          } catch (e: any) {
+              lastError = e;
+              // If it's an Auth error, stop retrying immediately
+              if (e.message.includes("Invalid Access Token") || e.message.includes("Store URL")) {
+                  throw e;
+              }
+              console.warn(`Proxy failed (${proxyUrl}):`, e.message);
+              // Continue to next proxy
           }
-      } catch (e: any) {
-          throw e;
       }
+
+      throw lastError || new Error("Network Error: Could not connect to Shopify via any proxy.");
   }
 
   private getMockOrders(): ShopifyOrder[] {

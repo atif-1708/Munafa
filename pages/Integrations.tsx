@@ -110,6 +110,15 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
           return;
       }
 
+      // Validation
+      if (!token.startsWith('shpat_') && !token.startsWith('demo_')) {
+          const confirm = window.confirm("Your token doesn't start with 'shpat_'. This usually means it's an API Key, not an Access Token. Are you sure?");
+          if (!confirm) {
+              setTestingConnection(null);
+              return;
+          }
+      }
+
       try {
           const adapter = new ShopifyAdapter();
           const result = await adapter.testConnection({ ...shopifyConfig, store_url: url, access_token: token });
@@ -291,44 +300,47 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                     <label className="block text-sm font-bold text-slate-700 mb-2">
                                         1. Enter Store URL
                                     </label>
-                                    <input 
-                                        type="text"
-                                        placeholder="your-store.myshopify.com"
-                                        className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none text-sm"
-                                        value={shopifyConfig.store_url || ''}
-                                        onChange={(e) => setShopifyConfig({...shopifyConfig, store_url: e.target.value})}
-                                    />
+                                    <div className="flex items-center gap-2">
+                                        <input 
+                                            type="text"
+                                            placeholder="your-store.myshopify.com"
+                                            className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none text-sm"
+                                            value={shopifyConfig.store_url || ''}
+                                            onChange={(e) => setShopifyConfig({...shopifyConfig, store_url: e.target.value})}
+                                        />
+                                        <button 
+                                            onClick={openShopifyAdmin}
+                                            disabled={!shopifyConfig.store_url || shopifyConfig.store_url.length < 3}
+                                            className="px-4 py-3 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold hover:bg-slate-200 disabled:opacity-50 whitespace-nowrap"
+                                        >
+                                            Open Admin <ExternalLink size={12} className="inline ml-1"/>
+                                        </button>
+                                    </div>
+                                    <p className="text-xs text-slate-400 mt-1">Enter URL, then click "Open Admin" to generate your token.</p>
                                 </div>
 
-                                {shopifyConfig.store_url.length > 3 && (
-                                    <div className="animate-in fade-in slide-in-from-top-2">
-                                        <label className="block text-sm font-bold text-slate-700 mb-2">
-                                            2. Get Access Token
-                                        </label>
-                                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-4 flex items-center justify-between">
-                                            <div className="text-xs text-slate-600">
-                                                Click to open Shopify Admin and create a token.
-                                            </div>
-                                            <button 
-                                                onClick={openShopifyAdmin}
-                                                className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-700 flex items-center gap-2"
-                                            >
-                                                Open Admin <ExternalLink size={12}/>
-                                            </button>
-                                        </div>
-
-                                        <label className="block text-sm font-bold text-slate-700 mb-2">
-                                            3. Paste Token
-                                        </label>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-2">
+                                        2. Paste Access Token
+                                    </label>
+                                    <div className="relative">
                                         <input 
                                             type="password"
                                             placeholder="shpat_xxxxxxxxxxxxxxxxxxxxxxxx"
-                                            className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none text-sm"
+                                            className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none text-sm font-mono"
                                             value={shopifyConfig.access_token || ''}
                                             onChange={(e) => setShopifyConfig({...shopifyConfig, access_token: e.target.value})}
                                         />
+                                        {shopifyConfig.access_token && !shopifyConfig.access_token.startsWith('shpat_') && !shopifyConfig.access_token.startsWith('demo_') && (
+                                            <div className="absolute right-3 top-3.5 text-orange-500" title="Token usually starts with 'shpat_'">
+                                                <AlertTriangle size={16} />
+                                            </div>
+                                        )}
                                     </div>
-                                )}
+                                    <p className="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
+                                        <Info size={10} /> Ensure you selected <strong>read_orders</strong> and <strong>read_products</strong> scopes.
+                                    </p>
+                                </div>
                            </div>
                             
                             <button 
