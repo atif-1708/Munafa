@@ -1,4 +1,3 @@
-
 import React, { useMemo, useState } from 'react';
 import { Order, ShopifyOrder, Product, OrderStatus } from '../types';
 import { Search, Download, Package, AlertCircle, CheckCircle2, Truck, XCircle, Clock, ArrowRight, Calendar } from 'lucide-react';
@@ -104,21 +103,21 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
             }
 
             const stat = stats.get(key)!;
-            // Count quantity of this item only
-            const qty = item.quantity;
+            // Count 1 per order regardless of quantity, as requested
+            const count = 1;
 
-            stat.total_ordered += qty;
+            stat.total_ordered += count;
 
             if (isCancelled) {
-                stat.cancelled += qty;
+                stat.cancelled += count;
             } else {
-                if (isPending) stat.pending_fulfillment += qty;
-                if (isFulfilled) stat.fulfilled += qty;
+                if (isPending) stat.pending_fulfillment += count;
+                if (isFulfilled) stat.fulfilled += count;
 
                 // Courier Metrics (Only apply if valid order)
-                if (isDispatched) stat.dispatched += qty;
-                if (isDelivered) stat.delivered += qty;
-                if (isRto) stat.rto += qty;
+                if (isDispatched) stat.dispatched += count;
+                if (isDelivered) stat.delivered += count;
+                if (isRto) stat.rto += count;
             }
         }
     });
@@ -168,7 +167,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
            <h2 className="text-2xl font-bold text-slate-900">Shopify Product Stats</h2>
-           <p className="text-slate-500 text-sm">Inventory flow analysis (Main Item Only).</p>
+           <p className="text-slate-500 text-sm">Inventory flow analysis (Main Item Only, Order Counts).</p>
         </div>
         
         <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
