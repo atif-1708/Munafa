@@ -70,6 +70,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   const [loading, setLoading] = useState(true);
   const [testingConnection, setTestingConnection] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isSavingShopify, setIsSavingShopify] = useState(false);
 
   // Load Configs Helper
   const loadConfigs = async () => {
@@ -158,8 +159,9 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
           return;
       }
       
-      if (!token.startsWith('shpat_') && !token.startsWith('demo_')) {
-          setErrorMessage("Invalid Token. The Access Token must start with 'shpat_'. Please follow the guide below to create a Custom App.");
+      // Removed strict 'shpat_' check. Only checking length to be reasonably safe.
+      if (token.length < 10) {
+          setErrorMessage("Invalid Token. The Access Token seems too short.");
           setTestingConnection(null);
           return;
       }
@@ -201,8 +203,11 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
           platform: 'Shopify'
       };
       
-      setShopifyConfig(updatedConfig);
-      await saveSalesChannel(updatedConfig);
+      // Only set State AFTER successful save
+      const saved = await saveSalesChannel(updatedConfig);
+      if (saved) {
+          setShopifyConfig(updatedConfig);
+      }
   };
 
   const handleCourierInputChange = (courierId: string, value: string) => {
@@ -212,10 +217,16 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     }));
   };
 
-  const saveSalesChannel = async (config: SalesChannel) => {
+  const saveSalesChannel = async (config: SalesChannel): Promise<boolean> => {
       setErrorMessage(null);
+      setIsSavingShopify(true);
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.user) return;
+      
+      if (!session?.user) {
+          setErrorMessage("You must be logged in to save configurations.");
+          setIsSavingShopify(false);
+          return false;
+      }
 
       const payload = {
           user_id: session.user.id,
@@ -227,33 +238,47 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
           is_active: config.is_active
       };
       
-      // Robust Upsert: Check for existing record first to avoid Unique Violation errors if constraint is missing
-      const { data: existing } = await supabase.from('sales_channels')
-          .select('id')
-          .eq('user_id', session.user.id)
-          .eq('platform', config.platform)
-          .limit(1);
+      try {
+          // Robust Upsert: Check for existing record first
+          const { data: existing, error: fetchError } = await supabase.from('sales_channels')
+              .select('id')
+              .eq('user_id', session.user.id)
+              .eq('platform', config.platform)
+              .limit(1);
+          
+          if (fetchError) throw fetchError;
 
-      let error;
+          let error;
 
-      if (existing && existing.length > 0) {
-          // Update
-          const { error: updateError } = await supabase.from('sales_channels')
-              .update(payload)
-              .eq('id', existing[0].id);
-          error = updateError;
-      } else {
-          // Insert
-          const { error: insertError } = await supabase.from('sales_channels')
-              .insert(payload);
-          error = insertError;
-      }
+          if (existing && existing.length > 0) {
+              // Update
+              const { error: updateError } = await supabase.from('sales_channels')
+                  .update(payload)
+                  .eq('id', existing[0].id);
+              error = updateError;
+          } else {
+              // Insert
+              const { error: insertError } = await supabase.from('sales_channels')
+                  .insert(payload);
+              error = insertError;
+          }
 
-      if (error) {
-          setErrorMessage("Database Save Failed: " + error.message);
-      } else {
-          // Refresh parent to ensure sync starts
-          if (onConfigUpdate) onConfigUpdate();
+          if (error) {
+              console.error("Supabase Save Error:", error);
+              setErrorMessage("Database Save Failed: " + error.message);
+              setIsSavingShopify(false);
+              return false;
+          } else {
+              // Refresh parent to ensure sync starts
+              if (onConfigUpdate) onConfigUpdate();
+              setIsSavingShopify(false);
+              return true;
+          }
+      } catch (e: any) {
+          console.error("Save Exception:", e);
+          setErrorMessage("Save Error: " + e.message);
+          setIsSavingShopify(false);
+          return false;
       }
   };
 
@@ -305,9 +330,12 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
 
   const handleDisconnectShopify = async () => {
     if (!window.confirm("Disconnect Shopify? Orders will stop syncing.")) return;
+    
     const disconnected: SalesChannel = { ...shopifyConfig, access_token: '', is_active: false };
-    setShopifyConfig(disconnected);
-    await saveSalesChannel(disconnected);
+    const saved = await saveSalesChannel(disconnected);
+    if (saved) {
+        setShopifyConfig(disconnected);
+    }
   };
   
   const handleConnectCourier = async (courierName: string) => {
@@ -602,10 +630,11 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                 </button>
                                 <button 
                                     onClick={() => handleManualConnect(false)}
-                                    disabled={!shopifyConfig.store_url || !shopifyConfig.access_token}
+                                    disabled={!shopifyConfig.store_url || !shopifyConfig.access_token || isSavingShopify}
                                     className="flex-[2] bg-slate-900 text-white py-3 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                                 >
-                                    Save & Connect <ArrowRight size={16} />
+                                    {isSavingShopify ? <Loader2 className="animate-spin" size={16} /> : <ArrowRight size={16} />}
+                                    Save & Connect 
                                 </button>
                             </div>
                       </div>
