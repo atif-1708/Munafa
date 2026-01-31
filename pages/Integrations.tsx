@@ -45,7 +45,7 @@ interface IntegrationsProps {
 const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   // 1. Separate State for Sales Channels
   const [shopifyConfig, setShopifyConfig] = useState<SalesChannel>({
-      id: '', platform: 'Shopify', store_url: '', access_token: '', is_active: false
+      id: '', platform: 'Shopify', store_url: '', access_token: '', scope: '', is_active: false
   });
 
   // 2. Separate State for Couriers
@@ -93,6 +93,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                     platform: data.platform,
                     store_url: data.store_url,
                     access_token: data.access_token,
+                    scope: data.scope || '',
                     is_active: data.is_active
                 });
             }
@@ -167,7 +168,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
           return;
       }
       
-      // Removed strict 'shpat_' check. Only checking length to be reasonably safe.
       if (token.length < 10) {
           setErrorMessage("Invalid Token. The Access Token seems too short.");
           setTestingConnection(null);
@@ -201,10 +201,12 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
       const cleanUrl = validateShopifyUrl(shopifyConfig.store_url);
       const token = shopifyConfig.access_token.trim();
 
+      // Explicitly adding scope here to ensure DB column isn't null
       const updatedConfig: SalesChannel = {
           ...shopifyConfig,
           store_url: cleanUrl,
           access_token: token,
+          scope: 'read_orders,read_products,read_customers', 
           is_active: true,
           platform: 'Shopify'
       };
@@ -234,13 +236,12 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
           return false;
       }
 
-      // REMOVED api_key from payload to prevent "Column not found" error
       const payload = {
           user_id: session.user.id,
           platform: config.platform,
           store_url: config.store_url,
           access_token: config.access_token,
-          scope: config.scope,
+          scope: config.scope || 'read_orders', // Fallback scope
           is_active: config.is_active
       };
       
@@ -289,6 +290,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   };
 
   const saveCourierConfig = async (courierId: string, isActive: boolean) => {
+    // ... (Existing Courier Save Logic)
     setErrorMessage(null);
     const config = courierConfigs[courierId];
     setCourierConfigs(prev => ({ ...prev, [courierId]: { ...config, is_active: isActive } }));
@@ -303,7 +305,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                 is_active: isActive
             };
 
-            // Robust Upsert for Couriers too
             const { data: existing } = await supabase.from('integration_configs')
                 .select('id')
                 .eq('user_id', session.user.id)
@@ -371,31 +372,22 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     setTestingConnection(null);
   };
 
-  // --- Facebook Integration Handlers ---
+  // ... (Rest of Facebook handlers same as before)
   const handleVerifyFbToken = async () => {
-      // ... (Existing Facebook Code)
       if (!fbManualToken || fbManualToken.length < 10) {
           setErrorMessage("Please enter a valid Facebook Access Token.");
           return;
       }
-
       setIsVerifyingFb(true);
       setErrorMessage(null);
-
       try {
           const svc = new FacebookService();
           const accounts = await svc.getAdAccounts(fbManualToken);
-          
           if (accounts.length === 0) {
               setErrorMessage("Token valid, but no Ad Accounts found. Check permissions.");
           } else {
               setAvailableAdAccounts(accounts);
-              setFbConfig(prev => ({ 
-                  ...prev, 
-                  access_token: fbManualToken, 
-                  platform: 'Facebook',
-                  is_active: false // Not active until saved
-              }));
+              setFbConfig(prev => ({ ...prev, access_token: fbManualToken, platform: 'Facebook', is_active: false }));
           }
       } catch (e: any) {
           console.error(e);
@@ -406,51 +398,29 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   };
 
   const handleSaveFbConfig = async () => {
-      // ... (Existing Facebook Code)
       if (!fbConfig.ad_account_id) {
           setErrorMessage("Please select an Ad Account to track.");
           return;
       }
-      
       setIsVerifyingFb(true);
-      const newConfig: MarketingConfig = {
-          ...fbConfig,
-          is_active: true
-      };
-      
+      const newConfig: MarketingConfig = { ...fbConfig, is_active: true };
       setFbConfig(newConfig);
-      
       const { data: { session } } = await supabase.auth.getSession();
       if(session?.user) {
-         // Robust Upsert for Marketing
-         const { data: existing } = await supabase.from('marketing_configs')
-             .select('id')
-             .eq('user_id', session.user.id)
-             .eq('platform', 'Facebook')
-             .limit(1);
-        
-         const payload = {
-             user_id: session.user.id,
-             platform: 'Facebook',
-             access_token: newConfig.access_token,
-             ad_account_id: newConfig.ad_account_id,
-             is_active: true
-         };
-
+         const { data: existing } = await supabase.from('marketing_configs').select('id').eq('user_id', session.user.id).eq('platform', 'Facebook').limit(1);
+         const payload = { user_id: session.user.id, platform: 'Facebook', access_token: newConfig.access_token, ad_account_id: newConfig.ad_account_id, is_active: true };
          if (existing && existing.length > 0) {
              await supabase.from('marketing_configs').update(payload).eq('id', existing[0].id);
          } else {
              await supabase.from('marketing_configs').insert(payload);
          }
       }
-
       setIsVerifyingFb(false);
       if(onConfigUpdate) onConfigUpdate();
   };
 
   const disconnectFacebook = async () => {
       if(!window.confirm("Disconnect Facebook? Ad tracking will stop.")) return;
-      
       setFbConfig({ id: '', platform: 'Facebook', access_token: '', is_active: false, ad_account_id: '' });
       setFbManualToken('');
       setAvailableAdAccounts([]);
@@ -480,7 +450,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
            </div>
       )}
 
-      {/* 1. SALES CHANNELS - MANUAL CONFIG ONLY */}
+      {/* 1. SALES CHANNELS */}
       <section>
           <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
               <Store className="text-slate-500" size={20} /> Sales Channels
@@ -523,6 +493,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                            </div>
                            <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-500">
                                <p className="font-mono truncate">Token: ••••••••••••••••••••••{shopifyConfig.access_token.slice(-4)}</p>
+                               {shopifyConfig.scope && <p className="font-mono truncate mt-1">Scope: {shopifyConfig.scope}</p>}
                            </div>
                            <button onClick={handleDisconnectShopify} className="text-sm text-red-600 hover:text-red-700 hover:underline">
                                Disconnect Store
@@ -637,7 +608,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
           <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2 mt-8">
               <Facebook className="text-blue-600" size={20} /> Marketing Integrations
           </h3>
-          {/* ... (Kept existing Facebook logic as is) ... */}
+          {/* ... (Facebook logic unchanged) ... */}
            <div className={`
               relative overflow-hidden rounded-2xl border transition-all duration-300 max-w-2xl
               ${fbConfig.is_active ? 'bg-blue-50/50 border-blue-200 shadow-sm' : 'bg-white border-slate-200 shadow-md hover:shadow-lg'}

@@ -110,7 +110,7 @@ export class ShopifyAdapter {
 
   // Robust Fetcher
   private async fetchWithProxy(targetUrl: string, options: RequestInit): Promise<any> {
-      // 1. Try Local API (Vercel/Next)
+      // 1. Try Local API (Vercel/Next/Custom Server)
       try {
           const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
           const res = await fetch(proxyUrl, options);
@@ -123,18 +123,20 @@ export class ShopifyAdapter {
       } catch (e) {}
 
       // 2. Fallback: Public Proxies
-      // Order changed: corsproxy.io is best, but if it fails, try others.
-      // Removed CodeTabs as it often strips headers causing 401s.
+      // IMPORTANT: corsproxy.io works but can be flaky. Added allorigins as fallback for GET requests.
       const proxies = [
         { base: 'https://corsproxy.io/?', encode: true },
         { base: 'https://thingproxy.freeboard.io/fetch/', encode: false },
-        // Add a new one or stick to these two reliable ones.
+        { base: 'https://api.allorigins.win/raw?url=', encode: true }, // Good for GET, strips headers sometimes
       ];
 
       let lastError: Error | null = null;
 
       for (const proxy of proxies) {
           try {
+              // Note: allorigins only supports GET effectively for this use case.
+              if (proxy.base.includes('allorigins') && options.method !== 'GET') continue;
+
               const fetchUrl = proxy.encode ? `${proxy.base}${encodeURIComponent(targetUrl)}` : `${proxy.base}${targetUrl}`;
 
               const res = await fetch(fetchUrl, {
