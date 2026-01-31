@@ -1,10 +1,16 @@
+
 import React, { useState, useEffect } from 'react';
 import { COURIER_RATES, PACKAGING_COST_AVG } from '../constants';
 import { CourierName } from '../types';
-import { Save, AlertCircle, Database, Box, FileText, Percent, Megaphone } from 'lucide-react';
+import { Save, AlertCircle, Database, Box, FileText, Percent, Megaphone, Store } from 'lucide-react';
 import { supabase } from '../services/supabase';
 
-const Settings: React.FC = () => {
+interface SettingsProps {
+    onUpdateStoreName?: (name: string) => void;
+}
+
+const Settings: React.FC<SettingsProps> = ({ onUpdateStoreName }) => {
+  const [storeName, setStoreName] = useState('');
   const [packagingCost, setPackagingCost] = useState(PACKAGING_COST_AVG);
   const [overheadCost, setOverheadCost] = useState(0);
   const [taxRate, setTaxRate] = useState(0);
@@ -19,6 +25,11 @@ const Settings: React.FC = () => {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
 
+        // Load Store Profile
+        const { data: profile } = await supabase.from('profiles').select('store_name').eq('id', user.id).single();
+        if (profile) setStoreName(profile.store_name || '');
+
+        // Load App Settings
         const { data } = await supabase
             .from('app_settings')
             .select('*')
@@ -50,6 +61,13 @@ const Settings: React.FC = () => {
     setIsSaving(true);
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
+        // 1. Update Profile (Store Name)
+        if (storeName) {
+            await supabase.from('profiles').update({ store_name: storeName }).eq('id', user.id);
+            if (onUpdateStoreName) onUpdateStoreName(storeName);
+        }
+
+        // 2. Update Settings
         const { error } = await supabase
             .from('app_settings')
             .upsert({
@@ -99,6 +117,24 @@ const Settings: React.FC = () => {
                 Your cost configurations are securely synced to Supabase. Updating these values will recalculate profitability for all historical orders.
             </p>
         </div>
+      </div>
+
+      {/* Brand Settings */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+          <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+               <Store size={20} className="text-slate-500" /> Branding
+          </h3>
+          <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Store Name</label>
+                <input 
+                    type="text" 
+                    value={storeName}
+                    onChange={(e) => setStoreName(e.target.value)}
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-brand-500 outline-none" 
+                    placeholder="e.g. My Awesome Shop"
+                />
+                <p className="text-xs text-slate-400 mt-1">Displayed on reports and sidebar.</p>
+          </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

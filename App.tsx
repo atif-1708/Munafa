@@ -481,7 +481,7 @@ const App: React.FC = () => {
                     />
                 )}
                 {currentPage === 'integrations' && <Integrations onConfigUpdate={() => setRefreshTrigger(p => p + 1)} />}
-                {currentPage === 'settings' && <Settings />}
+                {currentPage === 'settings' && <Settings onUpdateStoreName={setStoreName} />}
               </>
           )}
           {!isConfigured && currentPage !== 'integrations' && (

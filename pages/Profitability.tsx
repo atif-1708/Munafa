@@ -40,14 +40,17 @@ const ProfitabilityRow: React.FC<ProfitabilityRowProps> = ({
     const isExpanded = isGroup && expandedGroups.has(item.id);
 
     const totalDispatched = item.units_sold + item.units_returned + item.units_in_transit;
+    
+    // Percentage Helpers
     const deliveredRate = totalDispatched > 0 ? (item.units_sold / totalDispatched) * 100 : 0;
+    const returnRate = totalDispatched > 0 ? (item.units_returned / totalDispatched) * 100 : 0;
+    const transitRate = totalDispatched > 0 ? (item.units_in_transit / totalDispatched) * 100 : 0;
     
     // Background logic
     const bgClass = isChild ? 'bg-slate-50' : 'bg-white';
     const hoverClass = isChild ? 'hover:bg-slate-100' : 'hover:bg-gray-50';
 
-    // Calculate CPR (Cost Per Result) based on Facebook Purchases
-    const fbCpr = item.marketing_purchases > 0 ? item.ad_spend_allocation / item.marketing_purchases : 0;
+    const pCent = (val: number) => totalDispatched > 0 ? `(${val.toFixed(0)}%)` : '';
 
     return (
         <>
@@ -95,48 +98,45 @@ const ProfitabilityRow: React.FC<ProfitabilityRowProps> = ({
                     </div>
                 </td>
                 
-                {/* 2. Delivered */}
-                <td className="px-1 py-3 text-center tabular-nums">
-                    <div className="font-medium text-slate-700">{item.units_sold}</div>
-                    <div className={`text-[10px] ${deliveredRate < 70 ? 'text-orange-500' : 'text-green-600'}`}>
-                        {deliveredRate.toFixed(0)}%
-                    </div>
-                </td>
-
-                {/* 3. Returned */}
-                <td className="px-1 py-3 text-center tabular-nums">
-                    <div className={`${item.units_returned > 0 ? 'text-slate-700 font-medium' : 'text-slate-300'}`}>
-                         {item.units_returned}
-                    </div>
-                </td>
-
-                {/* 4. Revenue */}
-                <td className="px-1 py-3 text-right font-medium text-slate-700 tabular-nums">
-                    {formatCurrency(item.gross_revenue)}
-                </td>
-
-                {/* 5. Ads */}
-                <td className="px-1 py-3 text-right text-purple-600 tabular-nums">
-                    {item.ad_spend_allocation > 0 ? formatCurrency(item.ad_spend_allocation) : '-'}
-                </td>
-
-                {/* 6. Ad CPR (NEW - FB CPR Only, no count) */}
-                <td className="px-1 py-3 text-right tabular-nums hidden sm:table-cell">
-                    {fbCpr > 0 ? (
-                         <span className="font-medium text-purple-700 text-xs">{formatCurrency(fbCpr)}</span>
-                    ) : (
-                         <span className="text-slate-300">-</span>
-                    )}
-                </td>
-
-                {/* 7. Cash Stuck */}
-                <td className="px-1 py-3 text-right tabular-nums hidden md:table-cell">
-                    <span className={`${item.cash_in_stock > 0 ? 'text-indigo-600 font-medium' : 'text-slate-300'}`}>
-                        {item.cash_in_stock > 0 ? formatCurrency(item.cash_in_stock) : '-'}
+                {/* 2. Dispatched */}
+                 <td className="px-1 py-3 text-center tabular-nums bg-purple-50/30">
+                    <span className={`font-medium ${totalDispatched > 0 ? 'text-purple-600' : 'text-slate-300'}`}>
+                        {totalDispatched}
                     </span>
                 </td>
 
-                {/* 8. Net Profit */}
+                {/* 3. Delivered */}
+                <td className="px-1 py-3 text-center tabular-nums bg-green-50/30">
+                     <div className="flex flex-col items-center">
+                        <span className={`font-bold ${item.units_sold > 0 ? 'text-green-600' : 'text-slate-300'}`}>{item.units_sold}</span>
+                        {item.units_sold > 0 && <span className="text-[10px] text-green-600/70">{deliveredRate.toFixed(0)}%</span>}
+                     </div>
+                </td>
+
+                {/* 4. Returned */}
+                <td className="px-1 py-3 text-center tabular-nums bg-red-50/30">
+                    <div className="flex flex-col items-center">
+                        <span className={`font-bold ${item.units_returned > 0 ? 'text-red-600' : 'text-slate-300'}`}>{item.units_returned}</span>
+                        {item.units_returned > 0 && <span className="text-[10px] text-red-600/70">{returnRate.toFixed(0)}%</span>}
+                     </div>
+                </td>
+
+                 {/* 5. In Transit */}
+                 <td className="px-1 py-3 text-center tabular-nums bg-blue-50/30">
+                    <div className="flex flex-col items-center">
+                        <span className={`font-medium ${item.units_in_transit > 0 ? 'text-blue-600' : 'text-slate-300'}`}>{item.units_in_transit}</span>
+                        {item.units_in_transit > 0 && <span className="text-[10px] text-blue-600/70">{transitRate.toFixed(0)}%</span>}
+                     </div>
+                </td>
+
+                {/* 6. Gross Profit */}
+                 <td className="px-1 py-3 text-right tabular-nums hidden md:table-cell">
+                    <span className={`font-medium ${item.gross_profit > 0 ? 'text-indigo-600' : 'text-slate-400'}`}>
+                        {formatCurrency(item.gross_profit)}
+                    </span>
+                </td>
+
+                {/* 7. Net Profit */}
                 <td className="px-2 py-3 text-right">
                     <div className={`font-bold ${isProfitable ? 'text-green-700' : 'text-red-600'} tabular-nums`}>
                         {formatCurrency(item.net_profit)}
@@ -148,7 +148,7 @@ const ProfitabilityRow: React.FC<ProfitabilityRowProps> = ({
                     )}
                 </td>
 
-                 {/* 9. Actions */}
+                 {/* 8. Actions */}
                  <td className="px-2 py-3 text-right">
                      <button 
                         onClick={(e) => { e.stopPropagation(); onViewDetails(item); }}
@@ -215,11 +215,16 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
   [filteredData, products, adsTaxRate]);
 
   // 3. Group Logic (Aggregating Variants into Groups)
+  //    AND FILTERING: Only show items with Dispatch > 0
   const groupedStats = useMemo(() => {
       const groups = new Map<string, GroupedProductPerformance>();
       const singles: GroupedProductPerformance[] = [];
 
       rawStats.forEach(stat => {
+          // Filter Condition: Must have been dispatched (Sold, Return, or InTransit)
+          const totalDispatched = stat.units_sold + stat.units_returned + stat.units_in_transit;
+          if (totalDispatched === 0) return;
+
           if (stat.group_id && stat.group_name) {
               if (!groups.has(stat.group_id)) {
                   // Initialize Group Parent
@@ -287,83 +292,74 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
       setExpandedGroups(newSet);
   };
 
-  const handleExportPDF = () => {
+  const handleExportPDF = (dataToExport = groupedStats, reportTitle = 'Product Profitability Report') => {
     setIsExporting(true);
     try {
         const doc = new jsPDF();
         
-        // Header
-        doc.setFontSize(18);
-        doc.text(`${storeName} - Product Profitability Report`, 14, 15);
+        // Brand Header (Green) - Same as Reconciliation
+        doc.setTextColor(20, 83, 45); 
+        doc.setFontSize(22);
+        doc.text("MunafaBakhsh Karobaar", 14, 20);
+        
+        doc.setTextColor(100); 
+        doc.setFontSize(10);
+        doc.text("eCommerce Intelligence Platform", 14, 25);
+
+        doc.setDrawColor(200);
+        doc.line(14, 30, 196, 30);
+
+        // Report Info
+        doc.setTextColor(0);
+        doc.setFontSize(14);
+        doc.text(`${storeName} - ${reportTitle}`, 14, 40);
         
         doc.setFontSize(10);
-        doc.text(`Period: ${dateRange.start} to ${dateRange.end}`, 14, 22);
+        doc.setTextColor(100);
+        doc.text(`Period: ${dateRange.start} to ${dateRange.end}`, 14, 46);
         
-        const tableColumn = ["Product / Group", "Units Sold", "Revenue", "Ad Spend", "COGS", "Shipping", "Net Profit"];
+        const tableColumn = ["Product", "Dispatched", "Delivered", "Returned", "In Transit", "Gross Profit", "Net Profit"];
         
         const tableRows: any[] = [];
-        let totalRev = 0;
-        let totalProfit = 0;
-        let totalAds = 0;
         
-        // Flatten data for report (Groups are shown as single lines if not expanded, but let's show all items for report clarity)
-        // Better Strategy for Report: Just show individual items or flatten groups? 
-        // Let's flatten everything for clarity in PDF.
-        const flatData = rawStats.sort((a, b) => b.net_profit - a.net_profit);
+        // Flatten data if it's the main list, OR if it's a single item passed in array
+        // We will just export the top-level items (Groups/Singles) for clarity, or the single selected product.
+        
+        dataToExport.forEach(item => {
+             const totalDispatched = item.units_sold + item.units_returned + item.units_in_transit;
+             const p = (val: number) => totalDispatched > 0 ? `(${((val/totalDispatched)*100).toFixed(0)}%)` : '';
 
-        flatData.forEach(item => {
             const productData = [
-                item.title.substring(0, 35) + (item.title.length > 35 ? '...' : ''),
-                item.units_sold,
-                formatCurrency(item.gross_revenue),
-                formatCurrency(item.ad_spend_allocation),
-                formatCurrency(item.cogs_total),
-                formatCurrency(item.shipping_cost_allocation),
+                item.title.substring(0, 30),
+                totalDispatched,
+                `${item.units_sold} ${p(item.units_sold)}`,
+                `${item.units_returned} ${p(item.units_returned)}`,
+                `${item.units_in_transit} ${p(item.units_in_transit)}`,
+                formatCurrency(item.gross_profit),
                 formatCurrency(item.net_profit)
             ];
             tableRows.push(productData);
-            
-            totalRev += item.gross_revenue;
-            totalProfit += item.net_profit;
-            totalAds += item.ad_spend_allocation;
         });
-
-        // Add Summary Row
-        tableRows.push([
-            'GRAND TOTAL',
-            '',
-            formatCurrency(totalRev),
-            formatCurrency(totalAds),
-            '',
-            '',
-            formatCurrency(totalProfit)
-        ]);
 
         autoTable(doc, {
             head: [tableColumn],
             body: tableRows,
-            startY: 28,
-            theme: 'striped',
-            headStyles: { fillColor: [30, 41, 59] }, // Slate-800
+            startY: 55,
+            theme: 'grid',
+            headStyles: { fillColor: [22, 163, 74] }, // Brand Green
             styles: { fontSize: 8, cellPadding: 3 },
             columnStyles: {
                 0: { cellWidth: 50 }, // Product Name
-                2: { halign: 'right' },
-                3: { halign: 'right' },
-                4: { halign: 'right' },
+                1: { halign: 'center', cellWidth: 20 },
+                2: { halign: 'center' },
+                3: { halign: 'center', textColor: [220, 38, 38] }, // Red RTO
+                4: { halign: 'center' },
                 5: { halign: 'right' },
                 6: { halign: 'right', fontStyle: 'bold' }
-            },
-            didParseCell: function(data) {
-                // Highlight last row (Total)
-                if (data.row.index === tableRows.length - 1) {
-                    data.cell.styles.fontStyle = 'bold';
-                    data.cell.styles.fillColor = [240, 253, 244]; // Green-50
-                }
             }
         });
 
-        doc.save(`Profitability_Report_${dateRange.start}.pdf`);
+        doc.save(`${reportTitle.replace(/\s/g, '_')}.pdf`);
     } catch (e) {
         console.error("PDF Error", e);
         alert("Could not generate report");
@@ -376,19 +372,10 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
   const getDetailStats = (p: ProductPerformance) => {
       const totalUnits = p.units_sold + p.units_returned + p.units_in_transit;
       
-      // Calculate Breakeven CPR: (Margin before Ads) / Orders
-      // Margin Before Ads = Revenue - COGS - Shipping - Overhead - Tax
       const marginBeforeAds = p.gross_revenue - p.cogs_total - p.shipping_cost_allocation - p.overhead_allocation - p.tax_allocation;
-      
-      // We divide by 'Total Units' or 'Purchases' to see how much we *could* have spent per order to break even
-      // Using 'marketing_purchases' is better if available (actual Pixel fires), otherwise fall back to units_sold (delivered) or totalUnits (dispatched)
-      // Standard Breakeven CPA = (Avg Order Value - Avg COGS - Avg Ship)
-      // Here: MarginBeforeAds / (marketing_purchases || units_sold || 1)
       const denominator = p.marketing_purchases > 0 ? p.marketing_purchases : (p.units_sold > 0 ? p.units_sold : 1);
       const breakevenCpr = marginBeforeAds / denominator;
-      
       const actualCpr = p.marketing_purchases > 0 ? p.ad_spend_allocation / p.marketing_purchases : 0;
-      
       const pCent = (part: number, total: number) => total > 0 ? `${Math.round((part/total)*100)}%` : '0%';
 
       return { totalUnits, breakevenCpr, actualCpr, pCent };
@@ -420,7 +407,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
             </div>
 
             <button 
-                onClick={handleExportPDF}
+                onClick={() => handleExportPDF()}
                 disabled={isExporting}
                 className="flex items-center gap-2 bg-white text-slate-700 border border-slate-300 px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors shadow-sm"
             >
@@ -435,12 +422,11 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                 <thead className="bg-slate-50 border-b border-slate-200">
                     <tr>
                         <th className="pl-3 pr-2 py-3 font-semibold text-slate-700 w-[25%]">Product Name</th>
-                        <th className="px-1 py-3 font-semibold text-slate-700 text-center">Sold</th>
-                        <th className="px-1 py-3 font-semibold text-slate-700 text-center">Ret</th>
-                        <th className="px-1 py-3 font-semibold text-slate-700 text-right">Revenue</th>
-                        <th className="px-1 py-3 font-semibold text-slate-700 text-right">Ad Spend</th>
-                        <th className="px-1 py-3 font-semibold text-slate-700 text-right hidden sm:table-cell">FB CPA</th>
-                        <th className="px-1 py-3 font-semibold text-slate-700 text-right hidden md:table-cell">Stock Stuck</th>
+                        <th className="px-1 py-3 font-semibold text-slate-700 text-center text-purple-600 bg-purple-50/50">Dispatched</th>
+                        <th className="px-1 py-3 font-semibold text-slate-700 text-center text-green-600 bg-green-50/50">Delivered</th>
+                        <th className="px-1 py-3 font-semibold text-slate-700 text-center text-red-600 bg-red-50/50">Returned</th>
+                        <th className="px-1 py-3 font-semibold text-slate-700 text-center text-blue-600 bg-blue-50/50">In Transit</th>
+                        <th className="px-1 py-3 font-semibold text-slate-700 text-right">Gross Profit</th>
                         <th className="px-2 py-3 font-semibold text-slate-700 text-right">Net Profit</th>
                         <th className="px-2 py-3 w-10"></th>
                     </tr>
@@ -457,7 +443,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                     )) : (
                         <tr>
                             <td colSpan={9} className="px-6 py-12 text-center text-slate-400">
-                                No sales data found for this period.
+                                No active products found (with dispatched orders) in this date range.
                             </td>
                         </tr>
                     )}
@@ -465,7 +451,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
             </table>
         </div>
 
-        {/* --- Details Modal (Re-designed) --- */}
+        {/* --- Details Modal --- */}
         {selectedProduct && (() => {
             const { totalUnits, breakevenCpr, actualCpr, pCent } = getDetailStats(selectedProduct);
             return (
@@ -477,9 +463,17 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                 <h3 className="text-xl font-bold text-slate-900 leading-tight mb-1">{selectedProduct.title}</h3>
                                 <p className="text-sm text-slate-500 font-mono">{selectedProduct.sku !== 'GROUP' ? selectedProduct.sku : 'Product Group'}</p>
                             </div>
-                            <button onClick={() => setSelectedProduct(null)} className="text-slate-400 hover:text-slate-600">
-                                <X size={24} />
-                            </button>
+                            <div className="flex items-center gap-3">
+                                <button 
+                                    onClick={() => handleExportPDF([selectedProduct as GroupedProductPerformance], 'Product Detail Report')}
+                                    className="flex items-center gap-1.5 bg-white text-slate-700 border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-50"
+                                >
+                                    <Download size={14} /> Download PDF
+                                </button>
+                                <button onClick={() => setSelectedProduct(null)} className="text-slate-400 hover:text-slate-600">
+                                    <X size={24} />
+                                </button>
+                            </div>
                         </div>
                         
                         <div className="p-6 overflow-y-auto space-y-6">

@@ -152,7 +152,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
     // Report Info
     doc.setTextColor(0);
     doc.setFontSize(14);
-    doc.text(`${storeName} - Reconciliation Report`, 14, 40);
+    doc.text(`${storeName} - Product Performance Report`, 14, 40);
     
     doc.setFontSize(10);
     doc.setTextColor(100);
