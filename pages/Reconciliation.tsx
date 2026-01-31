@@ -1,7 +1,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { Order, ShopifyOrder, Product, OrderStatus } from '../types';
-import { Search, Download, Package, AlertCircle, CheckCircle2, Truck, XCircle, Clock, ArrowRight } from 'lucide-react';
+import { Search, Download, Package, AlertCircle, CheckCircle2, Truck, XCircle, Clock, ArrowRight, Calendar } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -27,6 +27,17 @@ interface ProductStat {
 
 const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierOrders, storeName = 'My Store' }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // Default to Last 60 Days
+  const [dateRange, setDateRange] = useState(() => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - 60);
+    return {
+      start: start.toISOString().split('T')[0],
+      end: end.toISOString().split('T')[0]
+    };
+  });
 
   // 1. Build Product Statistics
   const productStats = useMemo(() => {
@@ -40,7 +51,16 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
         courierMap.set(key, co);
     });
 
+    const start = new Date(dateRange.start);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(dateRange.end);
+    end.setHours(23, 59, 59, 999);
+
     shopifyOrders.forEach(order => {
+        // Date Filter
+        const orderDate = new Date(order.created_at);
+        if (orderDate < start || orderDate > end) return;
+
         // Normalize key
         const orderKey = order.name.replace('#', '').trim();
         const courierOrder = courierMap.get(orderKey);
@@ -63,7 +83,9 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
             if (courierOrder.status === OrderStatus.RETURNED || courierOrder.status === OrderStatus.RTO_INITIATED) isRto = true;
         }
 
-        order.line_items.forEach(item => {
+        // Logic: ONLY count the first item in the order as requested
+        if (order.line_items.length > 0) {
+            const item = order.line_items[0];
             const key = item.sku || item.title; // Grouping Key
 
             if (!stats.has(key)) {
@@ -82,6 +104,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
             }
 
             const stat = stats.get(key)!;
+            // Count quantity of this item only
             const qty = item.quantity;
 
             stat.total_ordered += qty;
@@ -97,13 +120,13 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                 if (isDelivered) stat.delivered += qty;
                 if (isRto) stat.rto += qty;
             }
-        });
+        }
     });
 
     return Array.from(stats.values()).sort((a,b) => b.total_ordered - a.total_ordered);
-  }, [shopifyOrders, courierOrders]);
+  }, [shopifyOrders, courierOrders, dateRange]);
 
-  // 2. Filter
+  // 2. Filter by Search
   const filteredStats = useMemo(() => {
       return productStats.filter(p => 
           p.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -135,25 +158,49 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
     doc.save('Shopify_Product_Stats.pdf');
   };
 
+  const getPercentage = (val: number, total: number) => {
+      if (total === 0) return '';
+      return `${Math.round((val / total) * 100)}%`;
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
            <h2 className="text-2xl font-bold text-slate-900">Shopify Product Stats</h2>
-           <p className="text-slate-500 text-sm">Inventory flow analysis: From Order to Delivery.</p>
+           <p className="text-slate-500 text-sm">Inventory flow analysis (Main Item Only).</p>
         </div>
-        <div className="flex gap-2">
+        
+        <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+             {/* Date Filter */}
+             <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm">
+                <Calendar size={16} className="text-slate-500" />
+                <input 
+                  type="date" 
+                  value={dateRange.start}
+                  onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+                  className="text-sm text-slate-700 bg-transparent border-none focus:ring-0 outline-none w-28 font-medium cursor-pointer"
+                />
+                <span className="text-slate-400">to</span>
+                <input 
+                  type="date" 
+                  value={dateRange.end}
+                  onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+                  className="text-sm text-slate-700 bg-transparent border-none focus:ring-0 outline-none w-28 font-medium cursor-pointer"
+                />
+            </div>
+
             <div className="relative">
                 <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
                 <input 
                     type="text" 
                     placeholder="Search Product..." 
-                    className="pl-10 pr-4 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-brand-500 w-64"
+                    className="pl-10 pr-4 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-brand-500 w-full sm:w-64"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                 />
             </div>
-            <button onClick={handleExport} className="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2">
+            <button onClick={handleExport} className="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 whitespace-nowrap">
                 <Download size={16} /> Export
             </button>
         </div>
@@ -163,8 +210,8 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
         <table className="w-full text-left text-sm">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 uppercase text-xs font-bold tracking-wider">
                 <tr>
-                    <th className="px-6 py-4 w-[25%]">Product Details</th>
-                    <th className="px-4 py-4 text-center text-slate-500">Total</th>
+                    <th className="px-6 py-4 w-[30%]">Product (First Item)</th>
+                    <th className="px-4 py-4 text-center text-slate-500">Total Orders</th>
                     <th className="px-4 py-4 text-center text-orange-600 bg-orange-50/50">Pending</th>
                     <th className="px-4 py-4 text-center text-blue-600 bg-blue-50/50">Fulfilled</th>
                     <th className="px-4 py-4 text-center text-red-400">Cancelled</th>
@@ -176,7 +223,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
             </thead>
             <tbody className="divide-y divide-slate-100">
                 {filteredStats.length === 0 ? (
-                    <tr><td colSpan={9} className="px-6 py-12 text-center text-slate-400">No products found.</td></tr>
+                    <tr><td colSpan={9} className="px-6 py-12 text-center text-slate-400">No products found in this date range.</td></tr>
                 ) : filteredStats.map((item, idx) => (
                     <tr key={idx} className="hover:bg-slate-50 transition-colors">
                         <td className="px-6 py-4">
@@ -196,19 +243,28 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                             {item.total_ordered}
                         </td>
                         <td className="px-4 py-4 text-center bg-orange-50/30">
-                            <span className={`inline-block font-medium ${item.pending_fulfillment > 0 ? 'text-orange-600' : 'text-slate-300'}`}>
-                                {item.pending_fulfillment}
-                            </span>
+                            <div className="flex flex-col items-center">
+                                <span className={`font-medium ${item.pending_fulfillment > 0 ? 'text-orange-600' : 'text-slate-300'}`}>
+                                    {item.pending_fulfillment}
+                                </span>
+                                {item.pending_fulfillment > 0 && <span className="text-[10px] text-orange-600/70">{getPercentage(item.pending_fulfillment, item.total_ordered)}</span>}
+                            </div>
                         </td>
                         <td className="px-4 py-4 text-center bg-blue-50/30">
-                             <span className={`inline-block font-medium ${item.fulfilled > 0 ? 'text-blue-600' : 'text-slate-300'}`}>
-                                {item.fulfilled}
-                            </span>
+                             <div className="flex flex-col items-center">
+                                 <span className={`font-medium ${item.fulfilled > 0 ? 'text-blue-600' : 'text-slate-300'}`}>
+                                    {item.fulfilled}
+                                </span>
+                                {item.fulfilled > 0 && <span className="text-[10px] text-blue-600/70">{getPercentage(item.fulfilled, item.total_ordered)}</span>}
+                             </div>
                         </td>
                         <td className="px-4 py-4 text-center">
-                            <span className={`inline-block ${item.cancelled > 0 ? 'text-red-400 font-medium' : 'text-slate-200'}`}>
-                                {item.cancelled}
-                            </span>
+                            <div className="flex flex-col items-center">
+                                <span className={`font-medium ${item.cancelled > 0 ? 'text-red-400' : 'text-slate-200'}`}>
+                                    {item.cancelled}
+                                </span>
+                                {item.cancelled > 0 && <span className="text-[10px] text-red-400/70">{getPercentage(item.cancelled, item.total_ordered)}</span>}
+                            </div>
                         </td>
 
                         {/* Spacer/Arrow */}
@@ -218,9 +274,12 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
 
                         {/* Courier Stats */}
                          <td className="px-4 py-4 text-center bg-purple-50/30">
-                            <span className={`inline-block font-medium ${item.dispatched > 0 ? 'text-purple-600' : 'text-slate-300'}`}>
-                                {item.dispatched}
-                            </span>
+                            <div className="flex flex-col items-center">
+                                <span className={`font-medium ${item.dispatched > 0 ? 'text-purple-600' : 'text-slate-300'}`}>
+                                    {item.dispatched}
+                                </span>
+                                {item.dispatched > 0 && <span className="text-[10px] text-purple-600/70">{getPercentage(item.dispatched, item.total_ordered)}</span>}
+                            </div>
                         </td>
                          <td className="px-4 py-4 text-center bg-green-50/30">
                             <div className="flex flex-col items-center">
