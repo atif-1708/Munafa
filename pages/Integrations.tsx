@@ -77,9 +77,16 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
         const { data: { session } } = await supabase.auth.getSession();
         
         if (session?.user) {
-            // A. Fetch Sales Channels
-            const { data: salesData } = await supabase.from('sales_channels').select('*').eq('user_id', session.user.id).eq('platform', 'Shopify').single();
-            if (salesData) setShopifyConfig(salesData);
+            // A. Fetch Sales Channels - Use .limit(1) to handle potential duplicates gracefully
+            const { data: salesData } = await supabase.from('sales_channels')
+                .select('*')
+                .eq('user_id', session.user.id)
+                .eq('platform', 'Shopify')
+                .limit(1);
+            
+            if (salesData && salesData.length > 0) {
+                setShopifyConfig(salesData[0]);
+            }
 
             // B. Fetch Couriers
             const { data: courierData } = await supabase.from('integration_configs').select('*').eq('user_id', session.user.id);
@@ -103,13 +110,19 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
             }
 
             // C. Fetch Marketing
-            const { data: marketingData } = await supabase.from('marketing_configs').select('*').eq('user_id', session.user.id).eq('platform', 'Facebook').single();
-            if (marketingData) {
-                setFbConfig(marketingData);
+            const { data: marketingData } = await supabase.from('marketing_configs')
+                .select('*')
+                .eq('user_id', session.user.id)
+                .eq('platform', 'Facebook')
+                .limit(1);
+
+            if (marketingData && marketingData.length > 0) {
+                const mData = marketingData[0];
+                setFbConfig(mData);
                 // If active, fetch ad accounts for dropdown
-                if(marketingData.access_token) {
+                if(mData.access_token) {
                     const svc = new FacebookService();
-                    svc.getAdAccounts(marketingData.access_token).then(setAvailableAdAccounts).catch(console.error);
+                    svc.getAdAccounts(mData.access_token).then(setAvailableAdAccounts).catch(console.error);
                 }
             }
         } 
@@ -214,10 +227,32 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
           is_active: config.is_active
       };
       
-      const { error } = await supabase.from('sales_channels').upsert(payload, { onConflict: 'user_id, platform' });
+      // Robust Upsert: Check for existing record first to avoid Unique Violation errors if constraint is missing
+      const { data: existing } = await supabase.from('sales_channels')
+          .select('id')
+          .eq('user_id', session.user.id)
+          .eq('platform', config.platform)
+          .limit(1);
+
+      let error;
+
+      if (existing && existing.length > 0) {
+          // Update
+          const { error: updateError } = await supabase.from('sales_channels')
+              .update(payload)
+              .eq('id', existing[0].id);
+          error = updateError;
+      } else {
+          // Insert
+          const { error: insertError } = await supabase.from('sales_channels')
+              .insert(payload);
+          error = insertError;
+      }
+
       if (error) {
           setErrorMessage("Database Save Failed: " + error.message);
       } else {
+          // Refresh parent to ensure sync starts
           if (onConfigUpdate) onConfigUpdate();
       }
   };
@@ -236,7 +271,23 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                 api_token: config.api_token,
                 is_active: isActive
             };
-            const { error } = await supabase.from('integration_configs').upsert(payload, { onConflict: 'user_id, provider_id' }); 
+
+            // Robust Upsert for Couriers too
+            const { data: existing } = await supabase.from('integration_configs')
+                .select('id')
+                .eq('user_id', session.user.id)
+                .eq('provider_id', courierId)
+                .limit(1);
+            
+            let error;
+            if (existing && existing.length > 0) {
+                const { error: uErr } = await supabase.from('integration_configs').update(payload).eq('id', existing[0].id);
+                error = uErr;
+            } else {
+                const { error: iErr } = await supabase.from('integration_configs').insert(payload);
+                error = iErr;
+            }
+
             if (error) {
                 setErrorMessage("Failed to save to database. " + error.message);
                 return false;
@@ -245,6 +296,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
         }
         return false;
     } catch (e: any) {
+        setErrorMessage("Save Error: " + e.message);
         return false;
     } finally {
         if (onConfigUpdate) onConfigUpdate();
@@ -336,13 +388,26 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
       
       const { data: { session } } = await supabase.auth.getSession();
       if(session?.user) {
-         await supabase.from('marketing_configs').upsert({
+         // Robust Upsert for Marketing
+         const { data: existing } = await supabase.from('marketing_configs')
+             .select('id')
+             .eq('user_id', session.user.id)
+             .eq('platform', 'Facebook')
+             .limit(1);
+        
+         const payload = {
              user_id: session.user.id,
              platform: 'Facebook',
              access_token: newConfig.access_token,
              ad_account_id: newConfig.ad_account_id,
              is_active: true
-         }, { onConflict: 'user_id, platform' });
+         };
+
+         if (existing && existing.length > 0) {
+             await supabase.from('marketing_configs').update(payload).eq('id', existing[0].id);
+         } else {
+             await supabase.from('marketing_configs').insert(payload);
+         }
       }
 
       setIsVerifyingFb(false);
@@ -466,7 +531,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                             </li>
                                             <li>Click <strong>Save</strong> (top right), then go to the <strong>API credentials</strong> tab.</li>
                                             <li>Click <strong>Install app</strong>.</li>
-                                            <li>Under "Admin API access token", click <strong>Reveal token once</strong>. Copy this token (starts with <code>shpat_</code>).</li>
+                                            <li>Copy the <strong>API Key</strong> (Client ID) and <strong>Admin API access token</strong> (starts with <code>shpat_</code>).</li>
                                         </ol>
                                     </div>
                                 )}
