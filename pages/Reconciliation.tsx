@@ -1,3 +1,4 @@
+
 import React, { useMemo, useState } from 'react';
 import { Order, ShopifyOrder, Product, OrderStatus } from '../types';
 import { Search, Download, Package, AlertCircle, CheckCircle2, Truck, XCircle, Clock, ArrowRight, Calendar } from 'lucide-react';
@@ -135,26 +136,64 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
 
   const handleExport = () => {
     const doc = new jsPDF();
-    doc.text(`${storeName} - Product Performance`, 14, 15);
     
-    const rows = filteredStats.map(r => [
-        r.title,
-        r.sku,
-        r.total_ordered,
-        r.pending_fulfillment,
-        r.fulfilled,
-        r.dispatched,
-        r.delivered,
-        r.rto
-    ]);
+    // Header
+    doc.setTextColor(20, 83, 45); // Brand Green color (approximate)
+    doc.setFontSize(22);
+    doc.text("MunafaBakhsh Karobaar", 14, 20);
+    
+    doc.setTextColor(100); // Grey
+    doc.setFontSize(10);
+    doc.text("eCommerce Intelligence Platform", 14, 25);
+
+    doc.setDrawColor(200);
+    doc.line(14, 30, 196, 30);
+
+    // Report Info
+    doc.setTextColor(0);
+    doc.setFontSize(14);
+    doc.text(`${storeName} - Reconciliation Report`, 14, 40);
+    
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(`Period: ${dateRange.start} to ${dateRange.end}`, 14, 46);
+    
+    const rows = filteredStats.map(r => {
+        const total = r.total_ordered;
+        const disp = r.dispatched;
+        
+        // Helper for %
+        const p = (val: number, base: number) => base > 0 ? `(${Math.round((val/base)*100)}%)` : '';
+
+        return [
+            r.title,
+            r.total_ordered,
+            `${r.pending_fulfillment} ${p(r.pending_fulfillment, total)}`,
+            `${r.fulfilled} ${p(r.fulfilled, total)}`,
+            `${r.dispatched} ${p(r.dispatched, total)}`,
+            `${r.delivered} ${p(r.delivered, disp)}`, // Rel to dispatched
+            `${r.rto} ${p(r.rto, disp)}` // Rel to dispatched
+        ];
+    });
 
     autoTable(doc, {
-        head: [['Product', 'SKU', 'Total', 'Pending', 'Fulfilled', 'Dispatched', 'Delivered', 'RTO']],
+        head: [['Product', 'Total Orders', 'Pending', 'Fulfilled', 'Dispatched', 'Delivered', 'RTO']],
         body: rows,
-        startY: 25,
-        styles: { fontSize: 8 }
+        startY: 55,
+        theme: 'grid',
+        headStyles: { fillColor: [22, 163, 74] }, // Brand Green
+        styles: { fontSize: 8, cellPadding: 3 },
+        columnStyles: {
+            0: { cellWidth: 60 }, // Product Name
+            1: { halign: 'center' },
+            2: { halign: 'center' },
+            3: { halign: 'center' },
+            4: { halign: 'center' },
+            5: { halign: 'center' },
+            6: { halign: 'center', textColor: [220, 38, 38] } // Red for RTO
+        }
     });
-    doc.save('Shopify_Product_Stats.pdf');
+    doc.save('Reconciliation_Report.pdf');
   };
 
   const getPercentage = (val: number, total: number) => {
@@ -200,7 +239,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                 />
             </div>
             <button onClick={handleExport} className="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 whitespace-nowrap">
-                <Download size={16} /> Export
+                <Download size={16} /> Export PDF
             </button>
         </div>
       </div>

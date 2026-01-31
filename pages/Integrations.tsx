@@ -7,7 +7,7 @@ import { FacebookService } from '../services/facebook';
 import { supabase } from '../services/supabase';
 import { 
     CheckCircle2, AlertTriangle, Key, Globe, Loader2, Store, ArrowRight, 
-    RefreshCw, ShieldCheck, Link, Truck, Info, Settings, Facebook, ExternalLink, Zap, Lock
+    RefreshCw, ShieldCheck, Link, Truck, Info, Settings, Facebook, ExternalLink, Zap, Lock, Grid2X2
 } from 'lucide-react';
 
 const COURIER_META: Record<string, { color: string, bg: string, border: string, icon: string, label: string, desc: string }> = {
@@ -36,6 +36,16 @@ const COURIER_META: Record<string, { color: string, bg: string, border: string, 
         desc: 'Cost-effective COD solutions.'
     },
 };
+
+// Defined Order: PostEx First
+const ORDERED_COURIERS = [
+    CourierName.POSTEX,
+    CourierName.TRAX,
+    CourierName.LEOPARDS,
+    CourierName.TCS,
+    CourierName.MNP,
+    CourierName.CALLCOURIER
+];
 
 interface IntegrationsProps {
     onConfigUpdate?: () => void;
@@ -208,78 +218,171 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
            </div>
       )}
 
-      {/* SHOPIFY SECTION */}
+      {/* CORE PLATFORMS GRID (SHOPIFY & FACEBOOK) */}
       <section>
           <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-              <Store className="text-slate-500" size={20} /> Sales Channels
+              <Grid2X2 className="text-slate-500" size={20} /> Core Platforms
           </h3>
-          <div className={`
-              relative overflow-hidden rounded-2xl border transition-all duration-300 max-w-2xl
-              ${shopifyConfig.is_active ? 'bg-green-100/30 border-green-200 shadow-sm' : 'bg-white border-slate-200 shadow-md hover:shadow-lg'}
-          `}>
-               <div className="p-8">
-                  <div className="flex justify-between items-start mb-6">
-                      <div className="flex items-center gap-4">
-                          <div className="w-14 h-14 bg-[#95BF47] rounded-xl flex items-center justify-center text-white shadow-sm">
-                              <Store size={28} />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              
+              {/* SHOPIFY CARD */}
+              <div className={`
+                  relative overflow-hidden rounded-2xl border transition-all duration-300
+                  ${shopifyConfig.is_active ? 'bg-green-100/30 border-green-200 shadow-sm' : 'bg-white border-slate-200 shadow-sm hover:shadow-lg'}
+              `}>
+                  <div className="p-8 h-full flex flex-col">
+                      <div className="flex justify-between items-start mb-6">
+                          <div className="flex items-center gap-4">
+                              <div className="w-14 h-14 bg-[#95BF47] rounded-xl flex items-center justify-center text-white shadow-sm">
+                                  <Store size={28} />
+                              </div>
+                              <div>
+                                  <h3 className="font-bold text-xl text-slate-900">Shopify</h3>
+                                  <p className="text-sm text-slate-500">Sales Channel</p>
+                              </div>
                           </div>
-                          <div>
-                              <h3 className="font-bold text-xl text-slate-900">Shopify Integration</h3>
-                              <p className="text-sm text-slate-500">Official App Connection</p>
-                          </div>
+                          {shopifyConfig.is_active && (
+                              <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold flex items-center gap-1">
+                                  <CheckCircle2 size={14} /> Connected
+                              </span>
+                          )}
                       </div>
-                      {shopifyConfig.is_active && (
-                          <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold flex items-center gap-1">
-                              <CheckCircle2 size={14} /> Connected
-                          </span>
-                      )}
-                  </div>
 
-                  {shopifyConfig.is_active ? (
-                       <div className="space-y-6">
-                           <div className="flex items-center gap-3 p-4 bg-white rounded-xl border border-green-100 shadow-sm">
-                               <Globe size={20} className="text-green-600" />
-                               <div className="flex-1 min-w-0">
-                                   <p className="text-xs text-slate-500 font-bold uppercase">Connected Store</p>
-                                   <p className="text-sm font-medium text-slate-900 truncate">{shopifyConfig.store_url}</p>
-                               </div>
-                           </div>
-                           <button onClick={handleDisconnectShopify} className="text-sm text-red-600 hover:text-red-700 hover:underline">
-                               Disconnect Store
-                           </button>
-                       </div>
-                  ) : (
-                      <div className="space-y-6">
-                           <div className="space-y-4">
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                                        Enter Store URL
-                                    </label>
-                                    <div className="flex items-center gap-2">
-                                        <input 
-                                            type="text"
-                                            placeholder="your-store.myshopify.com"
-                                            className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none text-sm"
-                                            value={shopifyConfig.store_url || ''}
-                                            onChange={(e) => setShopifyConfig({...shopifyConfig, store_url: e.target.value})}
-                                        />
+                      <div className="flex-1">
+                        {shopifyConfig.is_active ? (
+                            <div className="space-y-6">
+                                <div className="flex items-center gap-3 p-4 bg-white rounded-xl border border-green-100 shadow-sm">
+                                    <Globe size={20} className="text-green-600" />
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-xs text-slate-500 font-bold uppercase">Connected Store</p>
+                                        <p className="text-sm font-medium text-slate-900 truncate">{shopifyConfig.store_url}</p>
                                     </div>
-                                    <p className="text-xs text-slate-400 mt-2 flex items-center gap-1">
-                                        <Info size={12} /> You will be redirected to Shopify to approve the connection.
-                                    </p>
                                 </div>
-                           </div>
-                            
-                            <button 
-                                onClick={handleShopifyConnect}
-                                disabled={testingConnection === 'Shopify' || !shopifyConfig.store_url}
-                                className="w-full bg-[#95BF47] text-white py-3 rounded-xl text-sm font-bold hover:bg-[#86ad3e] transition-all flex items-center justify-center gap-2 disabled:opacity-50 mt-2"
-                            >
-                                {testingConnection === 'Shopify' ? <Loader2 className="animate-spin" size={16} /> : <Zap size={16} />}
-                                Connect Store
-                            </button>
+                                <button onClick={handleDisconnectShopify} className="text-sm text-red-600 hover:text-red-700 hover:underline">
+                                    Disconnect Store
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="space-y-6">
+                                <div className="space-y-4">
+                                        <div>
+                                            <label className="block text-sm font-bold text-slate-700 mb-2">
+                                                Enter Store URL
+                                            </label>
+                                            <input 
+                                                type="text"
+                                                placeholder="your-store.myshopify.com"
+                                                className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none text-sm"
+                                                value={shopifyConfig.store_url || ''}
+                                                onChange={(e) => setShopifyConfig({...shopifyConfig, store_url: e.target.value})}
+                                            />
+                                            <p className="text-xs text-slate-400 mt-2 flex items-center gap-1">
+                                                <Info size={12} /> You will be redirected to Shopify to approve the connection.
+                                            </p>
+                                        </div>
+                                </div>
+                                    
+                                    <button 
+                                        onClick={handleShopifyConnect}
+                                        disabled={testingConnection === 'Shopify' || !shopifyConfig.store_url}
+                                        className="w-full bg-[#95BF47] text-white py-3 rounded-xl text-sm font-bold hover:bg-[#86ad3e] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                    >
+                                        {testingConnection === 'Shopify' ? <Loader2 className="animate-spin" size={16} /> : <Zap size={16} />}
+                                        Connect Store
+                                    </button>
+                            </div>
+                        )}
                       </div>
-                  )}
+                  </div>
+              </div>
+
+              {/* FACEBOOK CARD */}
+              <div className={`
+                  relative overflow-hidden rounded-2xl border transition-all duration-300
+                  ${fbConfig.is_active ? 'bg-blue-50/50 border-blue-200 shadow-sm' : 'bg-white border-slate-200 shadow-sm hover:shadow-lg'}
+              `}>
+                  <div className="p-8 h-full flex flex-col">
+                      <div className="flex justify-between items-start mb-6">
+                          <div className="flex items-center gap-4">
+                              <div className="w-14 h-14 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-sm">
+                                  <Facebook size={28} />
+                              </div>
+                              <div>
+                                  <h3 className="font-bold text-xl text-slate-900">Facebook Ads</h3>
+                                  <p className="text-sm text-slate-500">Marketing Source</p>
+                              </div>
+                          </div>
+                          {fbConfig.is_active && (
+                              <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-bold flex items-center gap-1">
+                                  <CheckCircle2 size={14} /> Connected
+                              </span>
+                          )}
+                      </div>
+                      
+                      <div className="flex-1">
+                        {fbConfig.is_active ? (
+                            <div className="space-y-6">
+                                <div className="flex items-center gap-3 p-4 bg-white rounded-xl border border-blue-100 shadow-sm">
+                                    <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
+                                        <Settings size={20} />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <label className="text-xs text-slate-500 font-bold uppercase mb-1 block">Connected Account</label>
+                                        <p className="text-sm font-bold text-slate-900">{fbConfig.ad_account_id}</p>
+                                    </div>
+                                </div>
+                                <button onClick={disconnectFacebook} className="text-sm text-red-600 hover:text-red-700 hover:underline">
+                                    Disconnect Facebook
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {!availableAdAccounts.length ? (
+                                    <>
+                                        <div>
+                                            <label className="block text-sm font-bold text-slate-700 mb-2">Access Token</label>
+                                            <input 
+                                                type="password"
+                                                placeholder="EAAG..."
+                                                className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                                                value={fbManualToken}
+                                                onChange={(e) => setFbManualToken(e.target.value)}
+                                            />
+                                        </div>
+                                        <button 
+                                                onClick={handleVerifyFbToken}
+                                                disabled={isVerifyingFb || !fbManualToken}
+                                                className="w-full bg-slate-900 text-white py-3.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                            >
+                                                {isVerifyingFb ? <Loader2 className="animate-spin" size={16} /> : <ShieldCheck size={16} />}
+                                                Verify & Fetch Accounts
+                                            </button>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div>
+                                            <label className="block text-sm font-bold text-slate-700 mb-2">Select Ad Account</label>
+                                            <select 
+                                                className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                                                value={fbConfig.ad_account_id || ''}
+                                                onChange={(e) => setFbConfig({...fbConfig, ad_account_id: e.target.value})}
+                                            >
+                                                <option value="">-- Select Account --</option>
+                                                {availableAdAccounts.map(acc => (
+                                                    <option key={acc.id} value={acc.id}>{acc.name} ({acc.id})</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div className="flex gap-3">
+                                            <button onClick={() => { setAvailableAdAccounts([]); setFbConfig({...fbConfig, ad_account_id: ''}); }} className="flex-1 px-4 py-3 border border-slate-300 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50">Back</button>
+                                            <button onClick={handleSaveFbConfig} disabled={isVerifyingFb || !fbConfig.ad_account_id} className="flex-2 w-full bg-[#1877F2] text-white py-3.5 rounded-xl text-sm font-bold hover:bg-[#166fe5] transition-all flex items-center justify-center gap-2 disabled:opacity-50">Save Configuration</button>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        )}
+                      </div>
+                  </div>
               </div>
           </div>
       </section>
@@ -290,7 +393,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
             <Truck className="text-slate-500" size={20} /> Logistics Partners
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {Object.values(CourierName).map((courierName) => {
+            {ORDERED_COURIERS.map((courierName) => {
                 const config = courierConfigs[courierName];
                 const meta = COURIER_META[courierName];
                 const isActive = config.is_active;
@@ -340,97 +443,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                 );
             })}
         </div>
-      </section>
-
-      {/* MARKETING SECTION (Keep Existing UI) */}
-      <section>
-          <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2 mt-8">
-              <Facebook className="text-blue-600" size={20} /> Marketing Integrations
-          </h3>
-           <div className={`
-              relative overflow-hidden rounded-2xl border transition-all duration-300 max-w-2xl
-              ${fbConfig.is_active ? 'bg-blue-50/50 border-blue-200 shadow-sm' : 'bg-white border-slate-200 shadow-md hover:shadow-lg'}
-          `}>
-               <div className="p-8">
-                  <div className="flex justify-between items-start mb-6">
-                      <div className="flex items-center gap-4">
-                          <div className="w-14 h-14 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-sm">
-                              <Facebook size={28} />
-                          </div>
-                          <div>
-                              <h3 className="font-bold text-xl text-slate-900">Facebook Ads</h3>
-                              <p className="text-sm text-slate-500">Auto-sync campaign spend</p>
-                          </div>
-                      </div>
-                      {fbConfig.is_active && (
-                          <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-bold flex items-center gap-1">
-                              <CheckCircle2 size={14} /> Connected
-                          </span>
-                      )}
-                  </div>
-                  {fbConfig.is_active ? (
-                       <div className="space-y-6">
-                           <div className="flex items-center gap-3 p-4 bg-white rounded-xl border border-blue-100 shadow-sm">
-                               <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
-                                   <Settings size={20} />
-                               </div>
-                               <div className="flex-1 min-w-0">
-                                   <label className="text-xs text-slate-500 font-bold uppercase mb-1 block">Connected Account</label>
-                                   <p className="text-sm font-bold text-slate-900">{fbConfig.ad_account_id}</p>
-                               </div>
-                           </div>
-                           <button onClick={disconnectFacebook} className="text-sm text-red-600 hover:text-red-700 hover:underline">
-                               Disconnect Facebook
-                           </button>
-                       </div>
-                  ) : (
-                       <div className="space-y-4">
-                           {!availableAdAccounts.length ? (
-                               <>
-                                   <div>
-                                       <label className="block text-sm font-bold text-slate-700 mb-2">Access Token</label>
-                                       <input 
-                                           type="password"
-                                           placeholder="EAAG..."
-                                           className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-                                           value={fbManualToken}
-                                           onChange={(e) => setFbManualToken(e.target.value)}
-                                       />
-                                   </div>
-                                   <button 
-                                        onClick={handleVerifyFbToken}
-                                        disabled={isVerifyingFb || !fbManualToken}
-                                        className="w-full bg-slate-900 text-white py-3.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                                    >
-                                        {isVerifyingFb ? <Loader2 className="animate-spin" size={16} /> : <ShieldCheck size={16} />}
-                                        Verify & Fetch Accounts
-                                    </button>
-                               </>
-                           ) : (
-                               <>
-                                   <div>
-                                       <label className="block text-sm font-bold text-slate-700 mb-2">Select Ad Account</label>
-                                       <select 
-                                           className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none bg-white"
-                                           value={fbConfig.ad_account_id || ''}
-                                           onChange={(e) => setFbConfig({...fbConfig, ad_account_id: e.target.value})}
-                                       >
-                                           <option value="">-- Select Account --</option>
-                                           {availableAdAccounts.map(acc => (
-                                               <option key={acc.id} value={acc.id}>{acc.name} ({acc.id})</option>
-                                           ))}
-                                       </select>
-                                   </div>
-                                   <div className="flex gap-3">
-                                       <button onClick={() => { setAvailableAdAccounts([]); setFbConfig({...fbConfig, ad_account_id: ''}); }} className="flex-1 px-4 py-3 border border-slate-300 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50">Back</button>
-                                       <button onClick={handleSaveFbConfig} disabled={isVerifyingFb || !fbConfig.ad_account_id} className="flex-2 w-full bg-[#1877F2] text-white py-3.5 rounded-xl text-sm font-bold hover:bg-[#166fe5] transition-all flex items-center justify-center gap-2 disabled:opacity-50">Save Configuration</button>
-                                   </div>
-                               </>
-                           )}
-                       </div>
-                  )}
-              </div>
-           </div>
       </section>
     </div>
   );
