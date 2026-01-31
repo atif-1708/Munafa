@@ -26,10 +26,15 @@ export default async function handler(req, res) {
     });
 
     const contentType = response.headers.get('content-type');
+    const linkHeader = response.headers.get('link'); // Pagination support
     const data = await response.text();
 
     if (contentType) {
       res.setHeader('Content-Type', contentType);
+    }
+    
+    if (linkHeader) {
+      res.setHeader('Link', linkHeader);
     }
     
     res.status(response.status).send(data);
