@@ -76,7 +76,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   const [tiktokConfig, setTiktokConfig] = useState<MarketingConfig>({
     id: '', platform: 'TikTok', access_token: '', is_active: false
   });
-  const [tiktokManualToken, setTiktokManualToken] = useState('');
   const [availableTikTokAccounts, setAvailableTikTokAccounts] = useState<{id: string, name: string}[]>([]);
   const [isVerifyingTikTok, setIsVerifyingTikTok] = useState(false);
   
@@ -119,7 +118,10 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
             if (tkData && tkData.length > 0) {
                 setTiktokConfig(tkData[0]);
                 if(tkData[0].access_token) {
-                    new TikTokService().getAdvertisers(tkData[0].access_token).then(setAvailableTikTokAccounts).catch(console.error);
+                    // Try to fetch advertisers. If token is invalid (expired), it will throw.
+                    new TikTokService().getAdvertisers(tkData[0].access_token)
+                        .then(setAvailableTikTokAccounts)
+                        .catch(err => console.warn("TikTok Token may be expired:", err));
                 }
             }
         } 
@@ -221,25 +223,31 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
       if(session?.user) await supabase.from('marketing_configs').delete().eq('user_id', session.user.id);
   };
 
-  // --- TIKTOK LOGIC ---
-  const handleVerifyTikTokToken = async () => {
-    setIsVerifyingTikTok(true);
-    setErrorMessage(null);
-    try {
-        const accounts = await new TikTokService().getAdvertisers(tiktokManualToken);
-        setAvailableTikTokAccounts(accounts);
-        setTiktokConfig(prev => ({ ...prev, access_token: tiktokManualToken }));
-    } catch (e: any) { setErrorMessage(e.message); }
-    setIsVerifyingTikTok(false);
+  // --- TIKTOK LOGIC (OAUTH) ---
+  const handleTikTokConnect = async () => {
+      setTestingConnection('TikTok');
+      setErrorMessage(null);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) {
+          setErrorMessage("You must be logged in to connect.");
+          setTestingConnection(null);
+          return;
+      }
+
+      // Redirect to Backend OAuth Handler
+      const host = window.location.origin;
+      window.location.href = `${host}/api/tiktok/login?userId=${session.user.id}`;
   };
 
   const handleSaveTikTokConfig = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if(session?.user && tiktokConfig.ad_account_id) {
-       const payload = { user_id: session.user.id, platform: 'TikTok', access_token: tiktokConfig.access_token, ad_account_id: tiktokConfig.ad_account_id, is_active: true };
-       const { data: existing } = await supabase.from('marketing_configs').select('id').eq('user_id', session.user.id).eq('platform', 'TikTok').limit(1);
-       if (existing && existing.length > 0) await supabase.from('marketing_configs').update(payload).eq('id', existing[0].id);
-       else await supabase.from('marketing_configs').insert(payload);
+       // We only need to update the Ad Account ID, as the token is already saved by the backend callback
+       await supabase.from('marketing_configs')
+        .update({ ad_account_id: tiktokConfig.ad_account_id })
+        .eq('user_id', session.user.id)
+        .eq('platform', 'TikTok');
+
        setTiktokConfig({ ...tiktokConfig, is_active: true });
        if(onConfigUpdate) onConfigUpdate();
     }
@@ -466,43 +474,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                       <div className="flex-1">
                         {tiktokConfig.is_active ? (
                             <div className="space-y-6">
-                                <div className="flex items-center gap-3 p-4 bg-white rounded-xl border border-slate-200 shadow-sm">
-                                    <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600">
-                                        <Settings size={20} />
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <label className="text-xs text-slate-500 font-bold uppercase mb-1 block">Advertiser ID</label>
-                                        <p className="text-sm font-bold text-slate-900">{tiktokConfig.ad_account_id}</p>
-                                    </div>
-                                </div>
-                                <button onClick={disconnectTikTok} className="text-sm text-red-600 hover:text-red-700 hover:underline">
-                                    Disconnect TikTok
-                                </button>
-                            </div>
-                        ) : (
-                            <div className="space-y-4">
-                                {!availableTikTokAccounts.length ? (
-                                    <>
-                                        <div>
-                                            <label className="block text-sm font-bold text-slate-700 mb-2">Access Token</label>
-                                            <input 
-                                                type="password"
-                                                placeholder="Paste Long-Lived Token..."
-                                                className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-black outline-none transition-all"
-                                                value={tiktokManualToken}
-                                                onChange={(e) => setTiktokManualToken(e.target.value)}
-                                            />
-                                        </div>
-                                        <button 
-                                                onClick={handleVerifyTikTokToken}
-                                                disabled={isVerifyingTikTok || !tiktokManualToken}
-                                                className="w-full bg-slate-900 text-white py-3.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                                            >
-                                                {isVerifyingTikTok ? <Loader2 className="animate-spin" size={16} /> : <ShieldCheck size={16} />}
-                                                Verify & Fetch Advertisers
-                                            </button>
-                                    </>
-                                ) : (
+                                {availableTikTokAccounts.length > 0 ? (
                                     <>
                                         <div>
                                             <label className="block text-sm font-bold text-slate-700 mb-2">Select Advertiser</label>
@@ -517,12 +489,37 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                                 ))}
                                             </select>
                                         </div>
-                                        <div className="flex gap-3">
-                                            <button onClick={() => { setAvailableTikTokAccounts([]); setTiktokConfig({...tiktokConfig, ad_account_id: ''}); }} className="flex-1 px-4 py-3 border border-slate-300 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50">Back</button>
-                                            <button onClick={handleSaveTikTokConfig} disabled={isVerifyingTikTok || !tiktokConfig.ad_account_id} className="flex-2 w-full bg-black text-white py-3.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50">Save Configuration</button>
-                                        </div>
+                                        <button onClick={handleSaveTikTokConfig} disabled={!tiktokConfig.ad_account_id} className="w-full bg-black text-white py-3.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50">Update Configuration</button>
                                     </>
+                                ) : (
+                                    <div className="flex items-center gap-3 p-4 bg-white rounded-xl border border-slate-200 shadow-sm">
+                                        <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600">
+                                            <Settings size={20} />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <label className="text-xs text-slate-500 font-bold uppercase mb-1 block">Connected Account</label>
+                                            <p className="text-sm font-bold text-slate-900">{tiktokConfig.ad_account_id || 'Pending Selection'}</p>
+                                        </div>
+                                    </div>
                                 )}
+
+                                <button onClick={disconnectTikTok} className="text-sm text-red-600 hover:text-red-700 hover:underline">
+                                    Disconnect TikTok
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                <button 
+                                        onClick={handleTikTokConnect}
+                                        disabled={testingConnection === 'TikTok'}
+                                        className="w-full bg-slate-900 text-white py-3.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                    >
+                                        {testingConnection === 'TikTok' ? <Loader2 className="animate-spin" size={16} /> : <Zap size={16} />}
+                                        Connect TikTok
+                                    </button>
+                                <p className="text-xs text-slate-400 flex items-center gap-1">
+                                    <Info size={12} /> You will be redirected to TikTok for authorization.
+                                </p>
                             </div>
                         )}
                       </div>
