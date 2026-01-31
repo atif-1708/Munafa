@@ -88,9 +88,18 @@ export const calculateMetrics = (
   });
 
   // 4. Marketing Costs & Tax
-  const raw_ad_spend = adSpend.reduce((sum, ad) => sum + ad.amount_spent, 0);
-  const total_ads_tax = raw_ad_spend * (adsTaxRate / 100);
-  const total_ad_spend = raw_ad_spend + total_ads_tax;
+  let total_ad_spend = 0;
+  let total_ads_tax = 0;
+
+  adSpend.forEach(ad => {
+      let tax = 0;
+      // Requirement: Do NOT apply tax to TikTok spend. Apply to Facebook/Google/Others.
+      if (ad.platform !== 'TikTok') {
+          tax = ad.amount_spent * (adsTaxRate / 100);
+      }
+      total_ads_tax += tax;
+      total_ad_spend += (ad.amount_spent + tax);
+  });
 
   // 5. Net Profit Formula (Cash Basis)
   // Revenue (Realized) - COGS (All Dispatched) - Shipping - Overhead - Tax - Ads
@@ -335,7 +344,9 @@ export const calculateProductPerformance = (
 
   // 3. Process Ad Spend (Separate Loop for correct attribution)
   adSpend.forEach(ad => {
-      const amount = ad.amount_spent * (1 + adsTaxRate / 100);
+      // Calculate Tax: Skip for TikTok, Apply for Others
+      const taxRateToApply = ad.platform === 'TikTok' ? 0 : adsTaxRate;
+      const amount = ad.amount_spent * (1 + taxRateToApply / 100);
       const purchases = ad.purchases || 0;
 
       // Try exact match (Variant ID)

@@ -3,6 +3,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { AdSpend, Product, MarketingConfig, CampaignMapping, Order } from '../types';
 import { formatCurrency } from '../services/calculator';
 import { FacebookService } from '../services/facebook';
+import { TikTokService } from '../services/tiktok';
 import { supabase } from '../services/supabase';
 import { BarChart3, Plus, Trash2, Layers, Calendar, DollarSign, CalendarRange, RefreshCw, Facebook, AlertTriangle, Link, ArrowRight, X, CheckCircle2, LayoutGrid, ListFilter, Zap, Settings, ShoppingBag, Target } from 'lucide-react';
 
@@ -17,7 +18,7 @@ interface MarketingProps {
 }
 
 const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddAdSpend, onDeleteAdSpend, onSyncAdSpend, onNavigate }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'facebook'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'facebook' | 'tiktok'>('overview');
   
   const [newAd, setNewAd] = useState<{
       startDate: string,
@@ -44,8 +45,11 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
     };
   });
 
-  // State for Facebook Integration
+  // State for Integrations
   const [fbConfig, setFbConfig] = useState<MarketingConfig | null>(null);
+  const [tiktokConfig, setTiktokConfig] = useState<MarketingConfig | null>(null);
+  const [exchangeRate, setExchangeRate] = useState<number>(278); // Default PKR Rate for TikTok USD
+
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [mappings, setMappings] = useState<CampaignMapping[]>([]);
@@ -56,8 +60,11 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
       const loadConfig = async () => {
           const { data: { session } } = await supabase.auth.getSession();
           if(session?.user) {
-              const { data } = await supabase.from('marketing_configs').select('*').eq('user_id', session.user.id).eq('platform', 'Facebook').single();
-              if(data) setFbConfig(data);
+              const { data: fbData } = await supabase.from('marketing_configs').select('*').eq('user_id', session.user.id).eq('platform', 'Facebook').single();
+              if(fbData) setFbConfig(fbData);
+
+              const { data: tkData } = await supabase.from('marketing_configs').select('*').eq('user_id', session.user.id).eq('platform', 'TikTok').single();
+              if(tkData) setTiktokConfig(tkData);
               
               const { data: mapData } = await supabase.from('campaign_mappings').select('*').eq('user_id', session.user.id);
               if(mapData) setMappings(mapData);
@@ -69,14 +76,19 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
 
   // --- AUTO-SYNC LOGIC ---
   useEffect(() => {
-      if (activeTab === 'facebook' && fbConfig?.is_active && hasLoadedConfig.current && onSyncAdSpend) {
-          // Debounce fetch to avoid flickering if user changes date quickly
+      if (hasLoadedConfig.current && onSyncAdSpend) {
           const timer = setTimeout(() => {
-              fetchAndSyncFacebookData();
-          }, 300);
+              if (activeTab === 'facebook' && fbConfig?.is_active) {
+                  fetchAndSyncFacebookData();
+              } else if (activeTab === 'tiktok' && tiktokConfig?.is_active) {
+                  // Wait for user to trigger sync explicitly usually for rate change? 
+                  // No, let's auto-sync if configured, using default rate or updated rate
+                  fetchAndSyncTikTokData();
+              }
+          }, 500);
           return () => clearTimeout(timer);
       }
-  }, [activeTab, dateRange, fbConfig, mappings]); // Dependencies trigger auto-fetch
+  }, [activeTab, dateRange, fbConfig, tiktokConfig, mappings, exchangeRate]); // Add exchangeRate dependency to re-sync when rate changes
 
   const fetchAndSyncFacebookData = async () => {
       if (!fbConfig || !fbConfig.is_active || !fbConfig.ad_account_id) return;
@@ -111,6 +123,38 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
       }
   };
 
+  const fetchAndSyncTikTokData = async () => {
+      if (!tiktokConfig || !tiktokConfig.is_active || !tiktokConfig.ad_account_id) return;
+      if (!onSyncAdSpend) return;
+
+      setIsSyncing(true);
+      setSyncError(null);
+      
+      try {
+          const svc = new TikTokService();
+          const start = dateRange.start;
+          const end = dateRange.end;
+          
+          const fetchedAds = await svc.fetchInsights(tiktokConfig, start, end, exchangeRate);
+          
+          const newEntries: AdSpend[] = fetchedAds.map(fetched => {
+              const mapping = mappings.find(m => m.campaign_id === fetched.campaign_id);
+              return {
+                  ...fetched,
+                  product_id: mapping?.product_id || undefined
+              };
+          });
+
+          onSyncAdSpend('TikTok', start, end, newEntries);
+
+      } catch (e: any) {
+          console.error(e);
+          setSyncError(e.message || "Failed to fetch TikTok data");
+      } finally {
+          setIsSyncing(false);
+      }
+  };
+
   // Calculate active items in the date range for dropdown filtering
   const activeItemKeys = useMemo(() => {
       const start = new Date(dateRange.start);
@@ -136,8 +180,6 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
   const groups = useMemo(() => {
       const uniqueGroups = new Map();
       products.forEach(p => {
-          // Check if this product is active OR its group has other active members?
-          // Simplest approach: if this product is active, its group is relevant.
           const isActive = activeItemKeys.has(p.variant_fingerprint || '') || activeItemKeys.has(p.sku) || activeItemKeys.has(p.id);
           
           if (isActive && p.group_id && p.group_name) {
@@ -151,7 +193,6 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
   const standaloneProducts = useMemo(() => {
       return products.filter(p => {
           if (p.group_id) return false;
-          // Filter out inactive items
           const isActive = activeItemKeys.has(p.variant_fingerprint || '') || activeItemKeys.has(p.sku) || activeItemKeys.has(p.id);
           return isActive;
       });
@@ -205,7 +246,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
     setNewAd(prev => ({ ...prev, amount: '' }));
   };
 
-  const saveMapping = async (campaignId: string, campaignName: string, productId: string) => {
+  const saveMapping = async (campaignId: string, campaignName: string, productId: string, platform: string) => {
       const { data: { session } } = await supabase.auth.getSession();
       if(!session?.user) return;
 
@@ -213,7 +254,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
           campaign_id: campaignId,
           campaign_name: campaignName,
           product_id: productId || null,
-          platform: 'Facebook'
+          platform: platform
       };
 
       // 1. Save to DB
@@ -243,12 +284,12 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
 
   const totalPeriodSpend = useMemo(() => filteredAds.reduce((sum, ad) => sum + ad.amount_spent, 0), [filteredAds]);
   
-  // Aggregate Campaigns for Facebook Tab
-  const facebookCampaigns = useMemo(() => {
+  // Aggregate Campaigns for current view
+  const aggregateCampaigns = (platform: 'Facebook' | 'TikTok') => {
       const stats = new Map<string, { id: string, name: string, spend: number, purchases: number, productId: string | undefined }>();
       
       filteredAds.forEach(ad => {
-          if (ad.platform === 'Facebook' && ad.campaign_id) {
+          if (ad.platform === platform && ad.campaign_id) {
               if (!stats.has(ad.campaign_id)) {
                   stats.set(ad.campaign_id, {
                       id: ad.campaign_id,
@@ -264,9 +305,13 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
           }
       });
       return Array.from(stats.values()).sort((a,b) => b.spend - a.spend);
-  }, [filteredAds]);
+  };
 
-  const unmappedCount = facebookCampaigns.filter(c => !c.productId).length;
+  const facebookCampaigns = useMemo(() => aggregateCampaigns('Facebook'), [filteredAds]);
+  const tiktokCampaigns = useMemo(() => aggregateCampaigns('TikTok'), [filteredAds]);
+
+  const unmappedFbCount = facebookCampaigns.filter(c => !c.productId).length;
+  const unmappedTkCount = tiktokCampaigns.filter(c => !c.productId).length;
 
   // Helper for UI calculation
   const dailyPreview = useMemo(() => {
@@ -296,8 +341,6 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                   ))}
               </optgroup>
           )}
-          {/* Fallback for mapped products that might not be active in current view? 
-              For now we stick to user request: "show just items in the selected period" */}
       </>
   );
 
@@ -330,19 +373,30 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-slate-200">
+      <div className="flex border-b border-slate-200 overflow-x-auto">
           <button 
             onClick={() => setActiveTab('overview')}
-            className={`px-6 py-3 text-sm font-medium flex items-center gap-2 transition-colors border-b-2 ${activeTab === 'overview' ? 'border-brand-600 text-brand-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+            className={`px-6 py-3 text-sm font-medium flex items-center gap-2 transition-colors border-b-2 whitespace-nowrap ${activeTab === 'overview' ? 'border-brand-600 text-brand-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
           >
-              <LayoutGrid size={16} /> Overview & Manual
+              <LayoutGrid size={16} /> Overview
           </button>
           <button 
             onClick={() => setActiveTab('facebook')}
-            className={`px-6 py-3 text-sm font-medium flex items-center gap-2 transition-colors border-b-2 ${activeTab === 'facebook' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+            className={`px-6 py-3 text-sm font-medium flex items-center gap-2 transition-colors border-b-2 whitespace-nowrap ${activeTab === 'facebook' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
           >
               <Facebook size={16} /> Facebook Campaigns
-              {unmappedCount > 0 && <span className="bg-red-100 text-red-600 px-1.5 rounded-full text-[10px] font-bold">{unmappedCount}</span>}
+              {unmappedFbCount > 0 && <span className="bg-red-100 text-red-600 px-1.5 rounded-full text-[10px] font-bold">{unmappedFbCount}</span>}
+          </button>
+          <button 
+            onClick={() => setActiveTab('tiktok')}
+            className={`px-6 py-3 text-sm font-medium flex items-center gap-2 transition-colors border-b-2 whitespace-nowrap ${activeTab === 'tiktok' ? 'border-slate-800 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+          >
+              {/* TikTok Icon */}
+              <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+                  <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z"/>
+              </svg>
+              TikTok Ads
+              {unmappedTkCount > 0 && <span className="bg-red-100 text-red-600 px-1.5 rounded-full text-[10px] font-bold">{unmappedTkCount}</span>}
           </button>
       </div>
 
@@ -540,42 +594,9 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                           )}
                       </div>
                   </div>
-                  
-                  {/* Real Time Status Badge */}
-                  <div className="flex items-center gap-2 text-blue-800 bg-white/50 px-3 py-1.5 rounded-lg border border-blue-100 shadow-sm">
-                      <Zap size={16} className="text-yellow-500 fill-yellow-500" />
-                      <span className="text-xs font-bold uppercase tracking-wide">Live Data</span>
-                  </div>
               </div>
 
-              {syncError && (
-                   <div className="bg-red-50 border border-red-200 p-4 rounded-xl flex items-center justify-between animate-in fade-in slide-in-from-top-2">
-                       <div className="flex gap-3 text-sm text-red-800">
-                           <AlertTriangle className="shrink-0 text-red-600" size={20} />
-                           <div>
-                               <p className="font-bold">Sync Error</p>
-                               <p>{syncError}</p>
-                           </div>
-                       </div>
-                       {onNavigate && (syncError.includes('Session') || syncError.includes('Permission')) && (
-                           <button 
-                                onClick={() => onNavigate('integrations')}
-                                className="flex items-center gap-2 bg-white border border-red-200 text-red-700 px-4 py-2 rounded-lg text-sm font-bold hover:bg-red-50 transition-colors"
-                           >
-                               <Settings size={14} /> Fix Connection
-                           </button>
-                       )}
-                   </div>
-              )}
-
-              {!fbConfig?.is_active && (
-                  <div className="text-center py-12 bg-white rounded-xl border border-slate-200">
-                      <Facebook size={48} className="mx-auto text-slate-300 mb-4" />
-                      <h3 className="text-lg font-bold text-slate-700">Facebook Not Connected</h3>
-                      <p className="text-slate-500 mt-2">Go to <Link size={14} className="inline"/> Integrations to connect your ad account.</p>
-                  </div>
-              )}
-
+              {/* Campaign Table (Reused Structure) */}
               {fbConfig?.is_active && (
                   <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                       <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
@@ -583,7 +604,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                               <Facebook size={16} className="text-blue-600" /> Detected Campaigns
                           </h3>
                           <span className="text-xs text-slate-500 font-medium">
-                              Showing accumulated spend for {dateRange.start} to {dateRange.end}
+                              Showing accumulated spend for selected period
                           </span>
                       </div>
                       <table className="w-full text-left text-sm">
@@ -598,16 +619,8 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                               </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                              {facebookCampaigns.length === 0 && !syncError && (
-                                  <tr>
-                                      <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
-                                          {isSyncing ? 'Fetching campaigns...' : 'No campaigns found in this period.'}
-                                      </td>
-                                  </tr>
-                              )}
                               {facebookCampaigns.map(camp => {
                                   const cpp = camp.purchases > 0 ? camp.spend / camp.purchases : 0;
-                                  
                                   return (
                                   <tr key={camp.id} className="hover:bg-slate-50">
                                       <td className="px-6 py-4">
@@ -632,14 +645,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                                           </div>
                                       </td>
                                       <td className="px-6 py-4 text-right font-medium text-slate-700">
-                                          {cpp > 0 ? (
-                                            <div className="flex items-center justify-end gap-1 text-purple-600">
-                                                <Target size={14} />
-                                                {formatCurrency(cpp)}
-                                            </div>
-                                          ) : (
-                                            <span className="text-slate-300">-</span>
-                                          )}
+                                          {cpp > 0 ? formatCurrency(cpp) : '-'}
                                       </td>
                                       <td className="px-6 py-4 text-right font-bold text-slate-900">
                                           {formatCurrency(camp.spend)}
@@ -650,7 +656,135 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                                                   camp.productId ? 'bg-white border-slate-200' : 'bg-red-50 border-red-200 text-red-800'
                                               }`}
                                               value={camp.productId || ''}
-                                              onChange={(e) => saveMapping(camp.id, camp.name, e.target.value)}
+                                              onChange={(e) => saveMapping(camp.id, camp.name, e.target.value, 'Facebook')}
+                                          >
+                                              {renderProductOptions()}
+                                          </select>
+                                      </td>
+                                  </tr>
+                              )})}
+                          </tbody>
+                      </table>
+                  </div>
+              )}
+          </div>
+      )}
+
+      {activeTab === 'tiktok' && (
+          <div className="animate-in fade-in slide-in-from-right-2 duration-300 space-y-6">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-50 border border-slate-200 p-6 rounded-xl">
+                  <div>
+                      <h3 className="text-lg font-bold text-slate-900">TikTok Integration</h3>
+                      <div className="flex items-center gap-2 mt-1">
+                          <p className="text-sm text-slate-600">
+                              {tiktokConfig?.is_active ? 'Connected' : 'Not Connected'} 
+                              {tiktokConfig?.ad_account_id && ` • Advertiser: ${tiktokConfig.ad_account_id}`}
+                          </p>
+                          {isSyncing ? (
+                              <span className="flex items-center gap-1 text-xs text-slate-600 font-bold bg-slate-200 px-2 py-0.5 rounded-full animate-pulse">
+                                  <RefreshCw size={10} className="animate-spin" /> Syncing...
+                              </span>
+                          ) : (
+                              <span className="flex items-center gap-1 text-xs text-green-700 font-bold bg-green-100 px-2 py-0.5 rounded-full">
+                                  <CheckCircle2 size={10} /> Active
+                              </span>
+                          )}
+                      </div>
+                  </div>
+                  
+                  {/* Exchange Rate Input */}
+                  <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-lg border border-slate-300 shadow-sm">
+                        <div className="text-xs font-bold text-slate-500 uppercase flex flex-col items-end">
+                            <span>USD to PKR</span>
+                            <span className="text-[10px] font-normal text-slate-400">Rate</span>
+                        </div>
+                        <input 
+                            type="number" 
+                            className="w-20 text-right font-bold text-slate-900 outline-none border-b border-slate-200 focus:border-black"
+                            value={exchangeRate}
+                            onChange={(e) => setExchangeRate(parseFloat(e.target.value) || 0)}
+                        />
+                        <button 
+                            onClick={fetchAndSyncTikTokData}
+                            className="ml-2 p-1.5 bg-black text-white rounded hover:bg-slate-800 transition-colors"
+                            title="Apply Rate & Sync"
+                        >
+                            <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
+                        </button>
+                  </div>
+              </div>
+
+              {!tiktokConfig?.is_active && (
+                  <div className="text-center py-12 bg-white rounded-xl border border-slate-200">
+                      <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                         <Settings size={24} className="text-slate-400" />
+                      </div>
+                      <h3 className="text-lg font-bold text-slate-700">TikTok Not Connected</h3>
+                      <p className="text-slate-500 mt-2">Go to <Link size={14} className="inline"/> Integrations to connect your ad account.</p>
+                  </div>
+              )}
+
+              {/* TikTok Campaign Table */}
+              {tiktokConfig?.is_active && (
+                  <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                      <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+                          <h3 className="font-bold text-slate-700 text-sm flex items-center gap-2">
+                             TikTok Campaigns
+                          </h3>
+                          <span className="text-xs text-slate-500 font-medium bg-yellow-50 text-yellow-700 px-2 py-0.5 rounded border border-yellow-200">
+                              Note: Ads Tax is NOT applied to TikTok spend
+                          </span>
+                      </div>
+                      <table className="w-full text-left text-sm">
+                          <thead className="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500 font-bold">
+                              <tr>
+                                  <th className="px-6 py-4">Campaign Name</th>
+                                  <th className="px-6 py-4 text-center">Status</th>
+                                  <th className="px-6 py-4 text-right">Conversions</th>
+                                  <th className="px-6 py-4 text-right">CPA (PKR)</th>
+                                  <th className="px-6 py-4 text-right">Total Spend (PKR)</th>
+                                  <th className="px-6 py-4 w-[25%]">Mapped Product</th>
+                              </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                              {tiktokCampaigns.length === 0 && (
+                                  <tr><td colSpan={6} className="px-6 py-12 text-center text-slate-400">No campaigns found.</td></tr>
+                              )}
+                              {tiktokCampaigns.map(camp => {
+                                  const cpa = camp.purchases > 0 ? camp.spend / camp.purchases : 0;
+                                  return (
+                                  <tr key={camp.id} className="hover:bg-slate-50">
+                                      <td className="px-6 py-4">
+                                          <div className="font-bold text-slate-800">{camp.name}</div>
+                                          <div className="text-[10px] text-slate-400 font-mono mt-1">ID: {camp.id}</div>
+                                      </td>
+                                      <td className="px-6 py-4 text-center">
+                                          {camp.productId ? (
+                                              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-green-100 text-green-700 text-xs font-bold">
+                                                  <CheckCircle2 size={12} /> Mapped
+                                              </span>
+                                          ) : (
+                                              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-red-100 text-red-700 text-xs font-bold animate-pulse">
+                                                  <AlertTriangle size={12} /> Unmapped
+                                              </span>
+                                          )}
+                                      </td>
+                                      <td className="px-6 py-4 text-right font-medium text-slate-700">
+                                          {camp.purchases}
+                                      </td>
+                                      <td className="px-6 py-4 text-right font-medium text-slate-700">
+                                          {cpa > 0 ? formatCurrency(cpa) : '-'}
+                                      </td>
+                                      <td className="px-6 py-4 text-right font-bold text-slate-900">
+                                          {formatCurrency(camp.spend)}
+                                      </td>
+                                      <td className="px-6 py-4">
+                                          <select 
+                                              className={`w-full px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-black ${
+                                                  camp.productId ? 'bg-white border-slate-200' : 'bg-red-50 border-red-200 text-red-800'
+                                              }`}
+                                              value={camp.productId || ''}
+                                              onChange={(e) => saveMapping(camp.id, camp.name, e.target.value, 'TikTok')}
                                           >
                                               {renderProductOptions()}
                                           </select>

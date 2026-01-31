@@ -4,6 +4,7 @@ import { CourierName, CourierConfig, SalesChannel, MarketingConfig } from '../ty
 import { PostExAdapter } from '../services/couriers/postex';
 import { ShopifyAdapter } from '../services/shopify';
 import { FacebookService } from '../services/facebook';
+import { TikTokService } from '../services/tiktok';
 import { supabase } from '../services/supabase';
 import { 
     CheckCircle2, AlertTriangle, Key, Globe, Loader2, Store, ArrowRight, 
@@ -62,12 +63,22 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     });
     return initial;
   });
+  
+  // Facebook State
   const [fbConfig, setFbConfig] = useState<MarketingConfig>({
       id: '', platform: 'Facebook', access_token: '', is_active: false
   });
   const [fbManualToken, setFbManualToken] = useState('');
   const [availableAdAccounts, setAvailableAdAccounts] = useState<{id: string, name: string}[]>([]);
   const [isVerifyingFb, setIsVerifyingFb] = useState(false);
+
+  // TikTok State
+  const [tiktokConfig, setTiktokConfig] = useState<MarketingConfig>({
+    id: '', platform: 'TikTok', access_token: '', is_active: false
+  });
+  const [tiktokManualToken, setTiktokManualToken] = useState('');
+  const [availableTikTokAccounts, setAvailableTikTokAccounts] = useState<{id: string, name: string}[]>([]);
+  const [isVerifyingTikTok, setIsVerifyingTikTok] = useState(false);
   
   const [loading, setLoading] = useState(true);
   const [testingConnection, setTestingConnection] = useState<string | null>(null);
@@ -94,11 +105,21 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                 });
             }
 
-            const { data: marketingData } = await supabase.from('marketing_configs').select('*').eq('user_id', session.user.id).eq('platform', 'Facebook').limit(1);
-            if (marketingData && marketingData.length > 0) {
-                setFbConfig(marketingData[0]);
-                if(marketingData[0].access_token) {
-                    new FacebookService().getAdAccounts(marketingData[0].access_token).then(setAvailableAdAccounts).catch(console.error);
+            // Load Facebook
+            const { data: fbData } = await supabase.from('marketing_configs').select('*').eq('user_id', session.user.id).eq('platform', 'Facebook').limit(1);
+            if (fbData && fbData.length > 0) {
+                setFbConfig(fbData[0]);
+                if(fbData[0].access_token) {
+                    new FacebookService().getAdAccounts(fbData[0].access_token).then(setAvailableAdAccounts).catch(console.error);
+                }
+            }
+
+            // Load TikTok
+            const { data: tkData } = await supabase.from('marketing_configs').select('*').eq('user_id', session.user.id).eq('platform', 'TikTok').limit(1);
+            if (tkData && tkData.length > 0) {
+                setTiktokConfig(tkData[0]);
+                if(tkData[0].access_token) {
+                    new TikTokService().getAdvertisers(tkData[0].access_token).then(setAvailableTikTokAccounts).catch(console.error);
                 }
             }
         } 
@@ -171,6 +192,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     setTestingConnection(null);
   };
 
+  // --- FACEBOOK LOGIC ---
   const handleVerifyFbToken = async () => {
       setIsVerifyingFb(true);
       try {
@@ -199,6 +221,36 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
       if(session?.user) await supabase.from('marketing_configs').delete().eq('user_id', session.user.id);
   };
 
+  // --- TIKTOK LOGIC ---
+  const handleVerifyTikTokToken = async () => {
+    setIsVerifyingTikTok(true);
+    setErrorMessage(null);
+    try {
+        const accounts = await new TikTokService().getAdvertisers(tiktokManualToken);
+        setAvailableTikTokAccounts(accounts);
+        setTiktokConfig(prev => ({ ...prev, access_token: tiktokManualToken }));
+    } catch (e: any) { setErrorMessage(e.message); }
+    setIsVerifyingTikTok(false);
+  };
+
+  const handleSaveTikTokConfig = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if(session?.user && tiktokConfig.ad_account_id) {
+       const payload = { user_id: session.user.id, platform: 'TikTok', access_token: tiktokConfig.access_token, ad_account_id: tiktokConfig.ad_account_id, is_active: true };
+       const { data: existing } = await supabase.from('marketing_configs').select('id').eq('user_id', session.user.id).eq('platform', 'TikTok').limit(1);
+       if (existing && existing.length > 0) await supabase.from('marketing_configs').update(payload).eq('id', existing[0].id);
+       else await supabase.from('marketing_configs').insert(payload);
+       setTiktokConfig({ ...tiktokConfig, is_active: true });
+       if(onConfigUpdate) onConfigUpdate();
+    }
+  };
+
+  const disconnectTikTok = async () => {
+      setTiktokConfig({ id: '', platform: 'TikTok', access_token: '', is_active: false });
+      const { data: { session } } = await supabase.auth.getSession();
+      if(session?.user) await supabase.from('marketing_configs').delete().eq('user_id', session.user.id).eq('platform', 'TikTok');
+  };
+
   return (
     <div className="space-y-8 max-w-6xl mx-auto pb-12">
       <div className="flex justify-between items-center pb-6 border-b border-slate-200">
@@ -218,7 +270,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
            </div>
       )}
 
-      {/* CORE PLATFORMS GRID (SHOPIFY & FACEBOOK & TIKTOK) */}
+      {/* CORE PLATFORMS GRID */}
       <section>
           <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
               <Grid2X2 className="text-slate-500" size={20} /> Core Platforms
@@ -385,19 +437,16 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                   </div>
               </div>
 
-              {/* TIKTOK CARD (Coming Soon) */}
-              <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                  {/* Overlay */}
-                  <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] z-10 flex flex-col items-center justify-center text-slate-500">
-                        <Lock size={32} className="mb-3 opacity-50" />
-                        <span className="text-sm font-bold bg-slate-100 px-4 py-1.5 rounded-full border border-slate-200 shadow-sm">Coming Soon</span>
-                  </div>
-
-                  <div className="p-8 h-full flex flex-col opacity-50">
+              {/* TIKTOK CARD */}
+              <div className={`
+                  relative overflow-hidden rounded-2xl border transition-all duration-300
+                  ${tiktokConfig.is_active ? 'bg-slate-50 border-slate-300 shadow-sm' : 'bg-white border-slate-200 shadow-sm hover:shadow-lg'}
+              `}>
+                  <div className="p-8 h-full flex flex-col">
                       <div className="flex justify-between items-start mb-6">
                           <div className="flex items-center gap-4">
                               <div className="w-14 h-14 bg-black rounded-xl flex items-center justify-center text-white shadow-sm">
-                                  {/* Simple TikTok Symbol Representation */}
+                                  {/* Simple TikTok Symbol */}
                                   <svg viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8">
                                       <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z"/>
                                   </svg>
@@ -407,21 +456,75 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                   <p className="text-sm text-slate-500">Marketing Source</p>
                               </div>
                           </div>
+                          {tiktokConfig.is_active && (
+                              <span className="px-3 py-1 bg-slate-200 text-slate-700 rounded-full text-xs font-bold flex items-center gap-1">
+                                  <CheckCircle2 size={14} /> Connected
+                              </span>
+                          )}
                       </div>
                       
-                      <div className="flex-1 space-y-4">
-                           <div>
-                                <label className="block text-sm font-bold text-slate-700 mb-2">Access Token</label>
-                                <input 
-                                    type="text"
-                                    disabled
-                                    className="w-full px-4 py-3 border border-slate-300 rounded-xl bg-slate-50"
-                                    placeholder="Disabled"
-                                />
+                      <div className="flex-1">
+                        {tiktokConfig.is_active ? (
+                            <div className="space-y-6">
+                                <div className="flex items-center gap-3 p-4 bg-white rounded-xl border border-slate-200 shadow-sm">
+                                    <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600">
+                                        <Settings size={20} />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <label className="text-xs text-slate-500 font-bold uppercase mb-1 block">Advertiser ID</label>
+                                        <p className="text-sm font-bold text-slate-900">{tiktokConfig.ad_account_id}</p>
+                                    </div>
+                                </div>
+                                <button onClick={disconnectTikTok} className="text-sm text-red-600 hover:text-red-700 hover:underline">
+                                    Disconnect TikTok
+                                </button>
                             </div>
-                            <button disabled className="w-full bg-slate-200 text-slate-500 py-3 rounded-xl text-sm font-bold">
-                                Connect TikTok
-                            </button>
+                        ) : (
+                            <div className="space-y-4">
+                                {!availableTikTokAccounts.length ? (
+                                    <>
+                                        <div>
+                                            <label className="block text-sm font-bold text-slate-700 mb-2">Access Token</label>
+                                            <input 
+                                                type="password"
+                                                placeholder="Paste Long-Lived Token..."
+                                                className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-black outline-none transition-all"
+                                                value={tiktokManualToken}
+                                                onChange={(e) => setTiktokManualToken(e.target.value)}
+                                            />
+                                        </div>
+                                        <button 
+                                                onClick={handleVerifyTikTokToken}
+                                                disabled={isVerifyingTikTok || !tiktokManualToken}
+                                                className="w-full bg-slate-900 text-white py-3.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                            >
+                                                {isVerifyingTikTok ? <Loader2 className="animate-spin" size={16} /> : <ShieldCheck size={16} />}
+                                                Verify & Fetch Advertisers
+                                            </button>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div>
+                                            <label className="block text-sm font-bold text-slate-700 mb-2">Select Advertiser</label>
+                                            <select 
+                                                className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-black outline-none bg-white"
+                                                value={tiktokConfig.ad_account_id || ''}
+                                                onChange={(e) => setTiktokConfig({...tiktokConfig, ad_account_id: e.target.value})}
+                                            >
+                                                <option value="">-- Select Advertiser --</option>
+                                                {availableTikTokAccounts.map(acc => (
+                                                    <option key={acc.id} value={acc.id}>{acc.name} ({acc.id})</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div className="flex gap-3">
+                                            <button onClick={() => { setAvailableTikTokAccounts([]); setTiktokConfig({...tiktokConfig, ad_account_id: ''}); }} className="flex-1 px-4 py-3 border border-slate-300 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50">Back</button>
+                                            <button onClick={handleSaveTikTokConfig} disabled={isVerifyingTikTok || !tiktokConfig.ad_account_id} className="flex-2 w-full bg-black text-white py-3.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50">Save Configuration</button>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        )}
                       </div>
                   </div>
               </div>

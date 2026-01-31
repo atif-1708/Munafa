@@ -146,7 +146,10 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, shopifyOrders = [], adSpe
     filteredData.adSpend.forEach(ad => {
          const key = ad.date;
          if (days[key]) {
-             const amountWithTax = ad.amount_spent * (1 + adsTaxRate/100);
+             // NEW LOGIC: Only apply tax if platform is NOT TikTok
+             const taxAmount = ad.platform === 'TikTok' ? 0 : ad.amount_spent * (adsTaxRate/100);
+             const amountWithTax = ad.amount_spent + taxAmount;
+             
              days[key].expense += amountWithTax;
              days[key].profit -= amountWithTax;
          }
