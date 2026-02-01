@@ -1,19 +1,21 @@
 
 import React, { useState, useMemo } from 'react';
-import { Product, Order } from '../types';
+import { Product, Order, ShopifyOrder } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { PackageSearch, History, Edit2, Plus, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, AlertCircle } from 'lucide-react';
+import { PackageSearch, History, Edit2, Plus, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, AlertCircle, Link as LinkIcon } from 'lucide-react';
 
 interface InventoryProps {
   products: Product[];
   orders: Order[]; 
+  shopifyOrders: ShopifyOrder[];
   onUpdateProducts: (products: Product[]) => Promise<void>;
 }
 
-const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProducts }) => {
+const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, onUpdateProducts }) => {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
+  const [selectedAliasToAdd, setSelectedAliasToAdd] = useState('');
   
   // Date Filtering State
   const [dateRange, setDateRange] = useState(() => {
@@ -91,6 +93,28 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
       return { groups: Array.from(groups.values()), singles };
   }, [filteredProducts]);
 
+  // Calculate unmapped titles for the alias dropdown
+  const unmappedShopifyTitles = useMemo(() => {
+    // 1. Collect all aliases currently used by OTHER products
+    const usedAliases = new Set<string>();
+    products.forEach(p => {
+        if (p.id !== selectedProduct?.id && p.aliases) {
+            p.aliases.forEach(a => usedAliases.add(a));
+        }
+    });
+
+    // 2. Get unique titles from Shopify Orders
+    const uniqueTitles = new Set<string>();
+    shopifyOrders.forEach(o => {
+        o.line_items.forEach(item => {
+            uniqueTitles.add(item.title);
+        });
+    });
+
+    // 3. Filter
+    return Array.from(uniqueTitles).filter(t => !usedAliases.has(t) && !selectedProduct?.aliases?.includes(t)).sort();
+  }, [products, shopifyOrders, selectedProduct]);
+
   const toggleSelect = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const newSet = new Set(selectedIds);
@@ -160,6 +184,24 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
     const newHistory = [...selectedProduct.cost_history];
     newHistory.splice(index, 1);
     const updated = { ...selectedProduct, cost_history: newHistory };
+    setSelectedProduct(updated);
+    await handleUpdateAndSave([updated]);
+  };
+
+  const handleAddAlias = async (alias: string) => {
+    if (!selectedProduct) return;
+    const currentAliases = selectedProduct.aliases || [];
+    if (currentAliases.includes(alias)) return;
+    
+    const updated = { ...selectedProduct, aliases: [...currentAliases, alias] };
+    setSelectedProduct(updated);
+    await handleUpdateAndSave([updated]);
+  };
+
+  const handleRemoveAlias = async (alias: string) => {
+    if (!selectedProduct) return;
+    const currentAliases = selectedProduct.aliases || [];
+    const updated = { ...selectedProduct, aliases: currentAliases.filter(a => a !== alias) };
     setSelectedProduct(updated);
     await handleUpdateAndSave([updated]);
   };
@@ -533,6 +575,53 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
                                 </div>
                             ))}
                         </div>
+                    </div>
+
+                    {/* Linked Shopify Items Section */}
+                    <div className="border-t border-slate-100 pt-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide flex items-center gap-2">
+                                <LinkIcon size={14} /> Linked Store Items
+                            </label>
+                        </div>
+                        
+                        {/* List Existing */}
+                        <div className="flex flex-wrap gap-2 mb-4">
+                            {selectedProduct.aliases && selectedProduct.aliases.length > 0 ? (
+                                selectedProduct.aliases.map(alias => (
+                                    <span key={alias} className="inline-flex items-center gap-1 px-2 py-1 rounded bg-indigo-50 text-indigo-700 text-xs border border-indigo-100">
+                                        <span className="truncate max-w-[150px]" title={alias}>{alias}</span>
+                                        <button onClick={() => handleRemoveAlias(alias)} className="hover:text-red-600"><X size={12} /></button>
+                                    </span>
+                                ))
+                            ) : (
+                                <span className="text-xs text-slate-400 italic">No Shopify products linked.</span>
+                            )}
+                        </div>
+
+                        {/* Add New */}
+                        <div className="flex gap-2">
+                            <select 
+                                className="flex-1 px-2 py-1.5 border rounded text-xs outline-none focus:border-indigo-500 text-slate-700 bg-white"
+                                value={selectedAliasToAdd}
+                                onChange={(e) => setSelectedAliasToAdd(e.target.value)}
+                            >
+                                <option value="">Select Unmapped Shopify Product...</option>
+                                {unmappedShopifyTitles.map(t => (
+                                    <option key={t} value={t}>{t}</option>
+                                ))}
+                            </select>
+                            <button 
+                                disabled={!selectedAliasToAdd}
+                                onClick={() => { handleAddAlias(selectedAliasToAdd); setSelectedAliasToAdd(''); }}
+                                className="p-1.5 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+                            >
+                                <Plus size={16} />
+                            </button>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
+                            Sales with these titles will be attributed to this inventory item.
+                        </p>
                     </div>
                 </div>
             </div>
