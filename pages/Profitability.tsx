@@ -264,6 +264,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
                       marketing_purchases: 0,
                       shopify_total_orders: 0,
                       shopify_confirmed_orders: 0,
+                      associatedShopifyOrders: [],
                       net_profit: 0,
                       rto_rate: 0,
                       variants: []
@@ -292,7 +293,8 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
               // Sum Up Shopify Stats
               group.shopify_total_orders += stat.shopify_total_orders;
               group.shopify_confirmed_orders += stat.shopify_confirmed_orders;
-              
+              group.associatedShopifyOrders = [...group.associatedShopifyOrders, ...stat.associatedShopifyOrders];
+
               group.net_profit += stat.net_profit;
           } else {
               singles.push(stat);
@@ -594,7 +596,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
             const { totalUnits, breakevenCpr, actualCpr, pCent, avgSellingPrice, avgCostPrice, denominator } = getDetailStats(selectedProduct);
             return (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-                    <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                    <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
                         {/* Header */}
                         <div className="p-6 border-b border-slate-100 flex justify-between items-start bg-slate-50">
                             <div>
@@ -766,6 +768,56 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
                                             Cost of inventory in <strong>Returned</strong> or <strong>RTO Initiated</strong> state. This stock is considered temporarily unsellable.
                                         </p>
                                     </div>
+                                </div>
+                            </div>
+
+                            {/* 5. Shopify Order Source List (NEW) */}
+                            <div className="border-t border-slate-100 pt-4">
+                                <h4 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
+                                    <ShoppingBag size={18} className="text-slate-500"/> Shopify Order Source
+                                </h4>
+                                <div className="overflow-x-auto rounded-lg border border-slate-200">
+                                    <table className="w-full text-left text-xs">
+                                        <thead className="bg-slate-50 border-b border-slate-200">
+                                            <tr>
+                                                <th className="px-3 py-2 font-semibold text-slate-600">Order</th>
+                                                <th className="px-3 py-2 font-semibold text-slate-600">Date</th>
+                                                <th className="px-3 py-2 font-semibold text-slate-600">Customer</th>
+                                                <th className="px-3 py-2 font-semibold text-slate-600">Fulfillment</th>
+                                                <th className="px-3 py-2 font-semibold text-slate-600">Payment</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {selectedProduct.associatedShopifyOrders.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={5} className="px-3 py-4 text-center text-slate-400 italic">
+                                                        No mapped Shopify orders found.
+                                                    </td>
+                                                </tr>
+                                            ) : selectedProduct.associatedShopifyOrders.map((o) => {
+                                                const isFulfilled = o.fulfillment_status === 'fulfilled' || o.fulfillment_status === 'partial';
+                                                return (
+                                                    <tr key={o.id} className="hover:bg-slate-50">
+                                                        <td className="px-3 py-2 font-medium text-indigo-600">{o.name}</td>
+                                                        <td className="px-3 py-2 text-slate-600">{new Date(o.created_at).toLocaleDateString()}</td>
+                                                        <td className="px-3 py-2 text-slate-800">
+                                                            {o.customer ? `${o.customer.first_name} (${o.customer.city || '?'})` : 'Unknown'}
+                                                        </td>
+                                                        <td className="px-3 py-2">
+                                                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${isFulfilled ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                                                                {o.fulfillment_status ? o.fulfillment_status.toUpperCase() : 'UNFULFILLED'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-3 py-2">
+                                                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${o.financial_status === 'paid' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
+                                                                {o.financial_status.toUpperCase()}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
                                 </div>
                             </div>
 

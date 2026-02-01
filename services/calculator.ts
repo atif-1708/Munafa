@@ -252,6 +252,7 @@ export interface ProductPerformance {
   // NEW Metrics
   shopify_total_orders: number; // Raw Shopify Demand (All Statuses)
   shopify_confirmed_orders: number; // Fulfilled/Partial Shopify Orders
+  associatedShopifyOrders: ShopifyOrder[]; // Actual list of orders
   marketing_purchases: number; // Legacy Pixel data (kept for reference)
   
   net_profit: number;
@@ -295,6 +296,7 @@ export const calculateProductPerformance = (
             marketing_purchases: 0, 
             shopify_total_orders: 0,
             shopify_confirmed_orders: 0,
+            associatedShopifyOrders: [],
             net_profit: 0,
             rto_rate: 0
         };
@@ -336,7 +338,7 @@ export const calculateProductPerformance = (
                  gross_revenue: 0, cogs_total: 0, gross_profit: 0, cash_in_stock: 0,
                  shipping_cost_allocation: 0, overhead_allocation: 0, tax_allocation: 0,
                  ad_spend_allocation: 0, marketing_purchases: 0, 
-                 shopify_total_orders: 0, shopify_confirmed_orders: 0,
+                 shopify_total_orders: 0, shopify_confirmed_orders: 0, associatedShopifyOrders: [],
                  net_profit: 0, rto_rate: 0
              };
              orderTracker[key] = new Set();
@@ -433,6 +435,8 @@ export const calculateProductPerformance = (
             if (isConfirmed) {
                 perf[matchedKey].shopify_confirmed_orders += 1;
             }
+            // Store reference for detail view
+            perf[matchedKey].associatedShopifyOrders.push(order);
         }
   });
 
