@@ -160,7 +160,7 @@ export const getCostAtDate = (product: Product, dateStr: string): number => {
 };
 
 // --- Helper: Normalize Title for Fuzzy Match ---
-export const normalizeProductTitle = (title: string): string => {
+const normalizeProductTitle = (title: string): string => {
     if (!title) return '';
     return title
         .toLowerCase()
