@@ -13,6 +13,9 @@ create policy "Users can all own products" on products for all
 using ( auth.uid() = user_id ) 
 with check ( auth.uid() = user_id );
 
+-- 3. Add Aliases Column for Manual Mapping
+alter table products add column if not exists aliases text[] default array[]::text[];
+
 -- =================================================================
 -- END OF CRITICAL FIX
 -- =================================================================

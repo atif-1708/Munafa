@@ -154,7 +154,8 @@ const App: React.FC = () => {
                     current_cogs: p.current_cogs,
                     cost_history: p.cost_history || [],
                     group_id: p.group_id,
-                    group_name: p.group_name
+                    group_name: p.group_name,
+                    aliases: p.aliases || [] // Load aliases
                 }));
             }
         }
@@ -258,7 +259,8 @@ const App: React.FC = () => {
                                 variant_fingerprint: fingerprint,
                                 image_url: '',
                                 current_cogs: 0,
-                                cost_history: []
+                                cost_history: [],
+                                aliases: []
                             });
                         }
                     });
@@ -349,11 +351,39 @@ const App: React.FC = () => {
               current_cogs: p.current_cogs,
               cost_history: p.cost_history,
               group_id: p.group_id,
-              group_name: p.group_name
+              group_name: p.group_name,
+              aliases: p.aliases
           }));
           const { error } = await supabase.from('products').upsert(payload);
           if (error) console.error("Failed to save product updates:", error);
       }
+  };
+
+  const handleMapProduct = async (shopifyTitle: string, systemProductId: string) => {
+      // Find the target system product
+      const targetProduct = products.find(p => p.id === systemProductId);
+      if(!targetProduct) return;
+
+      // Add alias (ensure unique)
+      const currentAliases = targetProduct.aliases || [];
+      if(currentAliases.includes(shopifyTitle)) return;
+      
+      const updatedProduct = { 
+          ...targetProduct, 
+          aliases: [...currentAliases, shopifyTitle] 
+      };
+
+      // Ensure no other product claims this alias (Clean up old mappings)
+      const cleanedProducts = products.map(p => {
+          if (p.id === systemProductId) return updatedProduct;
+          if (p.aliases && p.aliases.includes(shopifyTitle)) {
+              return { ...p, aliases: p.aliases.filter(a => a !== shopifyTitle) };
+          }
+          return p;
+      });
+
+      // Update UI & DB
+      await handleUpdateProducts(cleanedProducts);
   };
   
   const handleUpdateAdSpend = async (newAds: AdSpend[]) => {
@@ -555,7 +585,7 @@ const App: React.FC = () => {
                 {currentPage === 'marketing' && <Marketing adSpend={adSpend} products={products} orders={orders} onAddAdSpend={handleUpdateAdSpend} onDeleteAdSpend={handleDeleteAdSpend} onSyncAdSpend={handleSyncAdSpend} onNavigate={setCurrentPage} />}
                 {currentPage === 'integrations' && <Integrations onConfigUpdate={() => setRefreshTrigger(prev => prev + 1)} />}
                 {currentPage === 'settings' && <Settings onUpdateStoreName={setStoreName} />}
-                {currentPage === 'reconciliation' && <Reconciliation shopifyOrders={shopifyOrders} courierOrders={orders} products={products} storeName={storeName} />}
+                {currentPage === 'reconciliation' && <Reconciliation shopifyOrders={shopifyOrders} courierOrders={orders} products={products} storeName={storeName} onMapProduct={handleMapProduct} />}
             </>
         )}
       </div>

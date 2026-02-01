@@ -42,6 +42,9 @@ export interface Product {
   // NEW: Grouping Fields
   group_id?: string | null;
   group_name?: string | null;
+
+  // NEW: Manual Mapping / Aliases
+  aliases?: string[]; // Array of alternate titles (e.g. from Shopify)
 }
 
 export interface OrderItem {

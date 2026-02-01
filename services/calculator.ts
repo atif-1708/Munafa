@@ -270,6 +270,19 @@ export const calculateProductPerformance = (
   const perf: Record<string, ProductPerformance> = {};
   const orderTracker: Record<string, Set<string>> = {};
 
+  // Helper to find product by alias or name
+  const findMatchingProduct = (name: string): Product | undefined => {
+      // 1. Check Aliases (Highest Priority)
+      const aliasMatch = products.find(p => p.aliases && p.aliases.includes(name));
+      if (aliasMatch) return aliasMatch;
+
+      // 2. Check Title Exact
+      const titleMatch = products.find(p => p.title === name);
+      if (titleMatch) return titleMatch;
+      
+      return undefined;
+  };
+
   // 1. Initialize from Product Definitions
   products.forEach(p => {
     const lookupKey = p.title; 
@@ -326,7 +339,8 @@ export const calculateProductPerformance = (
         const productDef = 
             products.find(p => p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) || 
             products.find(p => p.sku === item.sku) ||
-            products.find(p => p.id === item.product_id);
+            products.find(p => p.id === item.product_id) ||
+            findMatchingProduct(item.product_name); // Fallback to name/alias
         
         const key = productDef ? productDef.title : item.product_name;
         
@@ -407,27 +421,33 @@ export const calculateProductPerformance = (
         const item = order.line_items[0];
 
         const isConfirmed = order.fulfillment_status === 'fulfilled' || order.fulfillment_status === 'partial';
-        const itemTitleNorm = normalizeProductTitle(item.title);
         
-        // Try matching to existing performance keys
-        const allKeys = Object.keys(perf);
+        // --- NEW MATCHING LOGIC ---
+        // 1. Check Explicit Aliases (Manual Mapping)
+        let matchedProduct = products.find(p => p.aliases && p.aliases.includes(item.title));
+        
         let matchedKey: string | null = null;
         
-        // 1. Exact Title Match (fast)
-        if (perf[item.title]) {
-            matchedKey = item.title;
+        if (matchedProduct) {
+             matchedKey = matchedProduct.title;
         } else {
-            // 2. Normalized Exact Match
-            matchedKey = allKeys.find(k => normalizeProductTitle(k) === itemTitleNorm) || null;
-            
-            // 3. Smart Contains Match (aggressive fuzzy match)
-            if (!matchedKey) {
-                matchedKey = allKeys.find(k => {
-                    const kNorm = normalizeProductTitle(k);
-                    // Match if one contains the other, ensure reasonable length to avoid 'a' matching 'apple'
-                    return kNorm.length > 2 && itemTitleNorm.length > 2 && (kNorm.includes(itemTitleNorm) || itemTitleNorm.includes(kNorm));
-                }) || null;
-            }
+             // 2. Exact Title Match
+             if (perf[item.title]) {
+                 matchedKey = item.title;
+             } else {
+                 // 3. Normalized Fuzzy Match
+                 const itemTitleNorm = normalizeProductTitle(item.title);
+                 const allKeys = Object.keys(perf);
+                 matchedKey = allKeys.find(k => normalizeProductTitle(k) === itemTitleNorm) || null;
+                 
+                 // 4. Smart Contains Match (aggressive fuzzy match)
+                 if (!matchedKey) {
+                     matchedKey = allKeys.find(k => {
+                         const kNorm = normalizeProductTitle(k);
+                         return kNorm.length > 2 && itemTitleNorm.length > 2 && (kNorm.includes(itemTitleNorm) || itemTitleNorm.includes(kNorm));
+                     }) || null;
+                 }
+             }
         }
 
         if (matchedKey) {

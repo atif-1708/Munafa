@@ -1,7 +1,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { Order, ShopifyOrder, Product, OrderStatus } from '../types';
-import { Search, Download, Package, ArrowRight, Calendar } from 'lucide-react';
+import { Search, Download, Package, ArrowRight, Calendar, Link, CheckCircle2, X } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -10,10 +10,11 @@ interface ReconciliationProps {
   courierOrders: Order[];
   products: Product[];
   storeName?: string;
+  onMapProduct?: (shopifyTitle: string, systemProductId: string) => void;
 }
 
 interface ProductStat {
-  id: string;
+  id: string; // This might be shopify variant ID or generic
   title: string;
   sku: string;
   total_ordered: number;
@@ -23,11 +24,19 @@ interface ProductStat {
   dispatched: number;
   delivered: number;
   rto: number;
+  
+  // Mapping info
+  mappedToSystemId?: string;
+  mappedToSystemTitle?: string;
 }
 
-const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierOrders, storeName = 'My Store' }) => {
+const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierOrders, products, storeName = 'My Store', onMapProduct }) => {
   const [searchTerm, setSearchTerm] = useState('');
   
+  // Mapping Modal State
+  const [mappingModal, setMappingModal] = useState<{ isOpen: boolean, shopifyTitle: string } | null>(null);
+  const [selectedSystemProduct, setSelectedSystemProduct] = useState('');
+
   // Default to Last 60 Days
   const [dateRange, setDateRange] = useState(() => {
     const end = new Date();
@@ -46,7 +55,6 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
     // Create a lookup map for Courier Orders (by Shopify Order Number)
     const courierMap = new Map<string, Order>();
     courierOrders.forEach(co => {
-        // Normalize keys: "#1001" -> "1001"
         const key = co.shopify_order_number.replace('#', '').trim();
         courierMap.set(key, co);
     });
@@ -56,7 +64,6 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
     const end = new Date(dateRange.end);
     end.setHours(23, 59, 59, 999);
 
-    // DEDUPLICATION: Ensure each Shopify Order ID is processed exactly ONCE
     const uniqueOrders = new Map<number, ShopifyOrder>();
     shopifyOrders.forEach(order => {
         const orderDate = new Date(order.created_at);
@@ -67,23 +74,19 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
         }
     });
 
-    // Iterate over UNIQUE orders only
     uniqueOrders.forEach(order => {
-        // Normalize key
         const orderKey = order.name.replace('#', '').trim();
         const courierOrder = courierMap.get(orderKey);
 
         const isCancelled = order.cancel_reason !== null;
-        const isFulfilled = order.fulfillment_status === 'fulfilled'; // strict check for 'fulfilled'
-        const isPending = !isCancelled && !isFulfilled; // Roughly "Unfulfilled" or "Partial"
+        const isFulfilled = order.fulfillment_status === 'fulfilled'; 
+        const isPending = !isCancelled && !isFulfilled;
 
-        // Courier Status Flags
         let isDispatched = false;
         let isDelivered = false;
         let isRto = false;
 
         if (courierOrder) {
-            // If it exists in courier and isn't just 'Booked' or 'Cancelled' or 'Pending', we consider it dispatched/handed over
             if (courierOrder.status !== OrderStatus.PENDING && 
                 courierOrder.status !== OrderStatus.BOOKED && 
                 courierOrder.status !== OrderStatus.CANCELLED) {
@@ -93,29 +96,34 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
             if (courierOrder.status === OrderStatus.RETURNED || courierOrder.status === OrderStatus.RTO_INITIATED) isRto = true;
         }
 
-        // Logic: ONLY count the first item in the order as requested to assign the Order to a primary product
         if (order.line_items.length > 0) {
             const item = order.line_items[0];
-            const key = item.title; // Grouping Key: TITLE ONLY
+            const key = item.title; 
 
             if (!stats.has(key)) {
+                // Determine if mapped
+                // Check if this title exists in any product's aliases or is a title match
+                const matchedProduct = products.find(p => 
+                    (p.aliases && p.aliases.includes(item.title)) || p.title === item.title
+                );
+
                 stats.set(key, {
                     id: String(item.variant_id),
                     title: item.title,
-                    sku: 'VARIOUS', // Merged
+                    sku: 'VARIOUS',
                     total_ordered: 0,
                     pending_fulfillment: 0,
                     fulfilled: 0,
                     cancelled: 0,
                     dispatched: 0,
                     delivered: 0,
-                    rto: 0
+                    rto: 0,
+                    mappedToSystemId: matchedProduct?.id,
+                    mappedToSystemTitle: matchedProduct?.title
                 });
             }
 
             const stat = stats.get(key)!;
-            
-            // STRICTLY COUNT 1 PER ORDER (Not Quantity)
             stat.total_ordered += 1;
 
             if (isCancelled) {
@@ -123,9 +131,6 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
             } else {
                 if (isPending) stat.pending_fulfillment += 1;
                 if (isFulfilled) stat.fulfilled += 1;
-
-                // Courier Metrics (Strictly Order Count)
-                // We add 1 if the condition is met, IGNORING item quantity
                 if (isDispatched) stat.dispatched += 1;
                 if (isDelivered) stat.delivered += 1;
                 if (isRto) stat.rto += 1;
@@ -134,9 +139,8 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
     });
 
     return Array.from(stats.values()).sort((a,b) => b.total_ordered - a.total_ordered);
-  }, [shopifyOrders, courierOrders, dateRange]);
+  }, [shopifyOrders, courierOrders, dateRange, products]); // Added products dependency
 
-  // 2. Filter by Search
   const filteredStats = useMemo(() => {
       return productStats.filter(p => 
           p.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -146,24 +150,18 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
 
   const handleExport = () => {
     const doc = new jsPDF();
-    
-    // Header
-    doc.setTextColor(20, 83, 45); // Brand Green color (approximate)
+    doc.setTextColor(20, 83, 45);
     doc.setFontSize(22);
     doc.text("MunafaBakhsh Karobaar", 14, 20);
     
-    doc.setTextColor(100); // Grey
+    doc.setTextColor(100);
     doc.setFontSize(10);
     doc.text("eCommerce Intelligence Platform", 14, 25);
-
     doc.setDrawColor(200);
     doc.line(14, 30, 196, 30);
-
-    // Report Info
     doc.setTextColor(0);
     doc.setFontSize(14);
     doc.text(`${storeName} - Product Performance Report`, 14, 40);
-    
     doc.setFontSize(10);
     doc.setTextColor(100);
     doc.text(`Period: ${dateRange.start} to ${dateRange.end}`, 14, 46);
@@ -171,37 +169,25 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
     const rows = filteredStats.map(r => {
         const total = r.total_ordered;
         const disp = r.dispatched;
-        
-        // Helper for %
         const p = (val: number, base: number) => base > 0 ? `(${Math.round((val/base)*100)}%)` : '';
-
         return [
             r.title,
             r.total_ordered,
             `${r.pending_fulfillment} ${p(r.pending_fulfillment, total)}`,
             `${r.fulfilled} ${p(r.fulfilled, total)}`,
             `${r.dispatched} ${p(r.dispatched, total)}`,
-            `${r.delivered} ${p(r.delivered, disp)}`, // Rel to dispatched
-            `${r.rto} ${p(r.rto, disp)}` // Rel to dispatched
+            `${r.delivered} ${p(r.delivered, disp)}`, 
+            `${r.rto} ${p(r.rto, disp)}` 
         ];
     });
 
     autoTable(doc, {
-        head: [['Product', 'Total Orders', 'Pending Orders', 'Fulfilled Orders', 'Dispatched Orders', 'Delivered Orders', 'RTO Orders']],
+        head: [['Product', 'Total Orders', 'Pending', 'Fulfilled', 'Dispatched', 'Delivered', 'RTO']],
         body: rows,
         startY: 55,
         theme: 'grid',
-        headStyles: { fillColor: [22, 163, 74] }, // Brand Green
+        headStyles: { fillColor: [22, 163, 74] },
         styles: { fontSize: 8, cellPadding: 3 },
-        columnStyles: {
-            0: { cellWidth: 60 }, // Product Name
-            1: { halign: 'center' },
-            2: { halign: 'center' },
-            3: { halign: 'center' },
-            4: { halign: 'center' },
-            5: { halign: 'center' },
-            6: { halign: 'center', textColor: [220, 38, 38] } // Red for RTO
-        }
     });
     doc.save('Reconciliation_Report.pdf');
   };
@@ -209,6 +195,19 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
   const getPercentage = (val: number, total: number) => {
       if (total === 0) return '';
       return `${Math.round((val / total) * 100)}%`;
+  };
+
+  const openMapping = (shopifyTitle: string) => {
+      setMappingModal({ isOpen: true, shopifyTitle });
+      setSelectedSystemProduct('');
+  };
+
+  const saveMapping = () => {
+      if(mappingModal && selectedSystemProduct && onMapProduct) {
+          onMapProduct(mappingModal.shopifyTitle, selectedSystemProduct);
+          setMappingModal(null);
+          setSelectedSystemProduct('');
+      }
   };
 
   return (
@@ -220,7 +219,6 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
         </div>
         
         <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
-             {/* Date Filter */}
              <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm">
                 <Calendar size={16} className="text-slate-500" />
                 <input 
@@ -258,15 +256,15 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
         <table className="w-full text-left text-sm">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 uppercase text-xs font-bold tracking-wider">
                 <tr>
-                    <th className="px-6 py-4 w-[30%]">Product (First Item)</th>
-                    <th className="px-4 py-4 text-center text-slate-500">Total Orders</th>
-                    <th className="px-4 py-4 text-center text-orange-600 bg-orange-50/50">Pending Orders</th>
-                    <th className="px-4 py-4 text-center text-blue-600 bg-blue-50/50">Fulfilled Orders</th>
-                    <th className="px-4 py-4 text-center text-red-400">Cancelled</th>
-                    <th className="px-1 py-4 w-6"></th> {/* Arrow */}
-                    <th className="px-4 py-4 text-center text-purple-600 bg-purple-50/50">Dispatched Orders</th>
-                    <th className="px-4 py-4 text-center text-green-600 bg-green-50/50">Delivered Orders</th>
-                    <th className="px-4 py-4 text-center text-red-600 bg-red-50/50">RTO Orders</th>
+                    <th className="px-6 py-4 w-[25%]">Product (First Item)</th>
+                    <th className="px-4 py-4 w-[20%]">Linked Product</th>
+                    <th className="px-4 py-4 text-center text-slate-500">Total</th>
+                    <th className="px-4 py-4 text-center text-orange-600 bg-orange-50/50">Pending</th>
+                    <th className="px-4 py-4 text-center text-blue-600 bg-blue-50/50">Fulfilled</th>
+                    <th className="px-1 py-4 w-6"></th> 
+                    <th className="px-4 py-4 text-center text-purple-600 bg-purple-50/50">Dispatched</th>
+                    <th className="px-4 py-4 text-center text-green-600 bg-green-50/50">Delivered</th>
+                    <th className="px-4 py-4 text-center text-red-600 bg-red-50/50">RTO</th>
                 </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -280,84 +278,131 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                                     <Package size={18} />
                                 </div>
                                 <div className="min-w-0">
-                                    <div className="font-medium text-slate-900 truncate max-w-[250px]" title={item.title}>{item.title}</div>
-                                    <div className="text-xs text-slate-400 font-mono">{item.sku}</div>
+                                    <div className="font-medium text-slate-900 truncate max-w-[200px]" title={item.title}>{item.title}</div>
                                 </div>
                             </div>
                         </td>
 
-                        {/* Shopify Stats */}
+                        {/* Mapped Product Column */}
+                        <td className="px-4 py-4">
+                            {item.mappedToSystemTitle ? (
+                                <div className="flex items-center justify-between group">
+                                    <div className="flex items-center gap-1.5 text-green-700">
+                                        <CheckCircle2 size={14} className="shrink-0" />
+                                        <span className="truncate max-w-[120px] text-xs font-bold" title={item.mappedToSystemTitle}>
+                                            {item.mappedToSystemTitle}
+                                        </span>
+                                    </div>
+                                    <button 
+                                        onClick={() => openMapping(item.title)}
+                                        className="text-slate-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                                        title="Edit Link"
+                                    >
+                                        <Link size={14} />
+                                    </button>
+                                </div>
+                            ) : (
+                                <button 
+                                    onClick={() => openMapping(item.title)}
+                                    className="flex items-center gap-1.5 text-slate-400 hover:text-indigo-600 transition-colors text-xs font-medium border border-dashed border-slate-300 rounded px-2 py-1 hover:border-indigo-300 hover:bg-indigo-50"
+                                >
+                                    <Link size={12} /> Link to Inventory
+                                </button>
+                            )}
+                        </td>
+
                         <td className="px-4 py-4 text-center font-bold text-slate-800">
                             {item.total_ordered}
                         </td>
                         <td className="px-4 py-4 text-center bg-orange-50/30">
-                            <div className="flex flex-col items-center">
-                                <span className={`font-medium ${item.pending_fulfillment > 0 ? 'text-orange-600' : 'text-slate-300'}`}>
-                                    {item.pending_fulfillment}
-                                </span>
-                                {item.pending_fulfillment > 0 && <span className="text-[10px] text-orange-600/70">{getPercentage(item.pending_fulfillment, item.total_ordered)}</span>}
-                            </div>
+                            <span className={`font-medium ${item.pending_fulfillment > 0 ? 'text-orange-600' : 'text-slate-300'}`}>
+                                {item.pending_fulfillment}
+                            </span>
                         </td>
                         <td className="px-4 py-4 text-center bg-blue-50/30">
-                             <div className="flex flex-col items-center">
-                                 <span className={`font-medium ${item.fulfilled > 0 ? 'text-blue-600' : 'text-slate-300'}`}>
-                                    {item.fulfilled}
-                                </span>
-                                {item.fulfilled > 0 && <span className="text-[10px] text-blue-600/70">{getPercentage(item.fulfilled, item.total_ordered)}</span>}
-                             </div>
-                        </td>
-                        <td className="px-4 py-4 text-center">
-                            <div className="flex flex-col items-center">
-                                <span className={`font-medium ${item.cancelled > 0 ? 'text-red-400' : 'text-slate-200'}`}>
-                                    {item.cancelled}
-                                </span>
-                                {item.cancelled > 0 && <span className="text-[10px] text-red-400/70">{getPercentage(item.cancelled, item.total_ordered)}</span>}
-                            </div>
+                            <span className={`font-medium ${item.fulfilled > 0 ? 'text-blue-600' : 'text-slate-300'}`}>
+                                {item.fulfilled}
+                            </span>
                         </td>
 
-                        {/* Spacer/Arrow */}
                         <td className="px-1 py-4 text-center text-slate-300">
                             <ArrowRight size={14} />
                         </td>
 
-                        {/* Courier Stats */}
                          <td className="px-4 py-4 text-center bg-purple-50/30">
-                            <div className="flex flex-col items-center">
-                                <span className={`font-medium ${item.dispatched > 0 ? 'text-purple-600' : 'text-slate-300'}`}>
-                                    {item.dispatched}
-                                </span>
-                                {item.dispatched > 0 && <span className="text-[10px] text-purple-600/70">{getPercentage(item.dispatched, item.total_ordered)}</span>}
-                            </div>
+                            <span className={`font-medium ${item.dispatched > 0 ? 'text-purple-600' : 'text-slate-300'}`}>
+                                {item.dispatched}
+                            </span>
                         </td>
                          <td className="px-4 py-4 text-center bg-green-50/30">
-                            <div className="flex flex-col items-center">
-                                <span className={`font-bold ${item.delivered > 0 ? 'text-green-600' : 'text-slate-300'}`}>
-                                    {item.delivered}
-                                </span>
-                                {item.dispatched > 0 && (
-                                    <span className="text-[10px] text-green-600/70">
-                                        {Math.round((item.delivered / item.dispatched) * 100)}%
-                                    </span>
-                                )}
-                            </div>
+                            <span className={`font-bold ${item.delivered > 0 ? 'text-green-600' : 'text-slate-300'}`}>
+                                {item.delivered}
+                            </span>
                         </td>
                          <td className="px-4 py-4 text-center bg-red-50/30">
-                             <div className="flex flex-col items-center">
-                                <span className={`font-bold ${item.rto > 0 ? 'text-red-600' : 'text-slate-300'}`}>
-                                    {item.rto}
-                                </span>
-                                {item.dispatched > 0 && item.rto > 0 && (
-                                    <span className="text-[10px] text-red-400">
-                                        {Math.round((item.rto / item.dispatched) * 100)}%
-                                    </span>
-                                )}
-                            </div>
+                             <span className={`font-bold ${item.rto > 0 ? 'text-red-600' : 'text-slate-300'}`}>
+                                {item.rto}
+                            </span>
                         </td>
                     </tr>
                 ))}
             </tbody>
         </table>
       </div>
+
+      {/* Mapping Modal */}
+      {mappingModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+              <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+                  <div className="flex justify-between items-start mb-4">
+                      <h3 className="text-lg font-bold text-slate-900">Map Product</h3>
+                      <button onClick={() => setMappingModal(null)} className="text-slate-400 hover:text-slate-600">
+                          <X size={20} />
+                      </button>
+                  </div>
+                  
+                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 mb-6">
+                      <p className="text-xs text-slate-500 uppercase font-bold mb-1">Shopify Item Title</p>
+                      <p className="font-medium text-slate-900">{mappingModal.shopifyTitle}</p>
+                  </div>
+
+                  <div className="mb-6">
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Link to System Product</label>
+                      <select 
+                          className="w-full px-4 py-2.5 border rounded-lg text-sm bg-white focus:ring-2 focus:ring-brand-500 outline-none"
+                          value={selectedSystemProduct}
+                          onChange={(e) => setSelectedSystemProduct(e.target.value)}
+                      >
+                          <option value="">-- Select Master Product --</option>
+                          {products.map(p => (
+                              <option key={p.id} value={p.id}>
+                                  {p.title} {p.sku ? `(${p.sku})` : ''}
+                              </option>
+                          ))}
+                      </select>
+                      <p className="text-xs text-slate-400 mt-2">
+                          All orders for "{mappingModal.shopifyTitle}" will be calculated under the selected product in Profitability reports.
+                      </p>
+                  </div>
+
+                  <div className="flex gap-3">
+                      <button 
+                        onClick={() => setMappingModal(null)}
+                        className="flex-1 py-2.5 bg-white border border-slate-300 text-slate-600 rounded-lg text-sm font-bold hover:bg-slate-50"
+                      >
+                          Cancel
+                      </button>
+                      <button 
+                        onClick={saveMapping}
+                        disabled={!selectedSystemProduct}
+                        className="flex-1 py-2.5 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800 disabled:opacity-50"
+                      >
+                          Save Mapping
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
     </div>
   );
 };
