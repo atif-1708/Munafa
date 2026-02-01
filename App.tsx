@@ -484,7 +484,7 @@ const App: React.FC = () => {
                 {currentPage === 'orders' && <Orders orders={orders} />}
                 {currentPage === 'reconciliation' && <Reconciliation shopifyOrders={shopifyOrders} courierOrders={orders} products={products} storeName={storeName} />}
                 {currentPage === 'couriers' && <Couriers orders={orders} />}
-                {currentPage === 'profitability' && <Profitability orders={orders} products={products} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} storeName={storeName} />}
+                {currentPage === 'profitability' && <Profitability orders={orders} shopifyOrders={shopifyOrders} products={products} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} storeName={storeName} />}
                 {currentPage === 'inventory' && <Inventory products={products} orders={orders} onUpdateProducts={handleUpdateProducts} />}
                 {currentPage === 'marketing' && (
                     <Marketing 

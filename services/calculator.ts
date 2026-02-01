@@ -162,6 +162,18 @@ export const getCostAtDate = (product: Product, dateStr: string): number => {
     return applicable ? applicable.cogs : sortedHistory[sortedHistory.length - 1].cogs;
 };
 
+// --- Helper: Normalize Title for Fuzzy Match ---
+const normalizeProductTitle = (title: string): string => {
+    if (!title) return '';
+    return title
+        .toLowerCase()
+        .replace(/\(.*\)/g, '') // Remove (anything)
+        .replace(/\[.*\]/g, '') // Remove [anything]
+        .replace(/-.*/g, '')    // Remove - anything (often variant name)
+        .replace(/\d+x/g, '')   // Remove 2x, 3x (quantity markers)
+        .trim();
+};
+
 // --- Analytical Helpers ---
 
 export interface CourierStats {
@@ -227,7 +239,7 @@ export interface ProductPerformance {
   units_sold: number;
   units_returned: number;
   units_in_transit: number; 
-  real_order_count: number; // NEW: Unique Dispatched Orders count (ignoring quantity)
+  real_order_count: number; 
   gross_revenue: number;
   cogs_total: number;
   gross_profit: number; 
@@ -236,7 +248,12 @@ export interface ProductPerformance {
   overhead_allocation: number;
   tax_allocation: number;
   ad_spend_allocation: number;
-  marketing_purchases: number; // Facebook Pixel Purchase Count
+  
+  // NEW Metrics
+  shopify_total_orders: number; // Raw Shopify Demand (All Statuses)
+  shopify_confirmed_orders: number; // Fulfilled/Partial Shopify Orders
+  marketing_purchases: number; // Legacy Pixel data (kept for reference)
+  
   net_profit: number;
   rto_rate: number;
 }
@@ -245,7 +262,8 @@ export const calculateProductPerformance = (
     orders: Order[], 
     products: Product[],
     adSpend: AdSpend[] = [],
-    adsTaxRate: number = 0
+    adsTaxRate: number = 0,
+    shopifyOrders: ShopifyOrder[] = [] // New Param
 ): ProductPerformance[] => {
   // Aggregate by TITLE instead of SKU/ID
   const perf: Record<string, ProductPerformance> = {};
@@ -275,6 +293,8 @@ export const calculateProductPerformance = (
             tax_allocation: 0,
             ad_spend_allocation: 0,
             marketing_purchases: 0, 
+            shopify_total_orders: 0,
+            shopify_confirmed_orders: 0,
             net_profit: 0,
             rto_rate: 0
         };
@@ -315,7 +335,9 @@ export const calculateProductPerformance = (
                  units_sold: 0, units_returned: 0, units_in_transit: 0, real_order_count: 0,
                  gross_revenue: 0, cogs_total: 0, gross_profit: 0, cash_in_stock: 0,
                  shipping_cost_allocation: 0, overhead_allocation: 0, tax_allocation: 0,
-                 ad_spend_allocation: 0, marketing_purchases: 0, net_profit: 0, rto_rate: 0
+                 ad_spend_allocation: 0, marketing_purchases: 0, 
+                 shopify_total_orders: 0, shopify_confirmed_orders: 0,
+                 net_profit: 0, rto_rate: 0
              };
              orderTracker[key] = new Set();
         }
@@ -376,6 +398,49 @@ export const calculateProductPerformance = (
               perf[key].marketing_purchases += purchases;
           }
       }
+  });
+
+  // 4. Process Shopify Orders for Demand & CPA
+  // We use deduplication to ensure each Order is only counted once per product, regardless of how many line items of that product exist.
+  // Actually, standard logic is 1 order per ID.
+  shopifyOrders.forEach(order => {
+        const isConfirmed = order.fulfillment_status === 'fulfilled' || order.fulfillment_status === 'partial';
+
+        // Set to track which products have already been counted for this order
+        const countedProducts = new Set<string>();
+
+        order.line_items.forEach(item => {
+            const itemTitleNorm = normalizeProductTitle(item.title);
+            
+            // Try matching
+            const allKeys = Object.keys(perf);
+            let matchedKey: string | null = null;
+            
+            // 1. Exact Title Match (fast)
+            if (perf[item.title]) {
+                matchedKey = item.title;
+            } else {
+                // 2. Normalized Exact Match
+                matchedKey = allKeys.find(k => normalizeProductTitle(k) === itemTitleNorm) || null;
+                
+                // 3. Smart Contains Match (if exact failed)
+                // "Product A (Black)" vs "Product A"
+                if (!matchedKey) {
+                    matchedKey = allKeys.find(k => {
+                        const kNorm = normalizeProductTitle(k);
+                        return kNorm.length > 0 && itemTitleNorm.length > 0 && (kNorm.includes(itemTitleNorm) || itemTitleNorm.includes(kNorm));
+                    }) || null;
+                }
+            }
+
+            if (matchedKey && !countedProducts.has(matchedKey)) {
+                perf[matchedKey].shopify_total_orders += 1;
+                if (isConfirmed) {
+                    perf[matchedKey].shopify_confirmed_orders += 1;
+                }
+                countedProducts.add(matchedKey);
+            }
+        });
   });
 
   return Object.values(perf)
