@@ -2,7 +2,7 @@
 import React, { useMemo, useState } from 'react';
 import { Order, Product, AdSpend, ShopifyOrder } from '../types';
 import { calculateProductPerformance, formatCurrency, ProductPerformance } from '../services/calculator';
-import { Package, Eye, X, Banknote, ShoppingBag, CheckCircle2, RotateCcw, Clock, Layers, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, Target, Download, Loader2, Coins, Receipt, ArrowRight, Tag, Factory } from 'lucide-react';
+import { Package, Eye, X, Banknote, ShoppingBag, CheckCircle2, RotateCcw, Clock, Layers, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, Target, Download, Loader2, Coins, Receipt, ArrowRight, Tag, Factory, ShoppingCart, CheckSquare } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -671,6 +671,28 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
                                     </div>
                                     <div className="bg-slate-100 p-2 rounded-lg text-slate-500">
                                         <Factory size={20} />
+                                    </div>
+                                </div>
+                            </div>
+
+                             {/* 1.6 Shopify Source of Truth */}
+                             <div className="grid grid-cols-2 gap-4">
+                                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col justify-between">
+                                    <p className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1">
+                                        <ShoppingCart size={14}/> Total Shopify Orders
+                                    </p>
+                                    <p className="text-2xl font-bold text-slate-800 mt-2">{selectedProduct.shopify_total_orders}</p>
+                                    <div className="text-xs font-medium text-slate-500 mt-1">Raw Demand</div>
+                                </div>
+                                <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex flex-col justify-between">
+                                    <p className="text-xs font-bold text-blue-700 uppercase flex items-center gap-1">
+                                        <CheckSquare size={14}/> Confirmed Orders
+                                    </p>
+                                    <p className="text-2xl font-bold text-blue-800 mt-2">{selectedProduct.shopify_confirmed_orders}</p>
+                                    <div className="text-xs font-medium text-blue-600 mt-1">
+                                         {selectedProduct.shopify_total_orders > 0 
+                                            ? `${Math.round((selectedProduct.shopify_confirmed_orders / selectedProduct.shopify_total_orders) * 100)}% Fulfillment Rate` 
+                                            : '0% Fulfillment Rate'}
                                     </div>
                                 </div>
                             </div>
