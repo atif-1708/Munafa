@@ -95,57 +95,68 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
       return { groups: Array.from(groups.values()), singles };
   }, [filteredProducts]);
 
-  // --- Auto-Suggestion Logic ---
+  // --- Auto-Suggestion Logic (Smart Match) ---
   const suggestions = useMemo(() => {
+      // Sort by title first to group similar strings alphabetically
       const singles = [...inventoryTree.singles].sort((a, b) => a.title.localeCompare(b.title));
       const results: { key: string, name: string, items: Product[] }[] = [];
       const usedIds = new Set<string>();
 
-      // Heuristic: Find clusters of products with shared prefixes
       let i = 0;
       while (i < singles.length) {
           if (usedIds.has(singles[i].id)) { i++; continue; }
 
           const current = singles[i];
+          const cleanCurrent = cleanTitleForGrouping(current.title);
+          
           const cluster: Product[] = [current];
           
-          // Find next items that share a significant prefix with current item
           let j = i + 1;
           while (j < singles.length) {
               const next = singles[j];
-              const common = getCommonPrefix(current.title, next.title);
+              const cleanNext = cleanTitleForGrouping(next.title);
               
-              // Threshold: Prefix > 5 chars and represents meaningful overlap
-              // Avoid grouping "Shirt Blue" and "Shoe Red" if prefix is just "S"
-              if (common.length >= 6) {
-                  // Further check: Does this new item also match the cluster's running common prefix?
-                  // (For simplicity, just matching the first item is usually enough due to sort, 
-                  // but let's recalculate common prefix for the whole cluster to be safe)
+              // Compare Cleaned Titles
+              // We check if they share a very strong common prefix AFTER cleaning brackets/numbers
+              const common = getCommonPrefix(cleanCurrent, cleanNext);
+              
+              // Thresholds:
+              // 1. Common prefix must be at least 4 chars (avoid matching "The" or "New")
+              // 2. Or if one contains the other entirely
+              const matchCondition = 
+                  (common.length >= 4 && (cleanCurrent.startsWith(common) || cleanNext.startsWith(common))) ||
+                  (cleanCurrent.includes(cleanNext) || cleanNext.includes(cleanCurrent));
+
+              if (matchCondition) {
                   cluster.push(next);
                   j++;
               } else {
-                  break; // Sorted list, so if prefix fails, we are done with this group candidate
+                  // Since list is sorted alphabetically, if the next one fails significantly, 
+                  // subsequent ones likely will too unless it's a very small difference.
+                  // However, strict sorting might separate "Apple" and "Green Apple". 
+                  // For now, we rely on the primary sort being correct for "Item Name..." structure.
+                  // Break optimization for performance.
+                  break; 
               }
           }
 
           if (cluster.length >= 2) {
-              // Determine suggested name
-              let name = getCommonPrefix(cluster[0].title, cluster[1].title).trim();
-              // Cleanup trailing separators
-              name = name.replace(/[-:]$/, '').trim();
-              if (name.endsWith(' -')) name = name.substring(0, name.length - 2);
+              // Determine suggested name from the cleaned version of the first item
+              // We Capitalize the cleaned words for display
+              const rawName = getCommonPrefix(cleanTitleForGrouping(cluster[0].title), cleanTitleForGrouping(cluster[1].title));
+              let name = rawName.replace(/\b\w/g, c => c.toUpperCase()).trim();
               
-              // Key for dismissal
+              // Fallback if common prefix is empty or too short
+              if (name.length < 3) {
+                  name = cleanTitleForGrouping(cluster[0].title).replace(/\b\w/g, c => c.toUpperCase());
+              }
+
               const key = cluster.map(c => c.id).sort().join('-');
               
               if (!ignoredSuggestionKeys.has(key)) {
                   results.push({ key, name, items: cluster });
               }
-              
-              // Mark these as used so we don't process overlapping subsets
               cluster.forEach(c => usedIds.add(c.id));
-              
-              // Advance index past this cluster
               i = j;
           } else {
               i++;
@@ -859,6 +870,29 @@ function getCommonPrefix(s1: string, s2: string): string {
         i++;
     }
     return s1.substring(0, i);
+}
+
+// Helper to clean title for grouping suggestions
+function cleanTitleForGrouping(title: string): string {
+    return title
+        .toLowerCase()
+        // Remove content in brackets/parentheses
+        .replace(/\s*[\(\[\{].*?[\)\]\}]/g, '') 
+        // Remove "Pack of X"
+        .replace(/\bpack of \d+\b/g, '')
+        // Remove "2x", "3x" (Start of line or preceded by space)
+        .replace(/(^|\s)\d+\s*[xX](?=\s|$)/g, '')
+        // Remove "x2", "x3"
+        .replace(/(^|\s)[xX]\s*\d+(?=\s|$)/g, '')
+        // Remove "2pcs", "2 pcs"
+        .replace(/(^|\s)\d+\s*pcs?(?=\s|$)/g, '')
+        // Remove leading numbers (e.g. "1. Product", "01 Product")
+        .replace(/^\s*\d+[\.\-\s]+/, '')
+        // Remove separators
+        .replace(/[-:_]/g, ' ')
+        // Normalize spaces
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
 export default Inventory;
