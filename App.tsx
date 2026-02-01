@@ -15,7 +15,7 @@ import { ShopifyAdapter } from './services/shopify';
 import { Order, Product, AdSpend, CourierName, SalesChannel, CourierConfig, OrderStatus, ShopifyOrder, IntegrationConfig } from './types';
 import { Loader2, AlertTriangle, X } from 'lucide-react';
 import { supabase } from './services/supabase';
-import { getCostAtDate } from './services/calculator';
+import { getCostAtDate, normalizeProductTitle } from './services/calculator';
 import { COURIER_RATES, PACKAGING_COST_AVG } from './constants';
 
 const App: React.FC = () => {
@@ -216,11 +216,45 @@ const App: React.FC = () => {
         const seenFingerprints = new Set(savedProducts.map(p => p.variant_fingerprint || p.sku));
 
         // E. Fetch Shopify Data (Isolate failure)
+        // Also MERGE product definitions from Shopify so we see Demand even if not shipped via courier yet.
         if (shopifyConfig) {
             try {
                 const shopifyAdapter = new ShopifyAdapter();
                 const rawShopifyOrders = await shopifyAdapter.fetchOrders(shopifyConfig);
                 setShopifyOrders(rawShopifyOrders);
+
+                // --- MERGE SHOPIFY PRODUCTS ---
+                rawShopifyOrders.forEach(o => {
+                    o.line_items.forEach(item => {
+                        // Use normalized fingerprint matching
+                        const rawFingerprint = item.sku || item.title;
+                        const normalizedFingerprint = normalizeProductTitle(rawFingerprint); 
+                        
+                        // Check if we already have this product (by ID, SKU, or Normalized Title)
+                        // This logic aligns with calculator.ts matching
+                        const exists = finalProducts.some(p => 
+                            p.shopify_id === String(item.variant_id) || 
+                            p.sku === item.sku || 
+                            normalizeProductTitle(p.title) === normalizedFingerprint
+                        );
+
+                        if (!exists && !seenFingerprints.has(normalizedFingerprint)) {
+                            seenFingerprints.add(normalizedFingerprint);
+                            finalProducts.push({
+                                id: String(item.variant_id) || `sp-${Math.random()}`,
+                                shopify_id: String(item.variant_id),
+                                title: item.title,
+                                sku: item.sku || 'NO-SKU',
+                                variant_fingerprint: normalizedFingerprint,
+                                image_url: '',
+                                current_cogs: 0,
+                                cost_history: []
+                            });
+                        }
+                    });
+                });
+                // -----------------------------
+
             } catch (e: any) {
                 console.error("Shopify Sync Error:", e);
                 setError("Shopify Sync Failed: " + e.message);
@@ -241,22 +275,23 @@ const App: React.FC = () => {
 
                     o.items.forEach(item => {
                         const fingerprint = item.variant_fingerprint || item.sku || 'unknown';
+                        const normalizedFingerprint = normalizeProductTitle(fingerprint);
 
-                        // Check if we already added this via DB
+                        // Check if we already added this via Shopify loop or DB
                         const exists = finalProducts.some(p => 
                             p.sku === item.sku || 
-                            (p.variant_fingerprint && p.variant_fingerprint === fingerprint)
+                            normalizeProductTitle(p.title) === normalizedFingerprint
                         );
 
-                        if (!exists && !seenFingerprints.has(fingerprint)) {
-                            seenFingerprints.add(fingerprint);
+                        if (!exists && !seenFingerprints.has(normalizedFingerprint)) {
+                            seenFingerprints.add(normalizedFingerprint);
                             const uniqueId = (item.product_id && item.product_id !== 'unknown') ? item.product_id : fingerprint;
                             finalProducts.push({
                                 id: uniqueId,
                                 shopify_id: 'unknown',
                                 title: item.product_name,
                                 sku: fingerprint, 
-                                variant_fingerprint: fingerprint,
+                                variant_fingerprint: normalizedFingerprint,
                                 image_url: '',
                                 current_cogs: 0,
                                 cost_history: []
