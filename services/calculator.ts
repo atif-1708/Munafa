@@ -79,8 +79,6 @@ export const calculateMetrics = (
 
        // Cash in Stock
        // STRICT: Only count as "Stuck" if it is Returned or RTO Initiated.
-       // In-Transit stock is considered 'sold' until proven otherwise (or pending revenue), 
-       // but user specifically requested Cash Stuck to be Returned Orders only.
        if (isRto) {
            cash_in_transit_stock += orderCost;
        }
@@ -162,7 +160,7 @@ export const getCostAtDate = (product: Product, dateStr: string): number => {
 };
 
 // --- Helper: Normalize Title for Fuzzy Match ---
-const normalizeProductTitle = (title: string): string => {
+export const normalizeProductTitle = (title: string): string => {
     if (!title) return '';
     return title
         .toLowerCase()
