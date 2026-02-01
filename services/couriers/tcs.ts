@@ -6,6 +6,7 @@ export class TcsAdapter implements CourierAdapter {
   name = CourierName.TCS;
   
   // TCS has multiple endpoints depending on the account type (Corporate vs SME vs OCI)
+  // We prioritize OCI (ociconnect) as it is the modern standard.
   private readonly BASE_URLS = [
       'https://ociconnect.tcscourier.com',
       'https://api.tcscourier.com',
@@ -15,10 +16,16 @@ export class TcsAdapter implements CourierAdapter {
   private async fetchWithFallback(url: string, options: RequestInit): Promise<any> {
     let lastError: Error | null = null;
 
-    // 1. Try Local Proxy first (Highest Priority & Most Accurate Error Reporting)
+    // 1. Try Local Proxy first (Highest Priority)
     try {
         const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
-        const res = await fetch(proxyUrl, options);
+        // Pass headers specifically for the proxy to forward
+        const headers = { ...options.headers } as Record<string, string>;
+        
+        const res = await fetch(proxyUrl, { 
+            ...options,
+            headers: headers 
+        });
         
         const contentType = res.headers.get('content-type');
         const text = await res.text();
@@ -28,35 +35,22 @@ export class TcsAdapter implements CourierAdapter {
              try { return JSON.parse(text); } catch { return text; }
         }
         
-        // CRITICAL: If Local Proxy returns a specific API error (401/403/500) from TCS,
-        // we must report THIS error. Do not fallback to public proxies, as they cannot fix invalid credentials.
-        if (res.status === 401 || res.status === 403 || res.status === 500) {
-             // Exception: If it looks like an HTML error page from Vercel/Hosting (e.g. 504 Gateway Timeout), we can try fallback.
-             if (contentType && contentType.includes('text/html')) {
-                 // Log warning but allow fallback
-                 console.warn("Local proxy infrastructure error, trying fallbacks...");
-             } else {
-                 // This is a real API error (e.g. Invalid Password). Throw it.
-                 throw new Error(`${res.status} ${res.statusText}: ${text.substring(0, 200)}`);
-             }
+        // Return explicit API errors
+        if (res.status === 400 || res.status === 401 || res.status === 403 || res.status === 500 || res.status === 402) {
+             // 402 Payment Required is often used by TCS for "Invalid API Key" or "Account Suspended"
+             throw new Error(`${res.status} TCS Error: ${text.substring(0, 200)}`);
         }
     } catch (e: any) {
-        // Only allow fallback if it was a network error or generic proxy infrastructure error
-        // If we explicitly threw a TCS Error above, re-throw it.
-        if (e.message.includes('401') || e.message.includes('403') || e.message.includes('500 TCS')) throw e;
-        
+        // If it's a specific API error, stop.
+        if (e.message.includes('TCS Error')) throw e;
         console.warn("Local proxy failed, trying public fallbacks...", e);
     }
 
     // 2. Public Proxies (Fallback)
-    // Note: 'allorigins' is often more reliable for production domains than 'corsproxy' free tier.
     const proxies = [
         { base: 'https://api.allorigins.win/raw?url=', encode: true },
         { base: 'https://corsproxy.io/?', encode: true },
-        { base: 'https://thingproxy.freeboard.io/fetch/', encode: false },
     ];
-
-    let lastResponseText = "";
 
     for (const proxy of proxies) {
         try {
@@ -64,40 +58,25 @@ export class TcsAdapter implements CourierAdapter {
             const response = await fetch(fetchUrl, { ...options, credentials: 'omit' });
             
             const text = await response.text();
-            lastResponseText = text;
             
             if (!response.ok) {
-                 // Detect specific proxy limitations to provide better error messages
-                 if (text.includes("Free usage is limited") || text.includes("Access Denied")) {
-                     lastError = new Error(`Proxy Blocked: ${proxy.base} refused connection. Code: ${response.status}`);
-                     continue; 
-                 }
+                 if (text.includes("Free usage is limited") || text.includes("Access Denied")) continue;
                  
-                 if (response.status === 401) throw new Error("401 Unauthorized - Check Credentials");
-                 if (response.status === 403) throw new Error("403 Forbidden - Access Denied");
-                 if (response.status === 500) throw new Error("500 TCS Server Error");
-                 if (response.status === 404) throw new Error("404 Endpoint Not Found");
-                 
-                 throw new Error(`API Error ${response.status}`);
+                 throw new Error(`${response.status} TCS Error: ${text.substring(0, 100)}`);
             }
             
             try { return JSON.parse(text); } catch { return text; }
 
         } catch (e: any) {
-            console.warn(`TCS fetch failed via proxy`, e.message);
             lastError = e;
-            
-            // If it was a credential error (401/403) from the destination, stop trying other proxies.
-            if (e.message.includes("401") || e.message.includes("403")) {
-                throw new Error(`${e.message} | Response: ${lastResponseText.substring(0, 50)}`);
-            }
+            if (e.message.includes('TCS Error')) throw e;
         }
     }
     
     throw lastError || new Error("Network Error: Could not connect to TCS via any proxy path.");
   }
 
-  // Method 1: Authorization API (Client ID / Secret)
+  // Method 1: Authorization API (Client ID / Secret) - GET
   private async getTokenByClientId(baseUrl: string, clientId: string, clientSecret: string): Promise<string> {
       const url = `${baseUrl}/auth/api/auth?clientid=${clientId}&clientsecret=${clientSecret}`;
       const response = await this.fetchWithFallback(url, { method: 'GET' });
@@ -111,10 +90,32 @@ export class TcsAdapter implements CourierAdapter {
           return response;
       }
 
-      throw new Error(`Invalid Response: ${JSON.stringify(response).substring(0, 100)}`);
+      // If we get here, the response format wasn't what we expected for a success
+      throw new Error(`Invalid GET Response format`);
   }
 
-  // Method 2: Authentication API (Username / Password)
+  // Method 2: Authorization API (Client ID / Secret) - POST (Standard for OCI)
+  private async getTokenByClientIdPost(baseUrl: string, clientId: string, clientSecret: string): Promise<string> {
+      // Try /auth/v2/token (Standard OCI)
+      const url = `${baseUrl}/auth/v2/token`;
+      
+      // Note: OCI often requires application/json body
+      const response = await this.fetchWithFallback(url, { 
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+              client_id: clientId,
+              client_secret: clientSecret
+          })
+      });
+      
+      if (response?.access_token) return response.access_token;
+      if (response?.data?.access_token) return response.data.access_token;
+      
+      throw new Error(`Invalid POST Response format`);
+  }
+
+  // Method 3: Authentication API (Username / Password)
   private async getTokenByCredentials(baseUrl: string, username: string, password: string): Promise<string> {
       const url = `${baseUrl}/ecom/api/authentication/token?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
       const response = await this.fetchWithFallback(url, { method: 'GET' });
@@ -123,7 +124,7 @@ export class TcsAdapter implements CourierAdapter {
       if (response?.access_token) return response.access_token;
       if (response?.result?.accesstoken) return response.result.accesstoken;
 
-      throw new Error(`Invalid Response: ${JSON.stringify(response).substring(0, 100)}`);
+      throw new Error(`Invalid User/Pass Response format`);
   }
 
   // Main Token Handler
@@ -137,26 +138,33 @@ export class TcsAdapter implements CourierAdapter {
 
       if (!u || !p) throw new Error("Missing TCS Credentials (Username/Password)");
 
-      let lastError = "";
+      let detailedErrors = "";
 
       for (const baseUrl of this.BASE_URLS) {
+          // 1. Try POST (Most robust for modern TCS)
           try {
-              // 1. Try Client ID / Secret
+              return await this.getTokenByClientIdPost(baseUrl, u, p);
+          } catch (e: any) {
+              detailedErrors += `[${baseUrl} POST]: ${e.message}\n`;
+          }
+
+          // 2. Try GET (Legacy)
+          try {
               return await this.getTokenByClientId(baseUrl, u, p);
           } catch (e: any) {
-              lastError += `[${baseUrl} (ClientID)]: ${e.message}\n`;
-              
-              // 2. Try Username / Password
-              try {
-                  return await this.getTokenByCredentials(baseUrl, u, p);
-              } catch (e2: any) {
-                  lastError += `[${baseUrl} (UserPass)]: ${e2.message}\n`;
-              }
+              detailedErrors += `[${baseUrl} GET]: ${e.message}\n`;
+          }
+
+          // 3. Try User/Pass (Very Old)
+          try {
+              return await this.getTokenByCredentials(baseUrl, u, p);
+          } catch (e: any) {
+              detailedErrors += `[${baseUrl} UserPass]: ${e.message}\n`;
           }
       }
 
-      console.error("TCS Auth Errors Debug:\n", lastError);
-      throw new Error(`TCS Connection Failed. Details:\n${lastError}`);
+      console.error("TCS Auth Errors:\n", detailedErrors);
+      throw new Error(`TCS Connection Failed. Please verify your Client ID and Secret.\n\nDetails:\n${detailedErrors}`);
   }
 
   private mapStatus(rawStatus: string): OrderStatus {
@@ -227,17 +235,29 @@ export class TcsAdapter implements CourierAdapter {
 
       for (const baseUrl of this.BASE_URLS) {
           try {
-              const url = `${baseUrl}/ecom/api/Payment/detail?accesstoken=${encodeURIComponent(token)}&customerno=${costCenter}&fromdate=${fromParams}&todate=${toParams}`;
+              // Try Standard Ecom API
+              let url = `${baseUrl}/ecom/api/Payment/detail?accesstoken=${encodeURIComponent(token)}&customerno=${costCenter}&fromdate=${fromParams}&todate=${toParams}`;
               response = await this.fetchWithFallback(url, { method: 'GET' });
-              if (response && (response.detail || Array.isArray(response.detail))) break;
+              
+              if (!response || !response.detail) {
+                   // Try V2 API (OCI)
+                   url = `${baseUrl}/cod/api/v2/cod-details?accesstoken=${encodeURIComponent(token)}&costCenterCode=${costCenter}&startDate=${fromParams}&endDate=${toParams}`;
+                   response = await this.fetchWithFallback(url, { method: 'GET' });
+              }
+
+              if (response && (response.detail || Array.isArray(response.data))) break;
           } catch(e) {}
       }
 
-      if (!response || !response.detail || !Array.isArray(response.detail)) {
+      let ordersList = [];
+      if (response?.detail) ordersList = response.detail;
+      else if (response?.data) ordersList = response.data;
+      
+      if (!ordersList || !Array.isArray(ordersList)) {
           return [];
       }
 
-      return response.detail.map((tcsOrder: any) => {
+      return ordersList.map((tcsOrder: any) => {
           const rawStatus = tcsOrder.status || tcsOrder['cn status'] || 'Unknown';
           const status = this.mapStatus(rawStatus);
           
