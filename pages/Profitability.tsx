@@ -230,15 +230,17 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
   [filteredData, products, adsTaxRate]);
 
   // 3. Group Logic (Aggregating Variants into Groups)
-  //    AND FILTERING: Only show items with Dispatch > 0 OR Ads > 0 OR Demand > 0
+  //    AND FILTERING: Only show items with Dispatch > 0 OR Ads > 0
+  //    CHANGE: Removed check for shopify_total_orders > 0 to hide items that only have demand but no financial impact
   const groupedStats = useMemo(() => {
       const groups = new Map<string, GroupedProductPerformance>();
       const singles: GroupedProductPerformance[] = [];
 
       rawStats.forEach(stat => {
-          // Filter Condition: Must have been dispatched OR have marketing spend OR have Shopify demand
+          // Filter Condition: Must have been dispatched OR have marketing spend.
+          // Pure Shopify Demand (without dispatch/ads) is excluded to focus on realized profit/loss.
           const totalDispatched = stat.units_sold + stat.units_returned + stat.units_in_transit;
-          if (totalDispatched === 0 && stat.ad_spend_allocation === 0 && stat.shopify_total_orders === 0) return;
+          if (totalDispatched === 0 && stat.ad_spend_allocation === 0) return;
 
           if (stat.group_id && stat.group_name) {
               if (!groups.has(stat.group_id)) {
