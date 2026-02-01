@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { Product, Order } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { PackageSearch, History, Edit2, Plus, Save, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, AlertCircle, Filter } from 'lucide-react';
+import { PackageSearch, History, Edit2, Plus, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, AlertCircle } from 'lucide-react';
 
 interface InventoryProps {
   products: Product[];
@@ -15,7 +15,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
   
-  // Date Filtering State (Restored but Optional)
+  // Date Filtering State
   const [dateRange, setDateRange] = useState(() => {
     const end = new Date();
     const start = new Date();
@@ -25,7 +25,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
       end: end.toISOString().split('T')[0]
     };
   });
-  const [filterActive, setFilterActive] = useState(false); // Default OFF to show ALL items
 
   // Group Logic State
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
@@ -39,44 +38,40 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const filteredProducts = useMemo(() => {
-      // 1. Identify active product IDs if filtering by date is enabled
-      let activeIds = new Set<string>();
-      if (filterActive) {
-          const start = new Date(dateRange.start); 
-          start.setHours(0,0,0,0);
-          const end = new Date(dateRange.end);
-          end.setHours(23,59,59,999);
-          
-          orders.forEach(o => {
-              const d = new Date(o.created_at);
-              if (d >= start && d <= end) {
-                  o.items.forEach(i => {
-                      activeIds.add(i.product_id);
-                      if (i.sku) activeIds.add(i.sku);
-                      if (i.variant_fingerprint) activeIds.add(i.variant_fingerprint);
-                  });
-              }
-          });
-      }
+      // 1. Identify active product IDs based on Date Range
+      const start = new Date(dateRange.start); 
+      start.setHours(0,0,0,0);
+      const end = new Date(dateRange.end);
+      end.setHours(23,59,59,999);
+      
+      const activeIds = new Set<string>();
+      orders.forEach(o => {
+          const d = new Date(o.created_at);
+          if (d >= start && d <= end) {
+              o.items.forEach(i => {
+                  activeIds.add(i.product_id);
+                  if (i.sku) activeIds.add(i.sku);
+                  if (i.variant_fingerprint) activeIds.add(i.variant_fingerprint);
+              });
+          }
+      });
 
       return products.filter(p => {
-          // 2. Active Filter Check (Optional)
-          if (filterActive) {
-              const fingerprint = p.variant_fingerprint || p.sku;
-              const isActive = activeIds.has(p.id) || activeIds.has(p.sku) || activeIds.has(fingerprint || '');
-              if (!isActive) return false;
-          }
-
-          // 3. Text Search (Always Active)
+          // 2. Text Search - PRIORITY OVER DATE FILTER
+          // If user searches, we search EVERYTHING (Global Search) to ensure no items are "missing"
           if (search) {
              const term = search.toLowerCase();
              return p.title.toLowerCase().includes(term) || 
                     p.sku.toLowerCase().includes(term);
           }
           
-          return true;
+          // 3. Date Active Filter (Only applied when NOT searching)
+          // Filters automatically based on date range as requested
+          const fingerprint = p.variant_fingerprint || p.sku;
+          const isActive = activeIds.has(p.id) || activeIds.has(p.sku) || activeIds.has(fingerprint || '');
+          return isActive;
       });
-  }, [products, search, filterActive, dateRange, orders]);
+  }, [products, search, dateRange, orders]);
 
   // Organize Data into Groups and Singles
   const inventoryTree = useMemo(() => {
@@ -240,7 +235,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
         </div>
         
         <div className="flex flex-col xl:flex-row items-center gap-3 w-full md:w-auto">
-             {/* New Filter Controls */}
+             {/* Date Filter */}
              <div className="flex items-center gap-2 bg-white px-3 py-2 border rounded-lg shadow-sm w-full md:w-auto">
                 <Calendar size={16} className="text-slate-500" />
                 <input 
@@ -258,21 +253,11 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
                 />
             </div>
 
-            <label className={`flex items-center gap-2 text-xs font-medium cursor-pointer select-none px-3 py-2.5 border rounded-lg shadow-sm transition-colors ${filterActive ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-                <input 
-                    type="checkbox" 
-                    checked={filterActive} 
-                    onChange={e => setFilterActive(e.target.checked)}
-                    className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4"
-                />
-                <span className="whitespace-nowrap">Filter Active Only</span>
-            </label>
-
              {/* Search */}
              <div className="relative w-full md:w-auto">
                  <input 
                     type="text" 
-                    placeholder="Search Item..." 
+                    placeholder="Search Item (Overrides Date Filter)..." 
                     className="w-full pl-9 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm"
                     value={search}
                     onChange={e => setSearch(e.target.value)}
@@ -311,9 +296,9 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
                         {inventoryTree.groups.length === 0 && inventoryTree.singles.length === 0 && (
                             <tr>
                                 <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
-                                    {filterActive 
-                                        ? "No items found active in this date range. Uncheck 'Filter Active Only' to see all."
-                                        : "No products found."}
+                                    {search 
+                                        ? "No products matching your search." 
+                                        : "No active products found in this date range. Search to see all items."}
                                 </td>
                             </tr>
                         )}
