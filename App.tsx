@@ -238,10 +238,7 @@ const App: React.FC = () => {
                 const rawOrders = await postExAdapter.fetchRecentOrders(postExConfig);
 
                 rawOrders.forEach(o => {
-                    // FILTER APPLIED: Exclude Booked and Pending orders from Inventory Discovery.
-                    // We only want to discover products that have been Dispatched, Delivered, Returned, etc.
-                    if (o.status === OrderStatus.BOOKED || o.status === OrderStatus.PENDING) return;
-
+                    // NOTE: Removed filter for BOOKED/PENDING. We want to discover products from ALL orders.
                     o.items.forEach(item => {
                         const fingerprint = item.variant_fingerprint || item.sku || 'unknown';
 
