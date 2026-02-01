@@ -124,7 +124,8 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                 if (isPending) stat.pending_fulfillment += 1;
                 if (isFulfilled) stat.fulfilled += 1;
 
-                // Courier Metrics (Only apply if valid order)
+                // Courier Metrics (Strictly Order Count)
+                // We add 1 if the condition is met, IGNORING item quantity
                 if (isDispatched) stat.dispatched += 1;
                 if (isDelivered) stat.delivered += 1;
                 if (isRto) stat.rto += 1;
