@@ -31,13 +31,18 @@ export class TcsAdapter implements CourierAdapter {
             const fetchUrl = proxy.encode ? `${proxy.base}${encodeURIComponent(url)}` : `${proxy.base}${url}`;
             const response = await fetch(fetchUrl, { ...options, credentials: 'omit' });
             
+            const text = await response.text();
+            
             if (!response.ok) {
-                 const text = await response.text();
-                 lastError = new Error(`TCS API Error ${response.status}: ${text}`);
+                 // Try to extract useful error from TCS HTML/JSON response
+                 if (response.status === 401) throw new Error("Invalid Credentials (401)");
+                 if (response.status === 403) throw new Error("Access Denied (403)");
+                 if (response.status === 500) throw new Error("TCS Server Error (500)");
+                 
+                 lastError = new Error(`TCS API Error ${response.status}: ${text.substring(0, 100)}`);
                  continue;
             }
             
-            const text = await response.text();
             try { return JSON.parse(text); } catch { return text; }
 
         } catch (e: any) {
@@ -46,7 +51,7 @@ export class TcsAdapter implements CourierAdapter {
         }
     }
     
-    throw lastError || new Error("Network Error: Could not connect to TCS.");
+    throw lastError || new Error("Network Error: Could not connect to TCS. Check your internet or CORS settings.");
   }
 
   // Method 1: Authorization API (Client ID / Secret) - Page 4
@@ -54,10 +59,12 @@ export class TcsAdapter implements CourierAdapter {
       const url = `${this.BASE_URL}/auth/api/auth?clientid=${clientId}&clientsecret=${clientSecret}`;
       const response = await this.fetchWithFallback(url, { method: 'GET' });
       
-      if (response && response.result && response.result.accessToken) {
-          return response.result.accessToken;
-      }
-      throw new Error("Invalid Client ID/Secret");
+      // Handle various response structures
+      if (response?.result?.accessToken) return response.result.accessToken;
+      if (response?.result?.accesstoken) return response.result.accesstoken;
+      if (response?.accessToken) return response.accessToken;
+      
+      throw new Error("Invalid Client ID/Secret (No token returned)");
   }
 
   // Method 2: Authentication API (Username / Password) - Page 5
@@ -66,10 +73,11 @@ export class TcsAdapter implements CourierAdapter {
       const response = await this.fetchWithFallback(url, { method: 'GET' });
       
       // Page 5 Response: { "accesstoken": "...", "expiry": "...", "message": "success" }
-      if (response && response.accesstoken) {
-          return response.accesstoken;
-      }
-      throw new Error("Invalid Username/Password");
+      if (response?.accesstoken) return response.accesstoken;
+      if (response?.access_token) return response.access_token;
+      if (response?.result?.accesstoken) return response.result.accesstoken;
+
+      throw new Error("Invalid Username/Password (No token returned)");
   }
 
   // Main Token Handler - Tries both methods
@@ -87,7 +95,7 @@ export class TcsAdapter implements CourierAdapter {
           try {
               return await this.getTokenByCredentials(u, p);
           } catch (e2) {
-              throw new Error("TCS Authentication Failed. Please check your Client ID/Secret OR Username/Password.");
+              throw new Error("Authentication Failed. Checked both ClientID/Secret and Username/Password methods.");
           }
       }
   }
@@ -107,7 +115,6 @@ export class TcsAdapter implements CourierAdapter {
     return OrderStatus.IN_TRANSIT;
   }
 
-  // Unused for now, but required by interface
   async track(trackingNumber: string, config: IntegrationConfig): Promise<TrackingUpdate> {
       const token = await this.getToken(config);
       // Page 32: Tracking API
@@ -135,13 +142,9 @@ export class TcsAdapter implements CourierAdapter {
   }
 
   async testConnection(config: IntegrationConfig): Promise<boolean> {
-      try {
-          const token = await this.getToken(config);
-          return !!token;
-      } catch (e) {
-          console.error("TCS Connection Test Failed:", e);
-          return false;
-      }
+      // Allow error to bubble up so UI can show specific reason (Invalid Password vs Network Error)
+      const token = await this.getToken(config);
+      return !!token;
   }
 
   // Page 22: Payment Detail API

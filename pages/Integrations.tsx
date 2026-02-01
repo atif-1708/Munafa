@@ -174,6 +174,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
 
   const handleConnectCourier = async (courierName: string) => {
     setTestingConnection(courierName);
+    setErrorMessage(null);
     
     try {
         let success = false;
@@ -185,13 +186,20 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
             success = await adapter.testConnection({ ...courierConfigs[courierName], is_active: true } as any);
         }
 
-        if (!success && !window.confirm("Connection failed. Save anyway?")) { 
-            setTestingConnection(null); 
-            return; 
-        }
+        if (!success) throw new Error("Connection check failed"); // Should be caught by specific error in adapter usually
+        
         await saveCourierConfig(courierName, true);
+
     } catch (e: any) {
-        setErrorMessage(e.message);
+        // Here we handle the error gracefully and offer to save anyway
+        const msg = e.message || "Unknown Error";
+        const userWantsToForceSave = window.confirm(`Connection failed: ${msg}.\n\nDo you want to save these credentials anyway?`);
+        
+        if (userWantsToForceSave) {
+            await saveCourierConfig(courierName, true);
+        } else {
+            setErrorMessage(msg);
+        }
     } finally {
         setTestingConnection(null);
     }
