@@ -2,9 +2,9 @@
 import React, { useMemo, useState } from 'react';
 import { Order, Product, AdSpend, ShopifyOrder } from '../types';
 import { calculateProductPerformance, formatCurrency, ProductPerformance } from '../services/calculator';
-import { Package, Eye, X, Layers, ChevronDown, ChevronRight, CornerDownRight, Calendar, Download, Loader2, TrendingUp, TrendingDown, DollarSign, Truck, ShoppingBag, AlertCircle } from 'lucide-react';
+import { Package, Eye, X, Layers, ChevronDown, ChevronRight, CornerDownRight, Calendar, Download, Loader2, TrendingUp, TrendingDown, DollarSign, Truck, ShoppingBag, AlertCircle, BarChart3, ShoppingCart, CheckSquare, XCircle, Tag, Scale } from 'lucide-react';
 import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import html2canvas from 'html2canvas';
 
 interface ProfitabilityProps {
   orders: Order[];
@@ -193,6 +193,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [selectedProduct, setSelectedProduct] = useState<ProductPerformance | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   // 1. Filter Orders/Ads by Date
   const filteredData = useMemo(() => {
@@ -303,9 +304,39 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
       setExpandedGroups(newSet);
   };
 
-  const handleExportPDF = () => {
+  const handleExportTablePDF = () => {
     setIsExporting(true);
-    setTimeout(() => { setIsExporting(false); alert("Export feature coming soon for table."); }, 1000);
+    // Placeholder for table export
+    setTimeout(() => { setIsExporting(false); alert("Use the Detail View to export specific product reports."); }, 1000);
+  };
+
+  const handleExportProductPDF = async () => {
+    const element = document.getElementById('product-detail-report');
+    if (!element) return;
+    
+    setIsGeneratingPdf(true);
+    try {
+        // Wait for rendering
+        await new Promise(r => setTimeout(r, 200));
+        
+        const canvas = await html2canvas(element, { 
+            scale: 2,
+            backgroundColor: '#ffffff',
+            useCORS: true
+        });
+        
+        const imgData = canvas.toDataURL('image/png');
+        const pdf = new jsPDF('p', 'mm', 'a4');
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+        
+        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+        pdf.save(`${selectedProduct?.title || 'Report'}_Profitability.pdf`);
+    } catch (e) {
+        console.error("PDF Gen Error", e);
+    } finally {
+        setIsGeneratingPdf(false);
+    }
   };
 
   return (
@@ -334,12 +365,12 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
             </div>
 
             <button 
-                onClick={() => handleExportPDF()}
+                onClick={() => handleExportTablePDF()}
                 disabled={isExporting}
                 className="flex items-center gap-2 bg-white text-slate-700 border border-slate-300 px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors shadow-sm"
             >
               {isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-              Export Report
+              Table Report
             </button>
         </div>
 
@@ -378,129 +409,172 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
             </table>
         </div>
 
-        {/* --- STANDARD DETAIL MODAL (REVERTED) --- */}
+        {/* --- DETAIL MODAL (ENHANCED) --- */}
         {selectedProduct && (() => {
+            const shopifyOrders = selectedProduct.associatedShopifyOrders || [];
+            const confirmedCount = selectedProduct.shopify_confirmed_orders;
+            const totalShopify = selectedProduct.shopify_total_orders;
+            const cancelledCount = shopifyOrders.filter(o => o.cancel_reason).length;
+            const pendingCount = Math.max(0, totalShopify - confirmedCount - cancelledCount);
+
             const totalDispatched = selectedProduct.units_sold + selectedProduct.units_returned + selectedProduct.units_in_transit;
             const isProfitable = selectedProduct.net_profit > 0;
             const profitMargin = selectedProduct.gross_revenue > 0 ? (selectedProduct.net_profit / selectedProduct.gross_revenue) * 100 : 0;
-            const expenses = selectedProduct.cogs_total + selectedProduct.shipping_cost_allocation + selectedProduct.ad_spend_allocation + selectedProduct.overhead_allocation + selectedProduct.tax_allocation;
             
             // Format dates
             const startD = new Date(dateRange.start).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
             const endD = new Date(dateRange.end).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
+            // Stats Calculations
+            const revenue = selectedProduct.gross_revenue;
+            const marketing = selectedProduct.ad_spend_allocation;
+            const cogs = selectedProduct.cogs_total;
+            const shipping = selectedProduct.shipping_cost_allocation;
+            const overhead = selectedProduct.overhead_allocation;
+            const tax = selectedProduct.tax_allocation;
+            
+            const delivered = selectedProduct.units_sold;
+            
+            // CPR = Marketing / Confirmed Orders (Orders that are valid to get results)
+            const cpr = confirmedCount > 0 ? marketing / confirmedCount : 0;
+            
+            // Avg Stats
+            const avgSellingPrice = delivered > 0 ? revenue / delivered : 0;
+            const avgCostPrice = totalDispatched > 0 ? cogs / totalDispatched : 0;
+            const avgShipping = totalDispatched > 0 ? shipping / totalDispatched : 0;
+            const avgOverhead = totalDispatched > 0 ? overhead / totalDispatched : 0;
+            const avgTax = delivered > 0 ? tax / delivered : 0; // Tax is usually only on delivered
+
+            // Break Even CPR = ASP - COGS - Ship - Overhead - Tax (Per Unit Profit before Ads)
+            const breakEvenCpr = Math.max(0, avgSellingPrice - avgCostPrice - avgShipping - avgOverhead - avgTax);
+
+            // Gross Profit (Operational) = Revenue - All Ops Costs (Before Ads)
+            const grossProfitPreAd = revenue - cogs - shipping - overhead - tax;
+
             return (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden transform transition-all border border-slate-200">
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm overflow-y-auto">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl transform transition-all border border-slate-200 flex flex-col max-h-[95vh]">
                         {/* Header */}
-                        <div className="bg-slate-900 px-6 py-4 flex justify-between items-start">
+                        <div className="bg-slate-900 px-6 py-4 flex justify-between items-center shrink-0 rounded-t-xl">
                             <div>
-                                <h3 className="text-lg font-bold text-white">{selectedProduct.title}</h3>
+                                <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                                    {selectedProduct.title}
+                                </h3>
                                 <p className="text-slate-400 text-xs mt-1 font-medium">{startD} — {endD}</p>
                             </div>
-                            <button 
-                                onClick={() => setSelectedProduct(null)} 
-                                className="text-slate-400 hover:text-white transition-colors bg-slate-800 p-1.5 rounded-lg"
-                            >
-                                <X size={20} />
-                            </button>
+                            <div className="flex gap-2">
+                                <button 
+                                    onClick={handleExportProductPDF}
+                                    disabled={isGeneratingPdf}
+                                    className="bg-brand-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-brand-700 transition-colors flex items-center gap-2"
+                                >
+                                    {isGeneratingPdf ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                                    Download Report
+                                </button>
+                                <button 
+                                    onClick={() => setSelectedProduct(null)} 
+                                    className="text-slate-400 hover:text-white transition-colors bg-slate-800 p-2 rounded-lg"
+                                >
+                                    <X size={20} />
+                                </button>
+                            </div>
                         </div>
 
-                        <div className="p-6">
-                            {/* Top Stats Grid */}
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-                                <div className="bg-purple-50 p-4 rounded-xl border border-purple-100">
-                                    <div className="flex items-center gap-2 mb-1">
-                                        <ShoppingBag size={16} className="text-purple-600" />
-                                        <span className="text-xs font-bold text-purple-700 uppercase">Dispatched</span>
-                                    </div>
-                                    <p className="text-xl font-bold text-slate-900">{totalDispatched}</p>
-                                </div>
-                                <div className="bg-green-50 p-4 rounded-xl border border-green-100">
-                                    <div className="flex items-center gap-2 mb-1">
-                                        <Truck size={16} className="text-green-600" />
-                                        <span className="text-xs font-bold text-green-700 uppercase">Delivered</span>
-                                    </div>
-                                    <p className="text-xl font-bold text-slate-900">{selectedProduct.units_sold}</p>
-                                    <p className="text-xs text-green-600 font-medium">{formatPercent(selectedProduct.units_sold, totalDispatched)} Rate</p>
-                                </div>
-                                <div className="bg-red-50 p-4 rounded-xl border border-red-100">
-                                    <div className="flex items-center gap-2 mb-1">
-                                        <AlertCircle size={16} className="text-red-600" />
-                                        <span className="text-xs font-bold text-red-700 uppercase">Returned</span>
-                                    </div>
-                                    <p className="text-xl font-bold text-slate-900">{selectedProduct.units_returned}</p>
-                                    <p className="text-xs text-red-600 font-medium">{formatPercent(selectedProduct.units_returned, totalDispatched)} Rate</p>
-                                </div>
-                                <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
-                                    <div className="flex items-center gap-2 mb-1">
-                                        <Package size={16} className="text-blue-600" />
-                                        <span className="text-xs font-bold text-blue-700 uppercase">In Transit</span>
-                                    </div>
-                                    <p className="text-xl font-bold text-slate-900">{selectedProduct.units_in_transit}</p>
-                                </div>
-                            </div>
-
-                            {/* Financial Breakdown Section */}
-                            <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-4 border-b border-slate-100 pb-2 flex justify-between items-center">
-                                <span>Financial Breakdown</span>
-                                <span className="text-xs normal-case text-slate-400 font-normal">Cash Basis (Realized)</span>
-                            </h4>
-                            
-                            <div className="space-y-3 text-sm">
-                                <div className="flex justify-between items-center py-1">
-                                    <span className="font-medium text-slate-600 flex items-center gap-2">
-                                        <div className="w-2 h-2 rounded-full bg-emerald-500"></div> Gross Revenue
-                                    </span>
-                                    <span className="font-bold text-emerald-700 text-base">+ {formatCurrency(selectedProduct.gross_revenue)}</span>
-                                </div>
-                                <div className="flex justify-between items-center py-1">
-                                    <span className="font-medium text-slate-600 flex items-center gap-2">
-                                        <div className="w-2 h-2 rounded-full bg-slate-400"></div> COGS (Dispatched)
-                                    </span>
-                                    <span className="font-medium text-red-600">- {formatCurrency(selectedProduct.cogs_total)}</span>
-                                </div>
-                                <div className="flex justify-between items-center py-1">
-                                    <span className="font-medium text-slate-600 flex items-center gap-2">
-                                        <div className="w-2 h-2 rounded-full bg-orange-400"></div> Shipping & Packaging
-                                    </span>
-                                    <span className="font-medium text-red-600">- {formatCurrency(selectedProduct.shipping_cost_allocation)}</span>
-                                </div>
-                                <div className="flex justify-between items-center py-1">
-                                    <span className="font-medium text-slate-600 flex items-center gap-2">
-                                        <div className="w-2 h-2 rounded-full bg-pink-500"></div> Ad Spend
-                                    </span>
-                                    <span className="font-medium text-red-600">- {formatCurrency(selectedProduct.ad_spend_allocation)}</span>
-                                </div>
-                                {(selectedProduct.overhead_allocation > 0 || selectedProduct.tax_allocation > 0) && (
-                                    <div className="flex justify-between items-center py-1">
-                                        <span className="font-medium text-slate-600 flex items-center gap-2">
-                                            <div className="w-2 h-2 rounded-full bg-gray-400"></div> Overhead & Tax
-                                        </span>
-                                        <span className="font-medium text-red-600">- {formatCurrency(selectedProduct.overhead_allocation + selectedProduct.tax_allocation)}</span>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Profit Result */}
-                            <div className={`mt-6 p-5 rounded-xl flex justify-between items-center border ${isProfitable ? 'bg-emerald-50 border-emerald-100' : 'bg-red-50 border-red-100'}`}>
+                        {/* Report Content (Target for PDF) */}
+                        <div id="product-detail-report" className="p-8 overflow-y-auto bg-slate-50">
+                            {/* PDF Header Watermark (Hidden mostly, visible in PDF) */}
+                            <div className="mb-6 flex justify-between items-end border-b border-slate-200 pb-4">
                                 <div>
-                                    <p className={`text-xs font-bold uppercase tracking-wider ${isProfitable ? 'text-emerald-600' : 'text-red-600'}`}>
-                                        Net Profit
-                                    </p>
-                                    <div className="flex items-baseline gap-2">
-                                        <h3 className={`text-3xl font-extrabold ${isProfitable ? 'text-emerald-700' : 'text-red-700'}`}>
-                                            {formatCurrency(selectedProduct.net_profit)}
-                                        </h3>
-                                        {isProfitable ? <TrendingUp size={20} className="text-emerald-600" /> : <TrendingDown size={20} className="text-red-600" />}
-                                    </div>
+                                    <h4 className="text-brand-700 font-extrabold text-2xl tracking-tight">MunafaBakhsh Karobaar</h4>
+                                    <p className="text-xs text-slate-500 uppercase tracking-widest mt-1">Intelligence Report</p>
                                 </div>
                                 <div className="text-right">
-                                    <p className="text-sm font-bold text-slate-700">{profitMargin.toFixed(1)}%</p>
-                                    <p className="text-xs text-slate-500 uppercase">Margin</p>
-                                    {selectedProduct.cash_in_stock > 0 && (
-                                        <p className="text-[10px] text-orange-600 mt-1 font-medium">+ {formatCurrency(selectedProduct.cash_in_stock)} Stuck in Stock</p>
-                                    )}
+                                    <p className="text-xs text-slate-400">Generated on</p>
+                                    <p className="text-sm font-medium text-slate-700">{new Date().toLocaleDateString()}</p>
+                                </div>
+                            </div>
+
+                            {/* ROW 1: KEY FINANCIAL METRICS */}
+                            <div className="grid grid-cols-4 gap-4 mb-6">
+                                <DetailCard title="Total Revenue" value={formatCurrency(revenue)} icon={DollarSign} color="emerald" sub="Realized Cash" />
+                                <DetailCard title="Real CPR" value={formatCurrency(cpr)} icon={TargetIcon} color="blue" sub="Cost Per Result" />
+                                <DetailCard title="Break Even CPR" value={formatCurrency(breakEvenCpr)} icon={Scale} color="indigo" sub="Max Ad Spend/Order" />
+                                <DetailCard title="Marketing Spend" value={formatCurrency(marketing)} icon={BarChart3} color="pink" sub="Total Ads" />
+                            </div>
+
+                            {/* ROW 2: SHOPIFY FUNNEL */}
+                            <div className="grid grid-cols-4 gap-4 mb-6">
+                                <DetailCard title="Total Orders" value={totalShopify.toString()} icon={ShoppingCart} color="slate" sub="Shopify Placed" />
+                                <DetailCard title="Confirmed" value={confirmedCount.toString()} icon={CheckSquare} color="blue" sub={`${formatPercent(confirmedCount, totalShopify)} Rate`} />
+                                <DetailCard title="Cancelled" value={cancelledCount.toString()} icon={XCircle} color="red" sub={`${formatPercent(cancelledCount, totalShopify)} Rate`} />
+                                <DetailCard title="Avg Selling Price" value={formatCurrency(avgSellingPrice)} icon={Tag} color="orange" sub="Rev / Unit" />
+                            </div>
+
+                            {/* ROW 3: OPERATIONS */}
+                            <div className="grid grid-cols-4 gap-4 mb-8">
+                                <DetailCard title="Dispatched" value={totalDispatched.toString()} icon={ShoppingBag} color="purple" sub="Left Warehouse" />
+                                <DetailCard title="Delivered" value={delivered.toString()} icon={Truck} color="green" sub={`${formatPercent(delivered, totalDispatched)} Success`} />
+                                <DetailCard title="Returned (RTO)" value={selectedProduct.units_returned.toString()} icon={AlertCircle} color="red" sub={`${formatPercent(selectedProduct.units_returned, totalDispatched)} Loss`} />
+                                <DetailCard title="In Transit" value={selectedProduct.units_in_transit.toString()} icon={Package} color="blue" sub="Active" />
+                            </div>
+
+                            {/* ROW 4: BREAKDOWN & PROFIT */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                {/* Financial Breakdown Table */}
+                                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm h-fit">
+                                    <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-4 border-b border-slate-100 pb-2">
+                                        Financial Breakdown
+                                    </h4>
+                                    <div className="space-y-2 text-sm">
+                                        <Row label="Gross Revenue" value={revenue} type="pos" />
+                                        <div className="border-t border-dashed border-slate-100 my-1"></div>
+                                        <Row label="COGS (Dispatched)" value={cogs} type="neg" />
+                                        <Row label="Avg Cost Price (Per Unit)" value={avgCostPrice} type="neutral" isSub />
+                                        <Row label="Shipping & Packaging" value={shipping} type="neg" />
+                                        <Row label="Fixed Overhead Cost" value={overhead} type="neg" />
+                                        <Row label="Courier Tax / Fees" value={tax} type="neg" />
+                                        <div className="border-t border-dashed border-slate-100 my-1"></div>
+                                        <Row label="Ad Spend" value={marketing} type="neg" highlight />
+                                    </div>
+                                </div>
+
+                                {/* Profit Cards */}
+                                <div className="space-y-4">
+                                    {/* Gross Profit (Pre-Ad) */}
+                                    <div className="p-5 rounded-xl border bg-indigo-50 border-indigo-100">
+                                        <p className="text-xs font-bold uppercase tracking-wider text-indigo-600 mb-1">Gross Profit (Pre-Ad)</p>
+                                        <h3 className="text-2xl font-extrabold text-indigo-800">{formatCurrency(grossProfitPreAd)}</h3>
+                                        <p className="text-xs text-indigo-500 mt-1">Operational Profit before Marketing</p>
+                                    </div>
+
+                                    {/* Net Profit */}
+                                    <div className={`p-5 rounded-xl border ${isProfitable ? 'bg-emerald-50 border-emerald-100' : 'bg-red-50 border-red-100'}`}>
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <p className={`text-xs font-bold uppercase tracking-wider ${isProfitable ? 'text-emerald-600' : 'text-red-600'} mb-1`}>
+                                                    Net Profit (Cash)
+                                                </p>
+                                                <div className="flex items-center gap-2">
+                                                    <h3 className={`text-3xl font-extrabold ${isProfitable ? 'text-emerald-700' : 'text-red-700'}`}>
+                                                        {formatCurrency(selectedProduct.net_profit)}
+                                                    </h3>
+                                                    {isProfitable ? <TrendingUp size={24} className="text-emerald-600" /> : <TrendingDown size={24} className="text-red-600" />}
+                                                </div>
+                                            </div>
+                                            <div className="text-right">
+                                                <span className={`text-xl font-bold ${isProfitable ? 'text-emerald-700' : 'text-red-700'}`}>{profitMargin.toFixed(1)}%</span>
+                                                <p className="text-xs text-slate-500 uppercase">Margin</p>
+                                            </div>
+                                        </div>
+                                        {selectedProduct.cash_in_stock > 0 && (
+                                            <div className="mt-3 pt-3 border-t border-slate-200/50 flex items-center gap-2">
+                                                <Package size={14} className="text-orange-500" />
+                                                <p className="text-xs font-medium text-orange-700">
+                                                    + {formatCurrency(selectedProduct.cash_in_stock)} <span className="opacity-75">Stuck in Inventory (RTO/Stock)</span>
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -511,5 +585,52 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
     </div>
   );
 };
+
+// --- Mini Components for Cleaner Code ---
+
+const TargetIcon = ({ size, className }: any) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+);
+
+const DetailCard = ({ title, value, icon: Icon, color, sub }: any) => {
+    const colorStyles: any = {
+        emerald: 'bg-emerald-50 text-emerald-600',
+        blue: 'bg-blue-50 text-blue-600',
+        indigo: 'bg-indigo-50 text-indigo-600',
+        pink: 'bg-pink-50 text-pink-600',
+        slate: 'bg-slate-100 text-slate-600',
+        red: 'bg-red-50 text-red-600',
+        orange: 'bg-orange-50 text-orange-600',
+        purple: 'bg-purple-50 text-purple-600',
+        green: 'bg-green-50 text-green-600',
+    };
+    const style = colorStyles[color] || colorStyles.slate;
+
+    return (
+        <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex items-start gap-3">
+            <div className={`p-2 rounded-lg shrink-0 ${style}`}>
+                <Icon size={18} />
+            </div>
+            <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase text-slate-400 tracking-wider mb-0.5 truncate">{title}</p>
+                <p className="text-base font-bold text-slate-900 leading-tight truncate">{value}</p>
+                {sub && <p className="text-[10px] text-slate-500 mt-1">{sub}</p>}
+            </div>
+        </div>
+    );
+};
+
+const Row = ({ label, value, type, isSub, highlight }: any) => (
+    <div className={`flex justify-between items-center py-1.5 ${isSub ? 'pl-4 text-xs' : ''} ${highlight ? 'font-bold' : ''}`}>
+        <span className={`${isSub ? 'text-slate-400' : 'text-slate-600 font-medium'}`}>{label}</span>
+        <span className={`
+            ${type === 'pos' ? 'text-emerald-700 font-bold' : ''} 
+            ${type === 'neg' ? 'text-red-600 font-medium' : ''}
+            ${type === 'neutral' ? 'text-slate-500' : ''}
+        `}>
+            {type === 'pos' ? '+' : type === 'neg' ? '-' : ''} {formatCurrency(value)}
+        </span>
+    </div>
+);
 
 export default Profitability;
