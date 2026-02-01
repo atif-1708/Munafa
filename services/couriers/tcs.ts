@@ -13,23 +13,49 @@ export class TcsAdapter implements CourierAdapter {
   ];
 
   private async fetchWithFallback(url: string, options: RequestInit): Promise<any> {
-    // 1. Try Local Proxy first (to bypass CORS)
+    let lastError: Error | null = null;
+
+    // 1. Try Local Proxy first (Highest Priority & Most Accurate Error Reporting)
     try {
         const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
         const res = await fetch(proxyUrl, options);
+        
+        const contentType = res.headers.get('content-type');
+        const text = await res.text();
+
+        // If success
         if (res.ok) {
-             const text = await res.text();
-             try { return JSON.parse(text); } catch { return text; } // Return text if not JSON
+             try { return JSON.parse(text); } catch { return text; }
         }
-    } catch (e) {}
+        
+        // CRITICAL: If Local Proxy returns a specific API error (401/403/500) from TCS,
+        // we must report THIS error. Do not fallback to public proxies, as they cannot fix invalid credentials.
+        if (res.status === 401 || res.status === 403 || res.status === 500) {
+             // Exception: If it looks like an HTML error page from Vercel/Hosting (e.g. 504 Gateway Timeout), we can try fallback.
+             if (contentType && contentType.includes('text/html')) {
+                 // Log warning but allow fallback
+                 console.warn("Local proxy infrastructure error, trying fallbacks...");
+             } else {
+                 // This is a real API error (e.g. Invalid Password). Throw it.
+                 throw new Error(`${res.status} ${res.statusText}: ${text.substring(0, 200)}`);
+             }
+        }
+    } catch (e: any) {
+        // Only allow fallback if it was a network error or generic proxy infrastructure error
+        // If we explicitly threw a TCS Error above, re-throw it.
+        if (e.message.includes('401') || e.message.includes('403') || e.message.includes('500 TCS')) throw e;
+        
+        console.warn("Local proxy failed, trying public fallbacks...", e);
+    }
 
     // 2. Public Proxies (Fallback)
+    // Note: 'allorigins' is often more reliable for production domains than 'corsproxy' free tier.
     const proxies = [
+        { base: 'https://api.allorigins.win/raw?url=', encode: true },
         { base: 'https://corsproxy.io/?', encode: true },
         { base: 'https://thingproxy.freeboard.io/fetch/', encode: false },
     ];
 
-    let lastError: Error | null = null;
     let lastResponseText = "";
 
     for (const proxy of proxies) {
@@ -41,6 +67,12 @@ export class TcsAdapter implements CourierAdapter {
             lastResponseText = text;
             
             if (!response.ok) {
+                 // Detect specific proxy limitations to provide better error messages
+                 if (text.includes("Free usage is limited") || text.includes("Access Denied")) {
+                     lastError = new Error(`Proxy Blocked: ${proxy.base} refused connection. Code: ${response.status}`);
+                     continue; 
+                 }
+                 
                  if (response.status === 401) throw new Error("401 Unauthorized - Check Credentials");
                  if (response.status === 403) throw new Error("403 Forbidden - Access Denied");
                  if (response.status === 500) throw new Error("500 TCS Server Error");
@@ -54,20 +86,20 @@ export class TcsAdapter implements CourierAdapter {
         } catch (e: any) {
             console.warn(`TCS fetch failed via proxy`, e.message);
             lastError = e;
-            // If it was a credential error (401), stop trying other proxies, it won't help.
+            
+            // If it was a credential error (401/403) from the destination, stop trying other proxies.
             if (e.message.includes("401") || e.message.includes("403")) {
                 throw new Error(`${e.message} | Response: ${lastResponseText.substring(0, 50)}`);
             }
         }
     }
     
-    throw lastError || new Error("Network Error: Could not connect to TCS. Check your internet or CORS settings.");
+    throw lastError || new Error("Network Error: Could not connect to TCS via any proxy path.");
   }
 
   // Method 1: Authorization API (Client ID / Secret)
   private async getTokenByClientId(baseUrl: string, clientId: string, clientSecret: string): Promise<string> {
       const url = `${baseUrl}/auth/api/auth?clientid=${clientId}&clientsecret=${clientSecret}`;
-      // Note: Some TCS versions perform better with POST, but GET is standard for OCI
       const response = await this.fetchWithFallback(url, { method: 'GET' });
       
       if (response?.result?.accessToken) return response.result.accessToken;
@@ -75,7 +107,6 @@ export class TcsAdapter implements CourierAdapter {
       if (response?.accessToken) return response.accessToken;
       if (response?.access_token) return response.access_token;
       
-      // Check if response is just a string token
       if (typeof response === 'string' && response.length > 20 && !response.includes('{')) {
           return response;
       }
@@ -101,7 +132,6 @@ export class TcsAdapter implements CourierAdapter {
       const p = config.password;
       const explicitToken = config.api_token;
 
-      // 0. Fallback: If user pasted a token directly into the "password" or "api_token" field
       if (p && p.length > 100) return p; 
       if (explicitToken && explicitToken.length > 100) return explicitToken;
 
@@ -109,7 +139,6 @@ export class TcsAdapter implements CourierAdapter {
 
       let lastError = "";
 
-      // Try All Base URLs
       for (const baseUrl of this.BASE_URLS) {
           try {
               // 1. Try Client ID / Secret
@@ -147,7 +176,6 @@ export class TcsAdapter implements CourierAdapter {
   async track(trackingNumber: string, config: IntegrationConfig): Promise<TrackingUpdate> {
       const token = await this.getToken(config);
       
-      // Try tracking on all Base URLs until one works
       for (const baseUrl of this.BASE_URLS) {
           try {
               const url = `${baseUrl}/tracking/api/Tracking/GetDynamicTrackDetail?consignee=${trackingNumber}`;
@@ -166,7 +194,7 @@ export class TcsAdapter implements CourierAdapter {
                   };
               }
           } catch (e) {
-              continue; // Try next URL
+              continue;
           }
       }
 
@@ -197,7 +225,6 @@ export class TcsAdapter implements CourierAdapter {
 
       let response: any = null;
 
-      // Try fetching from all base URLs
       for (const baseUrl of this.BASE_URLS) {
           try {
               const url = `${baseUrl}/ecom/api/Payment/detail?accesstoken=${encodeURIComponent(token)}&customerno=${costCenter}&fromdate=${fromParams}&todate=${toParams}`;
