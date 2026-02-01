@@ -542,7 +542,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
                                 <div className="space-y-4">
                                     {/* Gross Profit (Pre-Ad) */}
                                     <div className="p-5 rounded-xl border bg-indigo-50 border-indigo-100">
-                                        <p className="text-xs font-bold uppercase tracking-wider text-indigo-600 mb-1">Gross Profit (Pre-Ad)</p>
+                                        <p className="text-xs font-bold uppercase tracking-wider text-indigo-600 mb-1">Gross Profit</p>
                                         <h3 className="text-2xl font-extrabold text-indigo-800">{formatCurrency(grossProfitPreAd)}</h3>
                                         <p className="text-xs text-indigo-500 mt-1">Operational Profit before Marketing</p>
                                     </div>
