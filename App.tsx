@@ -592,8 +592,6 @@ const App: React.FC = () => {
                         products={products} 
                         storeName={storeName} 
                         onMapProduct={handleMapProduct} 
-                        adSpend={adSpend}
-                        adsTaxRate={settings.adsTaxRate}
                     />
                 )}
             </>
