@@ -15,7 +15,7 @@ import { ShopifyAdapter } from './services/shopify';
 import { Order, Product, AdSpend, CourierName, SalesChannel, CourierConfig, OrderStatus, ShopifyOrder, IntegrationConfig } from './types';
 import { Loader2, AlertTriangle, X } from 'lucide-react';
 import { supabase } from './services/supabase';
-import { getCostAtDate, normalizeProductTitle } from './services/calculator';
+import { getCostAtDate } from './services/calculator';
 import { COURIER_RATES, PACKAGING_COST_AVG } from './constants';
 
 const App: React.FC = () => {
@@ -145,7 +145,7 @@ const App: React.FC = () => {
                     shopify_id: p.shopify_id || '',
                     title: p.title,
                     sku: p.sku,
-                    variant_fingerprint: p.sku, 
+                    variant_fingerprint: p.sku, // Default fallback
                     image_url: p.image_url || '',
                     current_cogs: p.current_cogs,
                     cost_history: p.cost_history || [],
@@ -213,6 +213,7 @@ const App: React.FC = () => {
 
         setIsConfigured(true);
         const finalProducts = [...savedProducts];
+        // We use a Set to avoid adding duplicate products from live streams
         const seenFingerprints = new Set(savedProducts.map(p => p.variant_fingerprint || p.sku));
 
         // E. Fetch Shopify Data (Isolate failure)
@@ -226,26 +227,24 @@ const App: React.FC = () => {
                 // --- MERGE SHOPIFY PRODUCTS ---
                 rawShopifyOrders.forEach(o => {
                     o.line_items.forEach(item => {
-                        // Use normalized fingerprint matching
-                        const rawFingerprint = item.sku || item.title;
-                        const normalizedFingerprint = normalizeProductTitle(rawFingerprint); 
+                        // Use SKU or Title as unique key
+                        const fingerprint = item.sku || item.title;
                         
-                        // Check if we already have this product (by ID, SKU, or Normalized Title)
-                        // This logic aligns with calculator.ts matching
+                        // Check if we already have this product (by ID or SKU)
                         const exists = finalProducts.some(p => 
                             p.shopify_id === String(item.variant_id) || 
-                            p.sku === item.sku || 
-                            normalizeProductTitle(p.title) === normalizedFingerprint
+                            p.sku === item.sku ||
+                            (p.variant_fingerprint && p.variant_fingerprint === fingerprint)
                         );
 
-                        if (!exists && !seenFingerprints.has(normalizedFingerprint)) {
-                            seenFingerprints.add(normalizedFingerprint);
+                        if (!exists && !seenFingerprints.has(fingerprint)) {
+                            seenFingerprints.add(fingerprint);
                             finalProducts.push({
                                 id: String(item.variant_id) || `sp-${Math.random()}`,
                                 shopify_id: String(item.variant_id),
                                 title: item.title,
                                 sku: item.sku || 'NO-SKU',
-                                variant_fingerprint: normalizedFingerprint,
+                                variant_fingerprint: fingerprint,
                                 image_url: '',
                                 current_cogs: 0,
                                 cost_history: []
@@ -275,23 +274,22 @@ const App: React.FC = () => {
 
                     o.items.forEach(item => {
                         const fingerprint = item.variant_fingerprint || item.sku || 'unknown';
-                        const normalizedFingerprint = normalizeProductTitle(fingerprint);
 
                         // Check if we already added this via Shopify loop or DB
                         const exists = finalProducts.some(p => 
                             p.sku === item.sku || 
-                            normalizeProductTitle(p.title) === normalizedFingerprint
+                            (p.variant_fingerprint && p.variant_fingerprint === fingerprint)
                         );
 
-                        if (!exists && !seenFingerprints.has(normalizedFingerprint)) {
-                            seenFingerprints.add(normalizedFingerprint);
+                        if (!exists && !seenFingerprints.has(fingerprint)) {
+                            seenFingerprints.add(fingerprint);
                             const uniqueId = (item.product_id && item.product_id !== 'unknown') ? item.product_id : fingerprint;
                             finalProducts.push({
                                 id: uniqueId,
                                 shopify_id: 'unknown',
                                 title: item.product_name,
                                 sku: fingerprint, 
-                                variant_fingerprint: normalizedFingerprint,
+                                variant_fingerprint: fingerprint,
                                 image_url: '',
                                 current_cogs: 0,
                                 cost_history: []
