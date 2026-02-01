@@ -4,8 +4,13 @@ import { IntegrationConfig, TrackingUpdate, OrderStatus, Order, CourierName, Pay
 
 export class TcsAdapter implements CourierAdapter {
   name = CourierName.TCS;
-  // Production Base URL from Page 4/5/22 of guide
-  private readonly BASE_URL = 'https://ociconnect.tcscourier.com';
+  
+  // TCS has multiple endpoints depending on the account type (Corporate vs SME vs OCI)
+  private readonly BASE_URLS = [
+      'https://ociconnect.tcscourier.com',
+      'https://api.tcscourier.com',
+      'https://apis.tcscourier.com'
+  ];
 
   private async fetchWithFallback(url: string, options: RequestInit): Promise<any> {
     // 1. Try Local Proxy first (to bypass CORS)
@@ -14,7 +19,7 @@ export class TcsAdapter implements CourierAdapter {
         const res = await fetch(proxyUrl, options);
         if (res.ok) {
              const text = await res.text();
-             try { return JSON.parse(text); } catch { /* ignore non-json */ }
+             try { return JSON.parse(text); } catch { return text; } // Return text if not JSON
         }
     } catch (e) {}
 
@@ -25,6 +30,7 @@ export class TcsAdapter implements CourierAdapter {
     ];
 
     let lastError: Error | null = null;
+    let lastResponseText = "";
 
     for (const proxy of proxies) {
         try {
@@ -32,15 +38,15 @@ export class TcsAdapter implements CourierAdapter {
             const response = await fetch(fetchUrl, { ...options, credentials: 'omit' });
             
             const text = await response.text();
+            lastResponseText = text;
             
             if (!response.ok) {
-                 // Try to extract useful error from TCS HTML/JSON response
-                 if (response.status === 401) throw new Error("Invalid Credentials (401)");
-                 if (response.status === 403) throw new Error("Access Denied (403)");
-                 if (response.status === 500) throw new Error("TCS Server Error (500)");
+                 if (response.status === 401) throw new Error("401 Unauthorized - Check Credentials");
+                 if (response.status === 403) throw new Error("403 Forbidden - Access Denied");
+                 if (response.status === 500) throw new Error("500 TCS Server Error");
+                 if (response.status === 404) throw new Error("404 Endpoint Not Found");
                  
-                 lastError = new Error(`TCS API Error ${response.status}: ${text.substring(0, 100)}`);
-                 continue;
+                 throw new Error(`API Error ${response.status}`);
             }
             
             try { return JSON.parse(text); } catch { return text; }
@@ -48,56 +54,80 @@ export class TcsAdapter implements CourierAdapter {
         } catch (e: any) {
             console.warn(`TCS fetch failed via proxy`, e.message);
             lastError = e;
+            // If it was a credential error (401), stop trying other proxies, it won't help.
+            if (e.message.includes("401") || e.message.includes("403")) {
+                throw new Error(`${e.message} | Response: ${lastResponseText.substring(0, 50)}`);
+            }
         }
     }
     
     throw lastError || new Error("Network Error: Could not connect to TCS. Check your internet or CORS settings.");
   }
 
-  // Method 1: Authorization API (Client ID / Secret) - Page 4
-  private async getTokenByClientId(clientId: string, clientSecret: string): Promise<string> {
-      const url = `${this.BASE_URL}/auth/api/auth?clientid=${clientId}&clientsecret=${clientSecret}`;
+  // Method 1: Authorization API (Client ID / Secret)
+  private async getTokenByClientId(baseUrl: string, clientId: string, clientSecret: string): Promise<string> {
+      const url = `${baseUrl}/auth/api/auth?clientid=${clientId}&clientsecret=${clientSecret}`;
+      // Note: Some TCS versions perform better with POST, but GET is standard for OCI
       const response = await this.fetchWithFallback(url, { method: 'GET' });
       
-      // Handle various response structures
       if (response?.result?.accessToken) return response.result.accessToken;
       if (response?.result?.accesstoken) return response.result.accesstoken;
       if (response?.accessToken) return response.accessToken;
+      if (response?.access_token) return response.access_token;
       
-      throw new Error("Invalid Client ID/Secret (No token returned)");
+      // Check if response is just a string token
+      if (typeof response === 'string' && response.length > 20 && !response.includes('{')) {
+          return response;
+      }
+
+      throw new Error(`Invalid Response: ${JSON.stringify(response).substring(0, 100)}`);
   }
 
-  // Method 2: Authentication API (Username / Password) - Page 5
-  private async getTokenByCredentials(username: string, password: string): Promise<string> {
-      const url = `${this.BASE_URL}/ecom/api/authentication/token?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+  // Method 2: Authentication API (Username / Password)
+  private async getTokenByCredentials(baseUrl: string, username: string, password: string): Promise<string> {
+      const url = `${baseUrl}/ecom/api/authentication/token?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
       const response = await this.fetchWithFallback(url, { method: 'GET' });
       
-      // Page 5 Response: { "accesstoken": "...", "expiry": "...", "message": "success" }
       if (response?.accesstoken) return response.accesstoken;
       if (response?.access_token) return response.access_token;
       if (response?.result?.accesstoken) return response.result.accesstoken;
 
-      throw new Error("Invalid Username/Password (No token returned)");
+      throw new Error(`Invalid Response: ${JSON.stringify(response).substring(0, 100)}`);
   }
 
-  // Main Token Handler - Tries both methods
+  // Main Token Handler
   private async getToken(config: IntegrationConfig): Promise<string> {
       const u = config.username;
       const p = config.password;
+      const explicitToken = config.api_token;
 
-      if (!u || !p) throw new Error("Missing TCS Credentials");
+      // 0. Fallback: If user pasted a token directly into the "password" or "api_token" field
+      if (p && p.length > 100) return p; 
+      if (explicitToken && explicitToken.length > 100) return explicitToken;
 
-      // 1. Try Client ID / Secret first (Preferred for OCI)
-      try {
-          return await this.getTokenByClientId(u, p);
-      } catch (e) {
-          // 2. If that fails, try Username / Password (Legacy/E-Com)
+      if (!u || !p) throw new Error("Missing TCS Credentials (Username/Password)");
+
+      let lastError = "";
+
+      // Try All Base URLs
+      for (const baseUrl of this.BASE_URLS) {
           try {
-              return await this.getTokenByCredentials(u, p);
-          } catch (e2) {
-              throw new Error("Authentication Failed. Checked both ClientID/Secret and Username/Password methods.");
+              // 1. Try Client ID / Secret
+              return await this.getTokenByClientId(baseUrl, u, p);
+          } catch (e: any) {
+              lastError += `[${baseUrl} (ClientID)]: ${e.message}\n`;
+              
+              // 2. Try Username / Password
+              try {
+                  return await this.getTokenByCredentials(baseUrl, u, p);
+              } catch (e2: any) {
+                  lastError += `[${baseUrl} (UserPass)]: ${e2.message}\n`;
+              }
           }
       }
+
+      console.error("TCS Auth Errors Debug:\n", lastError);
+      throw new Error(`TCS Connection Failed. Details:\n${lastError}`);
   }
 
   private mapStatus(rawStatus: string): OrderStatus {
@@ -108,7 +138,6 @@ export class TcsAdapter implements CourierAdapter {
     if (s.includes('cancel')) return OrderStatus.CANCELLED;
     if (s.includes('booked')) return OrderStatus.BOOKED;
     
-    // TCS "OK" usually means delivered or active, "RO" is Return Origin
     if (s === 'ok') return OrderStatus.DELIVERED; 
     if (s === 'ro') return OrderStatus.RETURNED;
 
@@ -117,24 +146,31 @@ export class TcsAdapter implements CourierAdapter {
 
   async track(trackingNumber: string, config: IntegrationConfig): Promise<TrackingUpdate> {
       const token = await this.getToken(config);
-      // Page 32: Tracking API
-      const url = `${this.BASE_URL}/tracking/api/Tracking/GetDynamicTrackDetail?consignee=${trackingNumber}`;
       
-      const data = await this.fetchWithFallback(url, {
-          method: 'GET',
-          headers: { 'Authorization': `Bearer ${token}` }
-      });
+      // Try tracking on all Base URLs until one works
+      for (const baseUrl of this.BASE_URLS) {
+          try {
+              const url = `${baseUrl}/tracking/api/Tracking/GetDynamicTrackDetail?consignee=${trackingNumber}`;
+              const data = await this.fetchWithFallback(url, {
+                  method: 'GET',
+                  headers: { 'Authorization': `Bearer ${token}` }
+              });
 
-      // Parse shipmentinfo or deliveryinfo
-      const info = data.shipmentinfo?.[0] || data.deliveryinfo?.[0];
-      if (!info) throw new Error("No tracking info found");
+              const info = data.shipmentinfo?.[0] || data.deliveryinfo?.[0];
+              if (info) {
+                  return {
+                      tracking_number: trackingNumber,
+                      status: this.mapStatus(info.status),
+                      raw_status_text: info.status,
+                      courier_timestamp: info.datetime || new Date().toISOString()
+                  };
+              }
+          } catch (e) {
+              continue; // Try next URL
+          }
+      }
 
-      return {
-          tracking_number: trackingNumber,
-          status: this.mapStatus(info.status),
-          raw_status_text: info.status,
-          courier_timestamp: info.datetime || new Date().toISOString()
-      };
+      throw new Error("Tracking not found on any TCS server");
   }
 
   async createBooking(order: Order, config: IntegrationConfig): Promise<string> {
@@ -142,45 +178,46 @@ export class TcsAdapter implements CourierAdapter {
   }
 
   async testConnection(config: IntegrationConfig): Promise<boolean> {
-      // Allow error to bubble up so UI can show specific reason (Invalid Password vs Network Error)
       const token = await this.getToken(config);
       return !!token;
   }
 
-  // Page 22: Payment Detail API
   async fetchRecentOrders(config: IntegrationConfig): Promise<Order[]> {
       const token = await this.getToken(config);
-      const costCenter = config.merchant_id; // Mapping: merchant_id -> costCenterCode
+      const costCenter = config.merchant_id;
 
-      if (!costCenter) throw new Error("Missing Cost Center Code (Customer Number)");
+      if (!costCenter) throw new Error("Missing Cost Center Code (Account Number)");
 
       const endDate = new Date();
       const startDate = new Date();
       startDate.setDate(startDate.getDate() - 60); 
       
-      // Format: YYYY-MM-DD
       const fromParams = startDate.toISOString().split('T')[0];
       const toParams = endDate.toISOString().split('T')[0];
 
-      // Note: Guide says GET, but typically huge params go in body. 
-      // However, Guide implies GET with query params for this endpoint structure.
-      const url = `${this.BASE_URL}/ecom/api/Payment/detail?accesstoken=${encodeURIComponent(token)}&customerno=${costCenter}&fromdate=${fromParams}&todate=${toParams}`;
+      let response: any = null;
 
-      const response = await this.fetchWithFallback(url, { method: 'GET' });
+      // Try fetching from all base URLs
+      for (const baseUrl of this.BASE_URLS) {
+          try {
+              const url = `${baseUrl}/ecom/api/Payment/detail?accesstoken=${encodeURIComponent(token)}&customerno=${costCenter}&fromdate=${fromParams}&todate=${toParams}`;
+              response = await this.fetchWithFallback(url, { method: 'GET' });
+              if (response && (response.detail || Array.isArray(response.detail))) break;
+          } catch(e) {}
+      }
 
-      if (!response.detail || !Array.isArray(response.detail)) {
+      if (!response || !response.detail || !Array.isArray(response.detail)) {
           return [];
       }
 
       return response.detail.map((tcsOrder: any) => {
-          // Mapping from Page 23 Sample Response
           const rawStatus = tcsOrder.status || tcsOrder['cn status'] || 'Unknown';
           const status = this.mapStatus(rawStatus);
           
-          // "amount paid" is usually the remittance. 
-          // TCS Payment Detail endpoint does NOT strictly return the original COD amount if unpaid.
-          // We use 'amount paid' as the COD amount for Delivered items.
           let amount = parseFloat(tcsOrder['amount paid'] || 0);
+          if (amount === 0 && tcsOrder['cod amount']) {
+              amount = parseFloat(tcsOrder['cod amount']);
+          }
           
           const deliveryCharges = parseFloat(tcsOrder['delivery charges'] || 0);
           
@@ -198,12 +235,11 @@ export class TcsAdapter implements CourierAdapter {
               shipping_fee_paid_by_customer: 0,
               
               courier_fee: deliveryCharges > 0 ? deliveryCharges : 250, 
-              rto_penalty: status === OrderStatus.RETURNED ? 0 : 0, // TCS RTO often charged upfront or 0
-              packaging_cost: 45, // Global default
+              rto_penalty: status === OrderStatus.RETURNED ? 0 : 0, 
+              packaging_cost: 45,
               overhead_cost: 0,
               tax_amount: 0,
               
-              // Dummy item since TCS doesn't return line items
               items: [{
                   product_id: 'unknown',
                   quantity: 1,

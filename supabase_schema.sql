@@ -16,6 +16,30 @@ with check ( auth.uid() = user_id );
 -- 3. Add Aliases Column for Manual Mapping
 alter table products add column if not exists aliases text[] default array[]::text[];
 
+-- 4. Ensure Integration Configs has Credentials Columns (For TCS)
+-- Note: The table name in code is 'integration_configs'.
+-- We ensure 'integration_configs' exists and has the correct columns.
+create table if not exists integration_configs (
+  id uuid default uuid_generate_v4() primary key,
+  user_id uuid references auth.users not null,
+  provider_id text not null,
+  api_token text,
+  merchant_id text,
+  username text,
+  password text,
+  is_active boolean default false,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table integration_configs add column if not exists username text;
+alter table integration_configs add column if not exists password text;
+alter table integration_configs add column if not exists merchant_id text;
+
+-- Fix Permissions for integration_configs
+alter table integration_configs enable row level security;
+drop policy if exists "Users can manage own integration configs" on integration_configs;
+create policy "Users can manage own integration configs" on integration_configs for all using ( auth.uid() = user_id );
+
 -- =================================================================
 -- END OF CRITICAL FIX
 -- =================================================================
@@ -46,10 +70,8 @@ alter table sales_channels enable row level security;
 drop policy if exists "Users can manage own sales channels" on sales_channels;
 create policy "Users can manage own sales channels" on sales_channels for all using ( auth.uid() = user_id );
 
--- 5. Courier Configs
-alter table courier_configs enable row level security;
-drop policy if exists "Users can manage own courier configs" on courier_configs;
-create policy "Users can manage own courier configs" on courier_configs for all using ( auth.uid() = user_id );
+-- 5. Integration Configs
+-- See Critical Fix block for table definition and policies
 
 -- 6. App Settings
 alter table app_settings enable row level security;
