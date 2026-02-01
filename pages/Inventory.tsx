@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { Product, Order, ShopifyOrder } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { PackageSearch, History, Edit2, Plus, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, AlertCircle, Link as LinkIcon } from 'lucide-react';
+import { PackageSearch, History, Edit2, Plus, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, AlertCircle, Link as LinkIcon, Sparkles, XCircle, Check } from 'lucide-react';
 
 interface InventoryProps {
   products: Product[];
@@ -30,6 +30,8 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
 
   // Group Logic State
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [ignoredSuggestionKeys, setIgnoredSuggestionKeys] = useState<Set<string>>(new Set());
   
   // Group Creation/Edit State
   const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
@@ -92,6 +94,65 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
       });
       return { groups: Array.from(groups.values()), singles };
   }, [filteredProducts]);
+
+  // --- Auto-Suggestion Logic ---
+  const suggestions = useMemo(() => {
+      const singles = [...inventoryTree.singles].sort((a, b) => a.title.localeCompare(b.title));
+      const results: { key: string, name: string, items: Product[] }[] = [];
+      const usedIds = new Set<string>();
+
+      // Heuristic: Find clusters of products with shared prefixes
+      let i = 0;
+      while (i < singles.length) {
+          if (usedIds.has(singles[i].id)) { i++; continue; }
+
+          const current = singles[i];
+          const cluster: Product[] = [current];
+          
+          // Find next items that share a significant prefix with current item
+          let j = i + 1;
+          while (j < singles.length) {
+              const next = singles[j];
+              const common = getCommonPrefix(current.title, next.title);
+              
+              // Threshold: Prefix > 5 chars and represents meaningful overlap
+              // Avoid grouping "Shirt Blue" and "Shoe Red" if prefix is just "S"
+              if (common.length >= 6) {
+                  // Further check: Does this new item also match the cluster's running common prefix?
+                  // (For simplicity, just matching the first item is usually enough due to sort, 
+                  // but let's recalculate common prefix for the whole cluster to be safe)
+                  cluster.push(next);
+                  j++;
+              } else {
+                  break; // Sorted list, so if prefix fails, we are done with this group candidate
+              }
+          }
+
+          if (cluster.length >= 2) {
+              // Determine suggested name
+              let name = getCommonPrefix(cluster[0].title, cluster[1].title).trim();
+              // Cleanup trailing separators
+              name = name.replace(/[-:]$/, '').trim();
+              if (name.endsWith(' -')) name = name.substring(0, name.length - 2);
+              
+              // Key for dismissal
+              const key = cluster.map(c => c.id).sort().join('-');
+              
+              if (!ignoredSuggestionKeys.has(key)) {
+                  results.push({ key, name, items: cluster });
+              }
+              
+              // Mark these as used so we don't process overlapping subsets
+              cluster.forEach(c => usedIds.add(c.id));
+              
+              // Advance index past this cluster
+              i = j;
+          } else {
+              i++;
+          }
+      }
+      return results;
+  }, [inventoryTree.singles, ignoredSuggestionKeys]);
 
   // Calculate unmapped titles for the alias dropdown
   const unmappedShopifyTitles = useMemo(() => {
@@ -250,6 +311,20 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
     setGroupAction('create');
   };
 
+  const handleCreateAutoGroup = async (name: string, items: Product[]) => {
+      const targetId = generateUUID();
+      const updates = items.map(p => ({
+          ...p,
+          group_id: targetId,
+          group_name: name
+      }));
+      await handleUpdateAndSave(updates);
+  };
+
+  const handleDismissSuggestion = (key: string) => {
+      setIgnoredSuggestionKeys(prev => new Set(prev).add(key));
+  };
+
   const handleUngroup = async (product: Product) => {
       const updated = {...product, group_id: null, group_name: null};
       if(selectedProduct?.id === product.id) {
@@ -317,6 +392,68 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
              )}
         </div>
       </div>
+
+      {/* Auto-Suggestion Banner */}
+      {suggestions.length > 0 && (
+          <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 animate-in fade-in slide-in-from-top-2">
+              <div className="flex justify-between items-center mb-3">
+                  <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-indigo-100 rounded-lg text-indigo-600">
+                          <Sparkles size={18} />
+                      </div>
+                      <div>
+                          <h3 className="text-sm font-bold text-indigo-900">Found {suggestions.length} potential product groups</h3>
+                          <p className="text-xs text-indigo-600">Group similar items to aggregate stats automatically.</p>
+                      </div>
+                  </div>
+                  <button 
+                    onClick={() => setShowSuggestions(!showSuggestions)}
+                    className="text-xs font-bold text-indigo-700 bg-white border border-indigo-200 px-3 py-1.5 rounded-lg hover:bg-indigo-50 transition-colors"
+                  >
+                      {showSuggestions ? 'Hide Suggestions' : 'Review Suggestions'}
+                  </button>
+              </div>
+              
+              {showSuggestions && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-2">
+                      {suggestions.map((s) => (
+                          <div key={s.key} className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow">
+                              <div className="flex justify-between items-start mb-2">
+                                  <div className="flex-1 mr-2">
+                                      <span className="text-[10px] uppercase font-bold text-slate-400">Suggested Group</span>
+                                      <h4 className="font-bold text-slate-800 text-sm truncate" title={s.name}>{s.name}</h4>
+                                  </div>
+                                  <span className="text-xs font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">
+                                      {s.items.length} items
+                                  </span>
+                              </div>
+                              <div className="space-y-1 mb-3 max-h-24 overflow-y-auto pr-1">
+                                  {s.items.map(item => (
+                                      <div key={item.id} className="text-xs text-slate-500 truncate border-l-2 border-slate-100 pl-2">
+                                          {item.title}
+                                      </div>
+                                  ))}
+                              </div>
+                              <div className="flex gap-2 pt-2 border-t border-slate-50">
+                                  <button 
+                                    onClick={() => handleDismissSuggestion(s.key)}
+                                    className="flex-1 py-1.5 text-xs font-medium text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded"
+                                  >
+                                      Dismiss
+                                  </button>
+                                  <button 
+                                    onClick={() => handleCreateAutoGroup(s.name, s.items)}
+                                    className="flex-1 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded flex items-center justify-center gap-1"
+                                  >
+                                      <Check size={12} /> Create Group
+                                  </button>
+                              </div>
+                          </div>
+                      ))}
+                  </div>
+              )}
+          </div>
+      )}
 
       <div className="flex gap-6">
         {/* List View */}
@@ -714,5 +851,14 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
     </div>
   );
 };
+
+// --- Helper Functions ---
+function getCommonPrefix(s1: string, s2: string): string {
+    let i = 0;
+    while(i < s1.length && i < s2.length && s1[i].toLowerCase() === s2[i].toLowerCase()) {
+        i++;
+    }
+    return s1.substring(0, i);
+}
 
 export default Inventory;
