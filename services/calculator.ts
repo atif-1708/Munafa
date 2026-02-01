@@ -77,11 +77,11 @@ export const calculateMetrics = (
        const orderCost = order.items.reduce((sum, item) => sum + (item.cogs_at_time_of_order * item.quantity), 0);
        total_cogs += orderCost;
 
-       // Cash in Stock = Cost of all skus except booked, unbooked, delivered (and cancelled)
-       // Essentially: Cost of Inventory currently floating in the courier network.
-       // NOTE: We exclude 'RETURNED' (completed return) as that stock is assumed back in hand.
-       // 'RTO_INITIATED' is still considered in transit (risk).
-       if (!isDelivered && order.status !== OrderStatus.RETURNED) {
+       // Cash in Stock
+       // STRICT: Only count as "Stuck" if it is Returned or RTO Initiated.
+       // In-Transit stock is considered 'sold' until proven otherwise (or pending revenue), 
+       // but user specifically requested Cash Stuck to be Returned Orders only.
+       if (isRto) {
            cash_in_transit_stock += orderCost;
        }
     }
@@ -107,7 +107,6 @@ export const calculateMetrics = (
 
   // Gross Profit (Operational Profit AFTER Ads)
   // Logic: Net Profit + Cash Stuck.
-  // This essentially means: Realized Revenue - Realized COGS - Expenses (Before Cash Stuck) - ADS.
   const gross_profit = net_profit + cash_in_transit_stock;
 
   const total_finished_orders = delivered_orders + rto_orders;
@@ -171,6 +170,9 @@ const normalizeProductTitle = (title: string): string => {
         .replace(/\[.*\]/g, '') // Remove [anything]
         .replace(/-.*/g, '')    // Remove - anything (often variant name)
         .replace(/\d+x/g, '')   // Remove 2x, 3x (quantity markers)
+        .replace(/x\d+/g, '')   // Remove x2, x3
+        .replace(/\d+\s?pc[s]?/g, '') // Remove 2 pcs
+        .replace(/[^\w\s]/gi, '') // Remove remaining special chars
         .trim();
 };
 
@@ -357,6 +359,7 @@ export const calculateProductPerformance = (
         if (order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED) {
              p.units_returned += item.quantity;
              p.shipping_cost_allocation += (shippingPerItem * item.quantity); 
+             // CASH STUCK: Only apply for Returned/RTO as requested
              p.cash_in_stock += (historicalCogs * item.quantity);
         }
         else if (order.status === OrderStatus.DELIVERED) {
@@ -367,30 +370,25 @@ export const calculateProductPerformance = (
              p.tax_allocation += (taxPerItem * item.quantity);
         }
         else if (isChargeable) {
+            // IN TRANSIT
             p.shipping_cost_allocation += (shippingPerItem * item.quantity);
             p.units_in_transit += item.quantity;
-            p.cash_in_stock += (historicalCogs * item.quantity);
+            // Removed cash_in_stock accumulation for In Transit as requested
         }
     });
   });
 
-  // 3. Process Ad Spend (Separate Loop for correct attribution)
+  // 3. Process Ad Spend
   adSpend.forEach(ad => {
-      // Calculate Tax: Skip for TikTok, Apply for Others
       const taxRateToApply = ad.platform === 'TikTok' ? 0 : adsTaxRate;
       const amount = ad.amount_spent * (1 + taxRateToApply / 100);
       const purchases = ad.purchases || 0;
 
-      // Try exact match (Variant ID)
       let match = products.find(p => p.id === ad.product_id);
-      
-      // If not found, try Group ID match
       if (!match && ad.product_id) {
           match = products.find(p => p.group_id === ad.product_id);
       }
 
-      // If matched to a product (or a product in a group), add to that product's Title bucket
-      // Note: Since we aggregate by Title, adding to one variant's title is sufficient to bucket it correctly.
       if (match) {
           const key = match.title;
           if (perf[key]) {
@@ -401,53 +399,49 @@ export const calculateProductPerformance = (
   });
 
   // 4. Process Shopify Orders for Demand & CPA
-  // We use deduplication to ensure each Order is only counted once per product, regardless of how many line items of that product exist.
-  // Actually, standard logic is 1 order per ID.
+  // RULE: Consider only the FIRST item in the order for attribution
   shopifyOrders.forEach(order => {
+        if (!order.line_items || order.line_items.length === 0) return;
+
+        // Take only the first item
+        const item = order.line_items[0];
+
         const isConfirmed = order.fulfillment_status === 'fulfilled' || order.fulfillment_status === 'partial';
-
-        // Set to track which products have already been counted for this order
-        const countedProducts = new Set<string>();
-
-        order.line_items.forEach(item => {
-            const itemTitleNorm = normalizeProductTitle(item.title);
+        const itemTitleNorm = normalizeProductTitle(item.title);
+        
+        // Try matching to existing performance keys
+        const allKeys = Object.keys(perf);
+        let matchedKey: string | null = null;
+        
+        // 1. Exact Title Match (fast)
+        if (perf[item.title]) {
+            matchedKey = item.title;
+        } else {
+            // 2. Normalized Exact Match
+            matchedKey = allKeys.find(k => normalizeProductTitle(k) === itemTitleNorm) || null;
             
-            // Try matching
-            const allKeys = Object.keys(perf);
-            let matchedKey: string | null = null;
-            
-            // 1. Exact Title Match (fast)
-            if (perf[item.title]) {
-                matchedKey = item.title;
-            } else {
-                // 2. Normalized Exact Match
-                matchedKey = allKeys.find(k => normalizeProductTitle(k) === itemTitleNorm) || null;
-                
-                // 3. Smart Contains Match (if exact failed)
-                // "Product A (Black)" vs "Product A"
-                if (!matchedKey) {
-                    matchedKey = allKeys.find(k => {
-                        const kNorm = normalizeProductTitle(k);
-                        return kNorm.length > 0 && itemTitleNorm.length > 0 && (kNorm.includes(itemTitleNorm) || itemTitleNorm.includes(kNorm));
-                    }) || null;
-                }
+            // 3. Smart Contains Match (aggressive fuzzy match)
+            if (!matchedKey) {
+                matchedKey = allKeys.find(k => {
+                    const kNorm = normalizeProductTitle(k);
+                    // Match if one contains the other, ensure reasonable length to avoid 'a' matching 'apple'
+                    return kNorm.length > 2 && itemTitleNorm.length > 2 && (kNorm.includes(itemTitleNorm) || itemTitleNorm.includes(kNorm));
+                }) || null;
             }
+        }
 
-            if (matchedKey && !countedProducts.has(matchedKey)) {
-                perf[matchedKey].shopify_total_orders += 1;
-                if (isConfirmed) {
-                    perf[matchedKey].shopify_confirmed_orders += 1;
-                }
-                countedProducts.add(matchedKey);
+        if (matchedKey) {
+            perf[matchedKey].shopify_total_orders += 1;
+            if (isConfirmed) {
+                perf[matchedKey].shopify_confirmed_orders += 1;
             }
-        });
+        }
   });
 
   return Object.values(perf)
     .map(p => {
       const expenses = p.cogs_total + p.shipping_cost_allocation + p.overhead_allocation + p.tax_allocation + p.ad_spend_allocation;
       
-      // Calculate Real Orders Count
       p.real_order_count = orderTracker[p.id]?.size || 0;
 
       p.net_profit = p.gross_revenue - expenses - p.cash_in_stock;
