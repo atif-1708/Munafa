@@ -38,7 +38,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
     };
   });
 
-  // Calculate active items in the date range
+  // Calculate active items in the date range based on COURIER ORDERS
   const activeItemKeys = useMemo(() => {
       const start = new Date(dateRange.start);
       start.setHours(0,0,0,0);
@@ -61,17 +61,17 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
 
   const filteredProducts = useMemo(() => {
       return products.filter(p => {
-          // 1. Text Search
-          const matchesSearch = p.title.toLowerCase().includes(search.toLowerCase()) || 
-                                p.sku.toLowerCase().includes(search.toLowerCase());
-          if (!matchesSearch) return false;
+          // 1. Date/Active Filter (Strict: Must exist in Courier Orders for this date)
+          const isActive = activeItemKeys.has(p.variant_fingerprint || '') || 
+                           activeItemKeys.has(p.sku) || 
+                           activeItemKeys.has(p.id);
+          
+          if (!isActive) return false;
 
-          // 2. Date/Active Filter
-          if (search.length === 0) {
-              const isActive = activeItemKeys.has(p.variant_fingerprint || '') || 
-                               activeItemKeys.has(p.sku) || 
-                               activeItemKeys.has(p.id);
-              return isActive;
+          // 2. Text Search
+          if (search) {
+             return p.title.toLowerCase().includes(search.toLowerCase()) || 
+                    p.sku.toLowerCase().includes(search.toLowerCase());
           }
           return true;
       });
@@ -299,7 +299,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
                         {inventoryTree.groups.length === 0 && inventoryTree.singles.length === 0 && (
                             <tr>
                                 <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
-                                    No items found for this period. Try expanding the date range.
+                                    No active products found for this period. Try expanding the date range.
                                 </td>
                             </tr>
                         )}
