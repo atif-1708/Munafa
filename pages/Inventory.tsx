@@ -2,11 +2,11 @@
 import React, { useState, useMemo } from 'react';
 import { Product, Order } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { PackageSearch, History, Edit2, Plus, Save, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, AlertCircle } from 'lucide-react';
+import { PackageSearch, History, Edit2, Plus, Save, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, AlertCircle, Filter } from 'lucide-react';
 
 interface InventoryProps {
   products: Product[];
-  orders: Order[]; // Passed for date filtering
+  orders: Order[]; 
   onUpdateProducts: (products: Product[]) => Promise<void>;
 }
 
@@ -15,6 +15,18 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
   
+  // Date Filtering State (Restored but Optional)
+  const [dateRange, setDateRange] = useState(() => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - 60);
+    return {
+      start: start.toISOString().split('T')[0],
+      end: end.toISOString().split('T')[0]
+    };
+  });
+  const [filterActive, setFilterActive] = useState(false); // Default OFF to show ALL items
+
   // Group Logic State
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   
@@ -26,79 +38,45 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Default to Last 60 Days
-  const [dateRange, setDateRange] = useState(() => {
-    const end = new Date();
-    const start = new Date();
-    start.setDate(end.getDate() - 60);
-    return {
-      start: start.toISOString().split('T')[0],
-      end: end.toISOString().split('T')[0]
-    };
-  });
-
-  // Helper: Aggressive Normalization for matching (removes spaces, dashes, special chars)
-  const smartNormalize = (str: string | undefined | null) => {
-      if (!str) return '';
-      return str.toLowerCase().replace(/[^a-z0-9]/g, '');
-  };
-
-  // Calculate active items in the date range based on COURIER ORDERS
-  const activeItemKeys = useMemo(() => {
-      const start = new Date(dateRange.start);
-      start.setHours(0,0,0,0);
-      const end = new Date(dateRange.end);
-      end.setHours(23,59,59,999);
-
-      const keys = new Set<string>();
-      
-      orders.forEach(o => {
-          const d = new Date(o.created_at);
-          if (d >= start && d <= end) {
-              o.items.forEach(i => {
-                  // Add strict keys
-                  if (i.variant_fingerprint) keys.add(i.variant_fingerprint);
-                  if (i.sku) keys.add(i.sku);
-                  if (i.product_id) keys.add(i.product_id);
-                  
-                  // Add Normalized Keys (Broad Match)
-                  keys.add(smartNormalize(i.product_name));
-                  keys.add(smartNormalize(i.sku));
-                  keys.add(smartNormalize(i.variant_fingerprint));
-              });
-          }
-      });
-      return keys;
-  }, [orders, dateRange]);
-
   const filteredProducts = useMemo(() => {
-      return products.filter(p => {
-          // 1. Date/Active Filter using Smart Matching
-          // We check both strict values AND normalized values against the active set
-          const pTitleNorm = smartNormalize(p.title);
-          const pSkuNorm = smartNormalize(p.sku);
-          const pFingerNorm = smartNormalize(p.variant_fingerprint);
-
-          const isActive = 
-               // Strict Check
-               activeItemKeys.has(p.variant_fingerprint || '') || 
-               activeItemKeys.has(p.sku) || 
-               activeItemKeys.has(p.id) ||
-               // Normalized Check (Fixes "Blue Shirt" vs "blue-shirt" mismatch)
-               activeItemKeys.has(pTitleNorm) ||
-               activeItemKeys.has(pSkuNorm) ||
-               activeItemKeys.has(pFingerNorm);
+      // 1. Identify active product IDs if filtering by date is enabled
+      let activeIds = new Set<string>();
+      if (filterActive) {
+          const start = new Date(dateRange.start); 
+          start.setHours(0,0,0,0);
+          const end = new Date(dateRange.end);
+          end.setHours(23,59,59,999);
           
-          if (!isActive) return false;
+          orders.forEach(o => {
+              const d = new Date(o.created_at);
+              if (d >= start && d <= end) {
+                  o.items.forEach(i => {
+                      activeIds.add(i.product_id);
+                      if (i.sku) activeIds.add(i.sku);
+                      if (i.variant_fingerprint) activeIds.add(i.variant_fingerprint);
+                  });
+              }
+          });
+      }
 
-          // 2. Text Search
-          if (search) {
-             return p.title.toLowerCase().includes(search.toLowerCase()) || 
-                    p.sku.toLowerCase().includes(search.toLowerCase());
+      return products.filter(p => {
+          // 2. Active Filter Check (Optional)
+          if (filterActive) {
+              const fingerprint = p.variant_fingerprint || p.sku;
+              const isActive = activeIds.has(p.id) || activeIds.has(p.sku) || activeIds.has(fingerprint || '');
+              if (!isActive) return false;
           }
+
+          // 3. Text Search (Always Active)
+          if (search) {
+             const term = search.toLowerCase();
+             return p.title.toLowerCase().includes(term) || 
+                    p.sku.toLowerCase().includes(term);
+          }
+          
           return true;
       });
-  }, [products, search, activeItemKeys]);
+  }, [products, search, filterActive, dateRange, orders]);
 
   // Organize Data into Groups and Singles
   const inventoryTree = useMemo(() => {
@@ -261,44 +239,55 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
           <p className="text-slate-500 text-sm">Manage SKU costs and group variants for unified tracking.</p>
         </div>
         
-        <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
-             {selectedIds.size > 0 && (
-                 <button 
-                    onClick={openGroupModal}
-                    className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-indigo-700 transition-colors"
-                 >
-                     <Layers size={16} /> Group Selected ({selectedIds.size})
-                 </button>
-             )}
-             
-             {/* Date Filter */}
-             <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm">
+        <div className="flex flex-col xl:flex-row items-center gap-3 w-full md:w-auto">
+             {/* New Filter Controls */}
+             <div className="flex items-center gap-2 bg-white px-3 py-2 border rounded-lg shadow-sm w-full md:w-auto">
                 <Calendar size={16} className="text-slate-500" />
                 <input 
-                  type="date" 
-                  value={dateRange.start}
-                  onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
-                  className="text-sm text-slate-700 bg-transparent border-none focus:ring-0 outline-none w-24 font-medium cursor-pointer"
+                    type="date" 
+                    value={dateRange.start} 
+                    onChange={e => setDateRange({...dateRange, start: e.target.value})} 
+                    className="outline-none text-slate-600 bg-transparent w-28 text-xs font-medium cursor-pointer"
                 />
-                <span className="text-slate-400 text-xs">to</span>
+                <span className="text-slate-300">|</span>
                 <input 
-                  type="date" 
-                  value={dateRange.end}
-                  onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
-                  className="text-sm text-slate-700 bg-transparent border-none focus:ring-0 outline-none w-24 font-medium cursor-pointer"
+                    type="date" 
+                    value={dateRange.end} 
+                    onChange={e => setDateRange({...dateRange, end: e.target.value})} 
+                    className="outline-none text-slate-600 bg-transparent w-28 text-xs font-medium cursor-pointer"
                 />
-             </div>
+            </div>
 
-             <div className="relative">
+            <label className={`flex items-center gap-2 text-xs font-medium cursor-pointer select-none px-3 py-2.5 border rounded-lg shadow-sm transition-colors ${filterActive ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                <input 
+                    type="checkbox" 
+                    checked={filterActive} 
+                    onChange={e => setFilterActive(e.target.checked)}
+                    className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4"
+                />
+                <span className="whitespace-nowrap">Filter Active Only</span>
+            </label>
+
+             {/* Search */}
+             <div className="relative w-full md:w-auto">
                  <input 
                     type="text" 
                     placeholder="Search Item..." 
-                    className="pl-4 pr-10 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm"
+                    className="w-full pl-9 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm"
                     value={search}
                     onChange={e => setSearch(e.target.value)}
                  />
-                 <PackageSearch className="absolute right-3 top-2.5 text-slate-400" size={18} />
+                 <PackageSearch className="absolute left-3 top-2.5 text-slate-400" size={16} />
              </div>
+
+             {selectedIds.size > 0 && (
+                 <button 
+                    onClick={openGroupModal}
+                    className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-indigo-700 transition-colors whitespace-nowrap"
+                 >
+                     <Layers size={16} /> Group ({selectedIds.size})
+                 </button>
+             )}
         </div>
       </div>
 
@@ -322,7 +311,9 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
                         {inventoryTree.groups.length === 0 && inventoryTree.singles.length === 0 && (
                             <tr>
                                 <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
-                                    No active products found for this period. Try expanding the date range.
+                                    {filterActive 
+                                        ? "No items found active in this date range. Uncheck 'Filter Active Only' to see all."
+                                        : "No products found."}
                                 </td>
                             </tr>
                         )}

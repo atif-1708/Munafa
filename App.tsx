@@ -240,9 +240,12 @@ const App: React.FC = () => {
                 const rawOrders = await postExAdapter.fetchRecentOrders(postExConfig);
 
                 rawOrders.forEach(o => {
-                    // Update: Allow BOOKED and PENDING orders to create inventory items.
-                    // This ensures all items present in the courier system are tracked, even if not yet shipped.
-                    const isRelevantForInventory = o.status !== OrderStatus.CANCELLED;
+                    // Update: EXCLUDE Booked and Pending (Unbooked) orders.
+                    // Only dispatched items (In Transit, Delivered, Returned) create inventory entries.
+                    const isRelevantForInventory = o.status !== OrderStatus.PENDING && 
+                                                 o.status !== OrderStatus.BOOKED && 
+                                                 o.status !== OrderStatus.CANCELLED;
+                    
                     if (!isRelevantForInventory) return;
 
                     o.items.forEach(item => {
