@@ -117,8 +117,17 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                 });
             }
 
-            // Load Marketing Configs (FB/TikTok) ... 
-            // [Code omitted for brevity, logic remains same as previous]
+            // Load Marketing Configs
+            const { data: mkData } = await supabase.from('marketing_configs').select('*').eq('user_id', session.user.id);
+            if (mkData) {
+                mkData.forEach((m: any) => {
+                    if (m.platform === 'Facebook') {
+                        setFbConfig({ ...m, is_active: m.is_active });
+                        if(m.access_token) setFbManualToken(m.access_token);
+                    }
+                    if (m.platform === 'TikTok') setTiktokConfig({ ...m, is_active: m.is_active });
+                });
+            }
         } 
         setLoading(false);
     };
@@ -126,7 +135,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   }, []);
 
   const handleShopifyConnect = async () => {
-      // ... same as before
       setErrorMessage(null);
       setTestingConnection('Shopify');
       let url = shopifyConfig.store_url.trim();
@@ -148,6 +156,78 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
            await supabase.from('sales_channels').update({ is_active: false, access_token: null }).eq('user_id', session.user.id).eq('platform', 'Shopify');
            if (onConfigUpdate) onConfigUpdate();
       }
+  };
+
+  const handleVerifyFacebook = async () => {
+      setErrorMessage(null);
+      setIsVerifyingFb(true);
+      try {
+          const service = new FacebookService();
+          const accounts = await service.getAdAccounts(fbManualToken);
+          setAvailableAdAccounts(accounts);
+          
+          if(accounts.length === 0) throw new Error("No Ad Accounts found for this token.");
+          
+          // Auto-select first if none selected
+          if (fbConfig.ad_account_ids.length === 0) {
+              setFbConfig(prev => ({ ...prev, ad_account_ids: [accounts[0].id] }));
+          }
+      } catch (e: any) {
+          setErrorMessage("Facebook Error: " + e.message);
+      } finally {
+          setIsVerifyingFb(false);
+      }
+  };
+
+  const handleSaveFacebook = async () => {
+      if (availableAdAccounts.length === 0 && !fbConfig.is_active) return;
+      
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
+
+      const payload = {
+          user_id: session.user.id,
+          platform: 'Facebook' as const,
+          access_token: fbManualToken,
+          ad_account_ids: fbConfig.ad_account_ids,
+          is_active: true
+      };
+
+      await supabase.from('marketing_configs').upsert(payload, { onConflict: 'user_id, platform' });
+      setFbConfig(prev => ({ 
+          ...prev, 
+          platform: payload.platform,
+          access_token: payload.access_token,
+          ad_account_ids: payload.ad_account_ids,
+          is_active: payload.is_active
+      }));
+      if (onConfigUpdate) onConfigUpdate();
+  };
+
+  const handleTikTokConnect = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
+      
+      const host = window.location.origin;
+      window.location.href = `${host}/api/tiktok/login?userId=${session.user.id}`;
+  };
+
+  const handleDisconnectMarketing = async (platform: 'Facebook' | 'TikTok') => {
+      if (!window.confirm(`Disconnect ${platform}?`)) return;
+      
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
+
+      await supabase.from('marketing_configs').delete().eq('user_id', session.user.id).eq('platform', platform);
+      
+      if (platform === 'Facebook') {
+          setFbConfig({ id: '', platform: 'Facebook', access_token: '', ad_account_ids: [], is_active: false });
+          setFbManualToken('');
+          setAvailableAdAccounts([]);
+      } else {
+          setTiktokConfig({ id: '', platform: 'TikTok', access_token: '', ad_account_ids: [], is_active: false });
+      }
+      if (onConfigUpdate) onConfigUpdate();
   };
 
   const saveCourierConfig = async (courierId: string, isActive: boolean) => {
@@ -224,7 +304,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
            </div>
       )}
 
-      {/* CORE PLATFORMS GRID (Shopify, FB, TikTok - kept same) */}
+      {/* CORE PLATFORMS GRID (Shopify, FB, TikTok) */}
       <section>
           <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
               <Grid className="text-slate-500" size={20} /> Core Platforms
@@ -271,7 +351,112 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                       </div>
                   </div>
               </div>
-              {/* Other marketing cards assumed unchanged/present */}
+
+              {/* FACEBOOK CARD */}
+              <div className={`relative overflow-hidden rounded-2xl border transition-all duration-300 ${fbConfig.is_active ? 'bg-blue-50 border-blue-200 shadow-sm' : 'bg-white border-slate-200 shadow-sm hover:shadow-lg'}`}>
+                   <div className="p-8 h-full flex flex-col">
+                       <div className="flex justify-between items-start mb-6">
+                           <div className="flex items-center gap-4">
+                               <div className="w-14 h-14 bg-[#1877F2] rounded-xl flex items-center justify-center text-white shadow-sm">
+                                   <Facebook size={28} />
+                               </div>
+                               <div>
+                                   <h3 className="font-bold text-xl text-slate-900">Facebook Ads</h3>
+                                   <p className="text-sm text-slate-500">Marketing Data</p>
+                               </div>
+                           </div>
+                           {fbConfig.is_active && <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-bold flex items-center gap-1"><CheckCircle2 size={14} /> Active</span>}
+                       </div>
+                       <div className="flex-1">
+                           {fbConfig.is_active ? (
+                               <div className="space-y-6">
+                                   <div className="p-4 bg-white rounded-xl border border-blue-100">
+                                       <p className="text-xs text-slate-500 font-bold uppercase mb-1">Ad Accounts</p>
+                                       <p className="text-sm font-medium text-slate-900 truncate">{fbConfig.ad_account_ids.length} Linked Accounts</p>
+                                   </div>
+                                   <button onClick={() => handleDisconnectMarketing('Facebook')} className="text-sm text-red-600 hover:text-red-700 hover:underline">Disconnect</button>
+                               </div>
+                           ) : (
+                               <div className="space-y-4">
+                                   <div>
+                                       <label className="block text-xs font-bold text-slate-700 mb-1">Access Token</label>
+                                       <input 
+                                           type="password" 
+                                           placeholder="EAAB..." 
+                                           className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                                           value={fbManualToken}
+                                           onChange={(e) => setFbManualToken(e.target.value)}
+                                       />
+                                       <p className="text-[10px] text-slate-400 mt-1">
+                                           Use a System User Token with 'ads_read' permission.
+                                       </p>
+                                   </div>
+                                   {availableAdAccounts.length > 0 ? (
+                                       <div className="space-y-2">
+                                           <label className="block text-xs font-bold text-slate-700">Select Ad Account</label>
+                                           <select 
+                                               className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+                                               onChange={(e) => setFbConfig({...fbConfig, ad_account_ids: [e.target.value]})}
+                                               value={fbConfig.ad_account_ids[0] || ''}
+                                           >
+                                               {availableAdAccounts.map(acc => (
+                                                   <option key={acc.id} value={acc.id}>{acc.name} ({acc.id})</option>
+                                               ))}
+                                           </select>
+                                           <button onClick={handleSaveFacebook} className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-bold mt-2">
+                                               Save Configuration
+                                           </button>
+                                       </div>
+                                   ) : (
+                                       <button 
+                                           onClick={handleVerifyFacebook} 
+                                           disabled={!fbManualToken || isVerifyingFb}
+                                           className="w-full bg-slate-900 text-white py-2 rounded-lg text-sm font-bold hover:bg-slate-800 disabled:opacity-50 flex items-center justify-center gap-2"
+                                       >
+                                           {isVerifyingFb ? <Loader2 className="animate-spin" size={14}/> : 'Verify Token'}
+                                       </button>
+                                   )}
+                               </div>
+                           )}
+                       </div>
+                   </div>
+              </div>
+
+              {/* TIKTOK CARD */}
+              <div className={`relative overflow-hidden rounded-2xl border transition-all duration-300 ${tiktokConfig.is_active ? 'bg-slate-100 border-slate-300 shadow-sm' : 'bg-white border-slate-200 shadow-sm hover:shadow-lg'}`}>
+                   <div className="p-8 h-full flex flex-col">
+                       <div className="flex justify-between items-start mb-6">
+                           <div className="flex items-center gap-4">
+                               <div className="w-14 h-14 bg-black rounded-xl flex items-center justify-center text-white shadow-sm">
+                                   <svg viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z"/></svg>
+                               </div>
+                               <div>
+                                   <h3 className="font-bold text-xl text-slate-900">TikTok Ads</h3>
+                                   <p className="text-sm text-slate-500">Marketing Data</p>
+                               </div>
+                           </div>
+                           {tiktokConfig.is_active && <span className="px-3 py-1 bg-slate-200 text-slate-800 rounded-full text-xs font-bold flex items-center gap-1"><CheckCircle2 size={14} /> Active</span>}
+                       </div>
+                       <div className="flex-1">
+                           {tiktokConfig.is_active ? (
+                               <div className="space-y-6">
+                                   <div className="p-4 bg-white rounded-xl border border-slate-200">
+                                       <p className="text-xs text-slate-500 font-bold uppercase mb-1">Ad Accounts</p>
+                                       <p className="text-sm font-medium text-slate-900 truncate">Connected via OAuth</p>
+                                   </div>
+                                   <button onClick={() => handleDisconnectMarketing('TikTok')} className="text-sm text-red-600 hover:text-red-700 hover:underline">Disconnect</button>
+                               </div>
+                           ) : (
+                               <div className="space-y-6">
+                                   <p className="text-sm text-slate-500">Connect your TikTok for Business account to sync spend and conversion data.</p>
+                                   <button onClick={handleTikTokConnect} className="w-full bg-black text-white py-3 rounded-xl text-sm font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2">
+                                       <Zap size={16} /> Connect TikTok
+                                   </button>
+                               </div>
+                           )}
+                       </div>
+                   </div>
+              </div>
           </div>
       </section>
 
@@ -342,6 +527,9 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                                     onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], merchant_id: e.target.value } }))} 
                                                 />
                                             </div>
+                                            <p className="text-[10px] text-slate-400 leading-tight">
+                                                Note: These credentials may differ from your Portal login. Check with your Account Manager if connection fails.
+                                            </p>
                                         </>
                                     ) : (
                                         <input 
