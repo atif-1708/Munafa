@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Product, Order, ShopifyOrder } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { PackageSearch, History, Edit2, Plus, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, AlertCircle, Link as LinkIcon, Sparkles, XCircle, Check, Settings } from 'lucide-react';
+import { PackageSearch, History, Edit2, Plus, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, Link as LinkIcon, Sparkles, Check, Settings } from 'lucide-react';
 
 interface InventoryProps {
   products: Product[];
@@ -59,7 +59,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
               setSelectedGroup(prev => prev ? { ...prev, items: freshItems } : null);
           }
       }
-  }, [products, selectedProduct, selectedGroup]); // Dependencies ensure this runs after onUpdateProducts flow completes
+  }, [products, selectedProduct, selectedGroup]); 
 
   const filteredProducts = useMemo(() => {
       // 1. Identify active product IDs based on Date Range
@@ -113,57 +113,72 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
       return { groups: Array.from(groups.values()), singles };
   }, [filteredProducts]);
 
-  // --- Auto-Suggestion Logic (Smart Match) ---
+  // --- IMPROVED Auto-Suggestion Logic (Token Matching) ---
   const suggestions = useMemo(() => {
       const singles = [...inventoryTree.singles].sort((a, b) => a.title.localeCompare(b.title));
       const results: { key: string, name: string, items: Product[] }[] = [];
       const usedIds = new Set<string>();
 
-      let i = 0;
-      while (i < singles.length) {
-          if (usedIds.has(singles[i].id)) { i++; continue; }
+      // Tokenize function
+      const getTokens = (str: string) => {
+          return str.toLowerCase()
+            .replace(/[^\w\s]/g, '')
+            .split(/\s+/)
+            .filter(t => t.length > 2 && !['pcs', 'pack', 'set', 'with', 'for', 'and'].includes(t));
+      };
+
+      for (let i = 0; i < singles.length; i++) {
+          if (usedIds.has(singles[i].id)) continue;
 
           const current = singles[i];
-          const cleanCurrent = cleanTitleForGrouping(current.title);
-          
+          const tokensA = getTokens(current.title);
+          if (tokensA.length === 0) continue;
+
+          // Start a cluster with current item
           const cluster: Product[] = [current];
           
-          let j = i + 1;
-          while (j < singles.length) {
+          // Compare with all subsequent items
+          for (let j = i + 1; j < singles.length; j++) {
+              if (usedIds.has(singles[j].id)) continue;
+              
               const next = singles[j];
-              const cleanNext = cleanTitleForGrouping(next.title);
+              const tokensB = getTokens(next.title);
               
-              const common = getCommonPrefix(cleanCurrent, cleanNext);
+              // Find intersection of tokens (must share starting tokens to be a group usually)
+              // We check if the first 2 tokens match OR if 75% of tokens match
+              let match = false;
               
-              const matchCondition = 
-                  (common.length >= 4 && (cleanCurrent.startsWith(common) || cleanNext.startsWith(common))) ||
-                  (cleanCurrent.includes(cleanNext) || cleanNext.includes(cleanCurrent));
+              if (tokensA.length >= 2 && tokensB.length >= 2) {
+                  if (tokensA[0] === tokensB[0] && tokensA[1] === tokensB[1]) match = true;
+              } else if (tokensA.length > 0 && tokensB.length > 0) {
+                  if (tokensA[0] === tokensB[0]) match = true;
+              }
 
-              if (matchCondition) {
+              if (match) {
                   cluster.push(next);
-                  j++;
-              } else {
-                  break; 
+                  usedIds.add(next.id); // Mark as used for inner loop
               }
           }
 
           if (cluster.length >= 2) {
-              const rawName = getCommonPrefix(cleanTitleForGrouping(cluster[0].title), cleanTitleForGrouping(cluster[1].title));
-              let name = rawName.replace(/\b\w/g, c => c.toUpperCase()).trim();
-              
-              if (name.length < 3) {
-                  name = cleanTitleForGrouping(cluster[0].title).replace(/\b\w/g, c => c.toUpperCase());
+              // Generate Group Name from common prefix
+              const tokensFirst = getTokens(cluster[0].title);
+              const tokensSecond = getTokens(cluster[1].title);
+              let commonTokens = [];
+              for(let k=0; k<Math.min(tokensFirst.length, tokensSecond.length); k++) {
+                  if(tokensFirst[k] === tokensSecond[k]) commonTokens.push(tokensFirst[k]);
+                  else break;
               }
+              
+              let groupName = commonTokens.join(' ').replace(/\b\w/g, l => l.toUpperCase());
+              if (groupName.length < 3) groupName = cluster[0].title.split(' ').slice(0, 3).join(' ');
 
               const key = cluster.map(c => c.id).sort().join('-');
               
               if (!ignoredSuggestionKeys.has(key)) {
-                  results.push({ key, name, items: cluster });
+                  results.push({ key, name: groupName, items: cluster });
               }
               cluster.forEach(c => usedIds.add(c.id));
-              i = j;
-          } else {
-              i++;
           }
       }
       return results;
@@ -173,8 +188,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
   const unmappedShopifyTitles = useMemo(() => {
     const usedAliases = new Set<string>();
     products.forEach(p => {
-        // Exclude current selection from "used" check so we don't hide its own aliases? 
-        // Actually we only want to show aliases NOT assigned to ANYONE else.
         if (p.aliases) {
             p.aliases.forEach(a => usedAliases.add(a));
         }
@@ -188,7 +201,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
     });
 
     return Array.from(uniqueTitles).filter(t => !usedAliases.has(t)).sort();
-  }, [products, shopifyOrders]); // Removed selectedProduct/Group dependency to keep list stable
+  }, [products, shopifyOrders]); 
 
   const toggleSelect = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -240,8 +253,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
   const handleSaveCost = async (newCost: number) => {
     if (!selectedProduct) return;
     const updated = { ...selectedProduct, current_cogs: newCost };
-    // Optimistic local update not strictly needed as useEffect syncs it, but good for responsiveness
-    setSelectedProduct(updated); 
     await handleUpdateAndSave([updated]);
   };
 
@@ -250,7 +261,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
     const newHistory = [...selectedProduct.cost_history, { date, cogs: cost }];
     newHistory.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     const updated = { ...selectedProduct, cost_history: newHistory };
-    setSelectedProduct(updated);
+    setSelectedProduct(updated); // Immediate local update
     await handleUpdateAndSave([updated]);
   };
 
@@ -264,38 +275,37 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
   };
 
   const handleAddAlias = async (alias: string) => {
-    if (selectedProduct) {
-        const currentAliases = selectedProduct.aliases || [];
-        if (currentAliases.includes(alias)) return;
-        const updated = { ...selectedProduct, aliases: [...currentAliases, alias] };
-        
-        await handleUpdateAndSave([updated]);
-    } else if (selectedGroup) {
-        // Add alias to first item in group (Leader strategy)
-        const leader = selectedGroup.items[0];
-        if(!leader) return;
-        
-        const currentAliases = leader.aliases || [];
-        if(currentAliases.includes(alias)) return;
-        
-        const updatedLeader = { ...leader, aliases: [...currentAliases, alias] };
-        
-        await handleUpdateAndSave([updatedLeader]);
+    const targetProduct = selectedProduct || (selectedGroup && selectedGroup.items[0]);
+    if (!targetProduct) return;
+
+    // 1. Remove this alias from any OTHER product that might have it (Claim it)
+    const cleanupUpdates: Product[] = [];
+    products.forEach(p => {
+        if (p.id !== targetProduct.id && p.aliases && p.aliases.includes(alias)) {
+            cleanupUpdates.push({ ...p, aliases: p.aliases.filter(a => a !== alias) });
+        }
+    });
+
+    // 2. Add to Target
+    const currentAliases = targetProduct.aliases || [];
+    if (!currentAliases.includes(alias)) {
+        const updatedTarget = { ...targetProduct, aliases: [...currentAliases, alias] };
+        cleanupUpdates.push(updatedTarget);
+    }
+
+    if (cleanupUpdates.length > 0) {
+        await handleUpdateAndSave(cleanupUpdates);
     }
   };
 
   const handleRemoveAlias = async (alias: string) => {
-    if (selectedProduct) {
-        const currentAliases = selectedProduct.aliases || [];
-        const updated = { ...selectedProduct, aliases: currentAliases.filter(a => a !== alias) };
-        await handleUpdateAndSave([updated]);
-    } else if (selectedGroup) {
-        const leader = selectedGroup.items[0];
-        if(!leader) return;
-        const currentAliases = leader.aliases || [];
-        const updatedLeader = { ...leader, aliases: currentAliases.filter(a => a !== alias) };
-        await handleUpdateAndSave([updatedLeader]);
-    }
+    const targetProduct = selectedProduct || (selectedGroup && selectedGroup.items[0]);
+    if (!targetProduct) return;
+
+    const currentAliases = targetProduct.aliases || [];
+    const updatedTarget = { ...targetProduct, aliases: currentAliases.filter(a => a !== alias) };
+    
+    await handleUpdateAndSave([updatedTarget]);
   };
 
   const generateUUID = () => {
@@ -358,7 +368,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
 
   const handleUngroup = async (product: Product) => {
       const updated = {...product, group_id: null, group_name: null};
-      // Optimistic update handled by Sync Effect
       await handleUpdateAndSave([updated as Product]);
   };
 
@@ -483,163 +492,168 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
 
       <div className="flex gap-6">
         <div className={`transition-all duration-300 ${selectedProduct || selectedGroup ? 'w-2/3' : 'w-full'}`}>
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-50 border-b border-slate-200">
-                        <tr>
-                            <th className="px-6 py-4 w-12">
-                                <span className="sr-only">Select</span>
-                            </th>
-                            <th className="px-6 py-4 font-semibold text-slate-700">Product Item</th>
-                            <th className="px-6 py-4 font-semibold text-slate-700">Status</th>
-                            <th className="px-6 py-4 font-semibold text-slate-700 text-right">Current Cost</th>
-                            <th className="px-6 py-4 font-semibold text-slate-700 text-center">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                        {inventoryTree.groups.length === 0 && inventoryTree.singles.length === 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden relative">
+                {/* Scroll container */}
+                <div className="overflow-x-auto scrollbar-hide">
+                    <table className="w-full text-left text-sm min-w-[600px]">
+                        <thead className="bg-slate-50 border-b border-slate-200">
                             <tr>
-                                <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
-                                    {search 
-                                        ? "No products matching your search." 
-                                        : "No active products found in this date range. Search to see all items."}
-                                </td>
+                                <th className="px-6 py-4 w-12">
+                                    <span className="sr-only">Select</span>
+                                </th>
+                                <th className="px-6 py-4 font-semibold text-slate-700">Product Item</th>
+                                <th className="px-6 py-4 font-semibold text-slate-700">Status</th>
+                                <th className="px-6 py-4 font-semibold text-slate-700 text-right">Current Cost</th>
+                                {/* Sticky Actions Column */}
+                                <th className="px-6 py-4 font-semibold text-slate-700 text-center sticky right-0 bg-slate-50 z-10 shadow-[-5px_0_10px_-5px_rgba(0,0,0,0.1)]">Actions</th>
                             </tr>
-                        )}
-                        {/* 1. Render Groups */}
-                        {inventoryTree.groups.map(group => {
-                            const isExpanded = expandedGroups.has(group.id);
-                            const allSelected = group.items.every(item => selectedIds.has(item.id));
-                            const someSelected = group.items.some(item => selectedIds.has(item.id));
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {inventoryTree.groups.length === 0 && inventoryTree.singles.length === 0 && (
+                                <tr>
+                                    <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
+                                        {search 
+                                            ? "No products matching your search." 
+                                            : "No active products found in this date range. Search to see all items."}
+                                    </td>
+                                </tr>
+                            )}
+                            {/* 1. Render Groups */}
+                            {inventoryTree.groups.map(group => {
+                                const isExpanded = expandedGroups.has(group.id);
+                                const allSelected = group.items.every(item => selectedIds.has(item.id));
+                                const someSelected = group.items.some(item => selectedIds.has(item.id));
 
-                            return (
-                                <React.Fragment key={group.id}>
-                                    <tr 
-                                        className={`hover:bg-slate-50 cursor-pointer ${selectedGroup?.id === group.id ? 'bg-indigo-50 border-l-4 border-indigo-600' : 'bg-slate-50/50'}`}
-                                        onClick={(e) => toggleGroupExpand(group.id, e)}
-                                    >
-                                        <td className="px-6 py-4" onClick={(e) => toggleGroupSelection(group.id, group.items, e)}>
-                                            {allSelected ? (
-                                                <CheckSquare className="text-indigo-600 cursor-pointer" size={18} />
-                                            ) : someSelected ? (
-                                                <div className="w-[18px] h-[18px] bg-indigo-100 border border-indigo-600 rounded flex items-center justify-center">
-                                                    <div className="w-2 h-2 bg-indigo-600 rounded-sm"></div>
-                                                </div>
-                                            ) : (
-                                                <Square className="text-slate-300 cursor-pointer hover:text-slate-500" size={18} />
-                                            )}
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            <div className="flex items-center gap-3">
-                                                <button className="text-slate-400 hover:text-indigo-600 transition-colors">
-                                                    {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-                                                </button>
-                                                <div className="w-8 h-8 rounded bg-white border border-slate-200 flex items-center justify-center text-indigo-500 shadow-sm">
-                                                    <Folder size={16} />
-                                                </div>
-                                                <div>
-                                                    <span className="font-bold text-slate-800">{group.name}</span>
-                                                    <div className="text-xs text-slate-400">{group.items.length} Variants</div>
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4">
-                                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold uppercase tracking-wider">
-                                                 Collection
-                                             </span>
-                                        </td>
-                                        <td className="px-6 py-4 text-slate-400 text-right font-medium text-xs italic">
-                                            Varies
-                                        </td>
-                                        <td className="px-6 py-4 text-center">
-                                            <button 
-                                                onClick={(e) => { e.stopPropagation(); setSelectedGroup(group); setSelectedProduct(null); }}
-                                                className="text-indigo-600 hover:text-indigo-800 font-medium text-xs flex items-center justify-center gap-1 w-full"
-                                            >
-                                                <Settings size={14} /> Manage
-                                            </button>
-                                        </td>
-                                    </tr>
-                                    
-                                    {isExpanded && group.items.map(p => (
+                                return (
+                                    <React.Fragment key={group.id}>
                                         <tr 
-                                            key={p.id} 
-                                            className={`hover:bg-slate-50 cursor-pointer ${selectedProduct?.id === p.id ? 'bg-blue-50' : 'bg-white'}`} 
-                                            onClick={(e) => { e.stopPropagation(); setSelectedProduct(p); setSelectedGroup(null); }}
+                                            className={`hover:bg-slate-50 cursor-pointer ${selectedGroup?.id === group.id ? 'bg-indigo-50 border-l-4 border-indigo-600' : 'bg-slate-50/50'}`}
+                                            onClick={(e) => toggleGroupExpand(group.id, e)}
                                         >
-                                            <td className="px-6 py-4" onClick={(e) => toggleSelect(p.id, e)}>
-                                                <div className="pl-6">
-                                                    {selectedIds.has(p.id) ? (
-                                                        <CheckSquare className="text-brand-600 cursor-pointer" size={18} />
-                                                    ) : (
-                                                        <Square className="text-slate-300 cursor-pointer hover:text-slate-500" size={18} />
-                                                    )}
+                                            <td className="px-6 py-4" onClick={(e) => toggleGroupSelection(group.id, group.items, e)}>
+                                                {allSelected ? (
+                                                    <CheckSquare className="text-indigo-600 cursor-pointer" size={18} />
+                                                ) : someSelected ? (
+                                                    <div className="w-[18px] h-[18px] bg-indigo-100 border border-indigo-600 rounded flex items-center justify-center">
+                                                        <div className="w-2 h-2 bg-indigo-600 rounded-sm"></div>
+                                                    </div>
+                                                ) : (
+                                                    <Square className="text-slate-300 cursor-pointer hover:text-slate-500" size={18} />
+                                                )}
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <div className="flex items-center gap-3">
+                                                    <button className="text-slate-400 hover:text-indigo-600 transition-colors">
+                                                        {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                                                    </button>
+                                                    <div className="w-8 h-8 rounded bg-white border border-slate-200 flex items-center justify-center text-indigo-500 shadow-sm">
+                                                        <Folder size={16} />
+                                                    </div>
+                                                    <div>
+                                                        <span className="font-bold text-slate-800">{group.name}</span>
+                                                        <div className="text-xs text-slate-400">{group.items.length} Variants</div>
+                                                    </div>
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4">
-                                                <div className="flex items-center gap-3 pl-8">
-                                                    <CornerDownRight size={16} className="text-slate-300" />
-                                                    <div className="w-8 h-8 rounded bg-slate-100 flex items-center justify-center text-slate-400 shrink-0">
-                                                        <Package size={16} />
-                                                    </div>
-                                                    <div>
-                                                        <span className="font-medium text-slate-900">{p.title}</span>
-                                                    </div>
-                                                </div>
+                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold uppercase tracking-wider">
+                                                    Collection
+                                                </span>
                                             </td>
-                                            <td className="px-6 py-4"></td>
-                                            <td className="px-6 py-4 text-slate-900 text-right font-medium">{formatCurrency(p.current_cogs)}</td>
-                                            <td className="px-6 py-4 text-center">
-                                                <button className="text-brand-600 hover:text-brand-700 font-medium text-xs flex items-center justify-center gap-1 w-full">
-                                                    <Edit2 size={14} /> Manage
+                                            <td className="px-6 py-4 text-slate-400 text-right font-medium text-xs italic">
+                                                Varies
+                                            </td>
+                                            {/* Sticky Action Cell with dynamic background to match row */}
+                                            <td className={`px-6 py-4 text-center sticky right-0 z-10 shadow-[-5px_0_10px_-5px_rgba(0,0,0,0.1)] ${selectedGroup?.id === group.id ? 'bg-indigo-50' : 'bg-slate-50/50'}`}>
+                                                <button 
+                                                    onClick={(e) => { e.stopPropagation(); setSelectedGroup(group); setSelectedProduct(null); }}
+                                                    className="text-indigo-600 hover:text-indigo-800 font-medium text-xs flex items-center justify-center gap-1 w-full"
+                                                >
+                                                    <Settings size={14} /> Manage
                                                 </button>
                                             </td>
                                         </tr>
-                                    ))}
-                                </React.Fragment>
-                            );
-                        })}
+                                        
+                                        {isExpanded && group.items.map(p => (
+                                            <tr 
+                                                key={p.id} 
+                                                className={`hover:bg-slate-50 cursor-pointer ${selectedProduct?.id === p.id ? 'bg-blue-50' : 'bg-white'}`} 
+                                                onClick={(e) => { e.stopPropagation(); setSelectedProduct(p); setSelectedGroup(null); }}
+                                            >
+                                                <td className="px-6 py-4" onClick={(e) => toggleSelect(p.id, e)}>
+                                                    <div className="pl-6">
+                                                        {selectedIds.has(p.id) ? (
+                                                            <CheckSquare className="text-brand-600 cursor-pointer" size={18} />
+                                                        ) : (
+                                                            <Square className="text-slate-300 cursor-pointer hover:text-slate-500" size={18} />
+                                                        )}
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <div className="flex items-center gap-3 pl-8">
+                                                        <CornerDownRight size={16} className="text-slate-300" />
+                                                        <div className="w-8 h-8 rounded bg-slate-100 flex items-center justify-center text-slate-400 shrink-0">
+                                                            <Package size={16} />
+                                                        </div>
+                                                        <div>
+                                                            <span className="font-medium text-slate-900">{p.title}</span>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4"></td>
+                                                <td className="px-6 py-4 text-slate-900 text-right font-medium">{formatCurrency(p.current_cogs)}</td>
+                                                <td className={`px-6 py-4 text-center sticky right-0 z-10 shadow-[-5px_0_10px_-5px_rgba(0,0,0,0.1)] ${selectedProduct?.id === p.id ? 'bg-blue-50' : 'bg-white'}`}>
+                                                    <button className="text-brand-600 hover:text-brand-700 font-medium text-xs flex items-center justify-center gap-1 w-full">
+                                                        <Edit2 size={14} /> Manage
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </React.Fragment>
+                                );
+                            })}
 
-                        {/* 2. Render Singles */}
-                        {inventoryTree.singles.map(p => (
-                            <tr key={p.id} className={`hover:bg-slate-50 cursor-pointer ${selectedProduct?.id === p.id ? 'bg-blue-50' : ''}`} onClick={() => { setSelectedProduct(p); setSelectedGroup(null); }}>
-                                <td className="px-6 py-4" onClick={(e) => toggleSelect(p.id, e)}>
-                                    {selectedIds.has(p.id) ? (
-                                        <CheckSquare className="text-brand-600 cursor-pointer" size={18} />
-                                    ) : (
-                                        <Square className="text-slate-300 cursor-pointer hover:text-slate-500" size={18} />
-                                    )}
-                                </td>
-                                <td className="px-6 py-4">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-8 h-8 rounded bg-slate-100 flex items-center justify-center text-slate-400 shrink-0">
-                                            <Package size={16} />
+                            {/* 2. Render Singles */}
+                            {inventoryTree.singles.map(p => (
+                                <tr key={p.id} className={`hover:bg-slate-50 cursor-pointer ${selectedProduct?.id === p.id ? 'bg-blue-50' : ''}`} onClick={() => { setSelectedProduct(p); setSelectedGroup(null); }}>
+                                    <td className="px-6 py-4" onClick={(e) => toggleSelect(p.id, e)}>
+                                        {selectedIds.has(p.id) ? (
+                                            <CheckSquare className="text-brand-600 cursor-pointer" size={18} />
+                                        ) : (
+                                            <Square className="text-slate-300 cursor-pointer hover:text-slate-500" size={18} />
+                                        )}
+                                    </td>
+                                    <td className="px-6 py-4">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-8 h-8 rounded bg-slate-100 flex items-center justify-center text-slate-400 shrink-0">
+                                                <Package size={16} />
+                                            </div>
+                                            <div>
+                                                <span className="font-medium text-slate-900">{p.title}</span>
+                                            </div>
                                         </div>
-                                        <div>
-                                            <span className="font-medium text-slate-900">{p.title}</span>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td className="px-6 py-4">
-                                    <span className="text-slate-400 text-xs">-</span>
-                                </td>
-                                <td className="px-6 py-4 text-slate-900 text-right font-medium">{formatCurrency(p.current_cogs)}</td>
-                                <td className="px-6 py-4 text-center">
-                                    <button className="text-brand-600 hover:text-brand-700 font-medium text-xs flex items-center justify-center gap-1 w-full">
-                                        <Edit2 size={14} /> Manage
-                                    </button>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
+                                    </td>
+                                    <td className="px-6 py-4">
+                                        <span className="text-slate-400 text-xs">-</span>
+                                    </td>
+                                    <td className="px-6 py-4 text-slate-900 text-right font-medium">{formatCurrency(p.current_cogs)}</td>
+                                    <td className={`px-6 py-4 text-center sticky right-0 z-10 shadow-[-5px_0_10px_-5px_rgba(0,0,0,0.1)] ${selectedProduct?.id === p.id ? 'bg-blue-50' : 'bg-white'}`}>
+                                        <button className="text-brand-600 hover:text-brand-700 font-medium text-xs flex items-center justify-center gap-1 w-full">
+                                            <Edit2 size={14} /> Manage
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
         {/* Sidebar Logic */}
         {(selectedProduct || selectedGroup) && (
             <div className="w-1/3 space-y-6">
-                <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6 relative">
+                <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6 relative sticky top-6">
                     <button 
                         onClick={() => { setSelectedProduct(null); setSelectedGroup(null); }}
                         className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
@@ -878,14 +892,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
   );
 };
 
-function getCommonPrefix(s1: string, s2: string): string {
-    let i = 0;
-    while(i < s1.length && i < s2.length && s1[i].toLowerCase() === s2[i].toLowerCase()) {
-        i++;
-    }
-    return s1.substring(0, i);
-}
-
+// Helper for Token-Based Logic
 function cleanTitleForGrouping(title: string): string {
     return title
         .toLowerCase()
@@ -898,6 +905,15 @@ function cleanTitleForGrouping(title: string): string {
         .replace(/[-:_]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
+}
+
+// Simple prefix match fallback (legacy)
+function getCommonPrefix(s1: string, s2: string): string {
+    let i = 0;
+    while(i < s1.length && i < s2.length && s1[i].toLowerCase() === s2[i].toLowerCase()) {
+        i++;
+    }
+    return s1.substring(0, i);
 }
 
 export default Inventory;

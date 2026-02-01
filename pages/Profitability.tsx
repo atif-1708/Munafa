@@ -33,7 +33,7 @@ const formatDecimal = (amount: number): string => {
   return new Intl.NumberFormat('en-PK', {
     style: 'currency',
     currency: 'PKR',
-    minimumFractionDigits: 0, // Simplified to 0 for cleaner spreadsheet look
+    minimumFractionDigits: 0, 
     maximumFractionDigits: 0,
   }).format(amount);
 };
@@ -315,26 +315,63 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
 
   const handleExportPDF = () => {
     setIsExporting(true);
-    // Simple PDF export implementation...
     setTimeout(() => { setIsExporting(false); alert("Export feature coming soon for table."); }, 1000);
   };
 
   // Helper for Detail View Stats
   const getDetailStats = (p: ProductPerformance) => {
+      // 1. Core Counts
       const totalDispatched = p.units_sold + p.units_returned + p.units_in_transit;
       
-      const marginForAds = p.gross_revenue - p.cogs_total - p.shipping_cost_allocation - p.overhead_allocation - p.tax_allocation - p.cash_in_stock;
+      // 2. Financials
+      // Net Sales (Received Cash) = Gross Revenue (COD Collected) - Tax - Shipping - Overhead - Marketing
+      // BUT for "Margin to spend on ads" (Break Even CPR), we usually calculate:
+      // (Selling Price - COGS - Shipping - Overhead) = Contribution Margin
       
-      const realSalesCount = p.shopify_confirmed_orders > 0 ? p.shopify_confirmed_orders : (p.real_order_count > 0 ? p.real_order_count : 1);
+      const revenue = p.gross_revenue;
+      const cogs = p.cogs_total;
+      const shipping = p.shipping_cost_allocation;
+      const overhead = p.overhead_allocation;
+      const tax = p.tax_allocation;
+      const marketing = p.ad_spend_allocation;
       
-      const breakevenCpr = marginForAds / realSalesCount;
-      const marketingPurchases = p.marketing_purchases || 0;
-      const actualCpr = marketingPurchases > 0 ? p.ad_spend_allocation / marketingPurchases : 0;
-      
-      const avgSellingPrice = p.units_sold > 0 ? p.gross_revenue / p.units_sold : 0;
-      const totalInvestment = p.cogs_total + p.shipping_cost_allocation + p.overhead_allocation + p.ad_spend_allocation + p.tax_allocation;
+      // Total Investment = Money that left the bank to make these sales happen
+      // COGS + Shipping + Overhead + Tax + Marketing
+      const totalInvestment = cogs + shipping + overhead + tax + marketing;
 
-      return { totalDispatched, breakevenCpr, actualCpr, avgSellingPrice, totalInvestment, realSalesCount };
+      // 3. Logic for "Booked" vs "Pending"
+      // Shopify Total = All imported orders
+      // Confirmed = Fulfilled in Shopify (Likely sent to courier)
+      // Pending = Unfulfilled in Shopify
+      const confirmed = p.shopify_confirmed_orders; 
+      
+      // "Booked Order" in P&L typically means "Processed but not yet Dispatched/Picked up"
+      // or "Ready to Ship". 
+      // In this system: Confirmed (Shopify) - Dispatched (Courier) = Booked/Ready
+      const bookedOrders = Math.max(0, confirmed - totalDispatched);
+
+      // Average Selling Price (ASP) based on delivered units
+      const avgSellingPrice = p.units_sold > 0 ? (revenue / p.units_sold) : 0;
+
+      // Break Even CPR: How much profit per order before ads?
+      // (Revenue - COGS - Shipping - Overhead) / Orders
+      // We use delivered revenue projection for this
+      const deliveredCount = p.units_sold || 1;
+      const profitBeforeAds = revenue - cogs - shipping - overhead - tax;
+      
+      // Real CPR
+      // Marketing Spend / Total Confirmed Orders (assuming ads drive confirmed orders)
+      const realCpr = confirmed > 0 ? marketing / confirmed : 0;
+      
+      // Break Even CPR (Max allowable ad spend per order to break even)
+      // Unit Economics: Selling Price - Unit COGS - Unit Ship - Unit Overhead
+      const unitPrice = avgSellingPrice;
+      const unitCogs = totalDispatched > 0 ? cogs / totalDispatched : 0;
+      const unitShip = totalDispatched > 0 ? shipping / totalDispatched : 0;
+      
+      const breakEvenCpr = Math.max(0, unitPrice - unitCogs - unitShip - (overhead/deliveredCount));
+
+      return { totalDispatched, breakEvenCpr, avgSellingPrice, totalInvestment, bookedOrders, revenue, cogs, shipping, overhead, tax, marketing };
   };
 
   return (
@@ -409,14 +446,14 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
 
         {/* --- CUSTOM SPREADSHEET DETAIL MODAL --- */}
         {selectedProduct && (() => {
-            const { totalDispatched, breakevenCpr, avgSellingPrice, totalInvestment, realSalesCount } = getDetailStats(selectedProduct);
+            const { totalDispatched, breakEvenCpr, avgSellingPrice, totalInvestment, bookedOrders, revenue, cogs, shipping, overhead, tax, marketing } = getDetailStats(selectedProduct);
             
             // Format dates
             const startD = new Date(dateRange.start).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
             const endD = new Date(dateRange.end).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
             const pendingOrders = selectedProduct.shopify_total_orders - selectedProduct.shopify_confirmed_orders;
-            const cancelOrders = selectedProduct.shopify_total_orders > 0 ? Math.max(0, selectedProduct.shopify_total_orders - selectedProduct.shopify_confirmed_orders - pendingOrders) : 0; // Simplified logic as cancellation data might need better mapping
+            const cancelOrders = selectedProduct.shopify_total_orders > 0 ? Math.max(0, selectedProduct.shopify_total_orders - selectedProduct.shopify_confirmed_orders - pendingOrders) : 0; 
 
             return (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
@@ -444,27 +481,21 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
                                 <tbody>
                                     {/* SECTION 1: INVESTMENT & BREAKEVEN */}
                                     <tr className="bg-gray-200 border-b border-slate-300">
-                                        <td className="py-1 px-3 font-bold text-slate-800 border-r border-slate-300">Cost of Goods Sold</td>
+                                        <td className="py-1 px-3 font-bold text-slate-800 border-r border-slate-300">Cost Breakdown</td>
                                         <td className="py-1 px-3 font-bold text-slate-800 text-center border-r border-slate-300">Qty</td>
                                         <td className="py-1 px-3 font-bold text-slate-800 text-right border-r border-slate-300">Amount</td>
                                         <td className="py-1 px-3 font-bold text-slate-800 text-center">%</td>
                                     </tr>
-                                    <tr className="bg-[#fff9e6] border-b border-slate-300">
-                                        <td className="py-1 px-3 text-slate-700 border-r border-slate-300">Opening Stock</td>
-                                        <td className="py-1 px-3 text-center border-r border-slate-300">-</td>
-                                        <td className="py-1 px-3 text-right font-medium border-r border-slate-300">-</td>
-                                        <td className="py-1 px-3 text-center bg-[#ffeebb] border-l border-slate-300"></td>
-                                    </tr>
                                     <tr className="bg-[#3b82f6] text-white border-b border-slate-300">
-                                        <td className="py-1 px-3 font-bold border-r border-blue-400">Total Amount Spend</td>
+                                        <td className="py-1 px-3 font-bold border-r border-blue-400">Total Investment</td>
                                         <td className="py-1 px-3 text-center font-bold border-r border-blue-400">{totalDispatched}</td>
                                         <td className="py-1 px-3 text-right font-bold border-r border-blue-400">{formatDecimal(totalInvestment)}</td>
                                         <td className="py-1 px-3 text-center font-bold">100%</td>
                                     </tr>
                                     <tr className="bg-[#cc0000] text-white border-b border-slate-300">
-                                        <td className="py-1 px-3 font-bold border-r border-red-800">Break Even CPR</td>
-                                        <td className="py-1 px-3 text-center font-bold border-r border-red-800">{formatDecimal(breakevenCpr)}</td>
-                                        <td className="py-1 px-3 text-right font-bold border-r border-red-800">{formatDecimal(breakevenCpr * realSalesCount)}</td>
+                                        <td className="py-1 px-3 font-bold border-r border-red-800">Target Break Even CPR</td>
+                                        <td className="py-1 px-3 text-center font-bold border-r border-red-800">-</td>
+                                        <td className="py-1 px-3 text-right font-bold border-r border-red-800">{formatDecimal(breakEvenCpr)}</td>
                                         <td className="py-1 px-3 text-center"></td>
                                     </tr>
 
@@ -473,13 +504,13 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
 
                                     {/* SECTION 2: ORDERS (GREEN) */}
                                     <tr className="bg-[#dcfce7] border-b border-green-200">
-                                        <td className="py-1 px-3 font-medium text-slate-800 border-r border-green-200">Shopify & FB Order</td>
+                                        <td className="py-1 px-3 font-medium text-slate-800 border-r border-green-200">Total Placed Orders</td>
                                         <td className="py-1 px-3 text-center font-bold text-slate-800 border-r border-green-200">{selectedProduct.shopify_total_orders}</td>
-                                        <td className="py-1 px-3 text-right text-slate-800 border-r border-green-200">{selectedProduct.shopify_total_orders}</td>
+                                        <td className="py-1 px-3 text-right text-slate-800 border-r border-green-200"></td>
                                         <td className="py-1 px-3 text-center"></td>
                                     </tr>
                                     <tr className="bg-[#bbf7d0] border-b border-green-200">
-                                        <td className="py-1 px-3 font-medium text-slate-800 border-r border-green-200">Confirm Order</td>
+                                        <td className="py-1 px-3 font-medium text-slate-800 border-r border-green-200">Confirmed & Processed</td>
                                         <td className="py-1 px-3 text-center font-bold text-slate-800 border-r border-green-200">{selectedProduct.shopify_confirmed_orders}</td>
                                         <td className="py-1 px-3 border-r border-green-200"></td>
                                         <td className="py-1 px-3 text-center font-bold bg-[#fcd34d] border border-orange-200">
@@ -487,102 +518,91 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
                                         </td>
                                     </tr>
                                     <tr className="bg-[#dcfce7] border-b border-green-200">
-                                        <td className="py-1 px-3 font-medium text-slate-800 border-r border-green-200">Cancel Order (Est)</td>
+                                        <td className="py-1 px-3 font-medium text-slate-800 border-r border-green-200">Cancelled/Fake</td>
                                         <td className="py-1 px-3 text-center font-medium text-slate-800 border-r border-green-200">{cancelOrders}</td>
                                         <td className="py-1 px-3 border-r border-green-200"></td>
                                         <td className="py-1 px-3 text-center bg-[#fcd34d] font-bold border border-orange-200">
                                             {formatPercent(cancelOrders, selectedProduct.shopify_total_orders)}
                                         </td>
                                     </tr>
-                                    <tr className="bg-[#dcfce7] border-b border-slate-300">
-                                        <td className="py-1 px-3 font-medium text-slate-800 border-r border-green-200">Pending Order</td>
-                                        <td className="py-1 px-3 text-center font-medium text-slate-800 border-r border-green-200">{pendingOrders}</td>
-                                        <td className="py-1 px-3 border-r border-green-200"></td>
-                                        <td className="py-1 px-3 text-center bg-[#dcfce7]">0%</td>
-                                    </tr>
-                                    <tr className="bg-white border-b border-slate-300">
-                                        <td className="py-1 px-3 font-bold text-slate-800 border-r border-slate-200">Avg. Deliver Amount</td>
-                                        <td className="py-1 px-3 text-center font-bold text-slate-800 border-r border-slate-200">{formatDecimal(avgSellingPrice)}</td>
-                                        <td colSpan={2}></td>
-                                    </tr>
-
+                                    
                                     {/* SECTION 3: LOGISTICS (ORANGE/YELLOW/RED) */}
+                                    {/* Booked = Confirmed but not yet counted in Dispatch (or marked as booked status) */}
                                     <tr className="bg-[#f59e0b] text-white border-b border-orange-600">
-                                        <td className="py-1 px-3 font-bold border-r border-orange-600">Booked Order</td>
-                                        <td className="py-1 px-3 text-center border-r border-orange-600">0</td>
-                                        <td className="py-1 px-3 text-right font-bold border-r border-orange-600">0</td>
-                                        <td className="py-1 px-3 text-center font-bold bg-[#fbbf24] text-slate-900">0%</td>
+                                        <td className="py-1 px-3 font-bold border-r border-orange-600">Ready to Ship (Booked)</td>
+                                        <td className="py-1 px-3 text-center font-bold border-r border-orange-600">{bookedOrders}</td>
+                                        <td className="py-1 px-3 text-right font-bold border-r border-orange-600">-</td>
+                                        <td className="py-1 px-3 text-center font-bold bg-[#fbbf24] text-slate-900">
+                                            {formatPercent(bookedOrders, selectedProduct.shopify_confirmed_orders)}
+                                        </td>
                                     </tr>
                                     <tr className="bg-slate-200 border-b border-slate-300">
-                                        <td className="py-1 px-3 font-bold text-slate-800 border-r border-slate-300">Dispatch Order</td>
+                                        <td className="py-1 px-3 font-bold text-slate-800 border-r border-slate-300">Dispatched Orders</td>
                                         <td className="py-1 px-3 text-center font-bold border-r border-slate-300">{totalDispatched}</td>
-                                        <td className="py-1 px-3 text-right font-bold border-r border-slate-300">{formatDecimal(totalInvestment)}</td>
+                                        <td className="py-1 px-3 text-right font-bold border-r border-slate-300">-</td>
                                         <td className="py-1 px-3"></td>
                                     </tr>
                                     <tr className="bg-slate-100 border-b border-slate-300">
-                                        <td className="py-1 px-3 font-medium text-slate-800 border-r border-slate-300">Delivered Order</td>
+                                        <td className="py-1 px-3 font-medium text-slate-800 border-r border-slate-300">Delivered Successfully</td>
                                         <td className="py-1 px-3 text-center font-bold border-r border-slate-300">{selectedProduct.units_sold}</td>
-                                        <td className="py-1 px-3 text-right font-medium border-r border-slate-300">{formatDecimal(selectedProduct.gross_revenue)}</td>
+                                        <td className="py-1 px-3 text-right font-medium border-r border-slate-300">{formatDecimal(revenue)}</td>
                                         <td className="py-1 px-3 text-center font-bold bg-[#ffff00] border border-slate-300">
                                             {formatPercent(selectedProduct.units_sold, totalDispatched)}
                                         </td>
                                     </tr>
                                     <tr className="bg-slate-100 border-b border-slate-300">
-                                        <td className="py-1 px-3 font-medium text-slate-800 border-r border-slate-300">Intransit Order</td>
+                                        <td className="py-1 px-3 font-medium text-slate-800 border-r border-slate-300">In Transit</td>
                                         <td className="py-1 px-3 text-center font-bold bg-[#cc0000] text-white border-r border-slate-300">{selectedProduct.units_in_transit}</td>
-                                        <td className="py-1 px-3 text-right font-medium border-r border-slate-300">{formatDecimal(selectedProduct.cogs_total * (selectedProduct.units_in_transit / (totalDispatched || 1)))}</td>
+                                        <td className="py-1 px-3 text-right font-medium border-r border-slate-300">
+                                            {/* Estimated value stuck in transit */}
+                                            {formatDecimal(selectedProduct.units_in_transit * (revenue / (selectedProduct.units_sold || 1)))}
+                                        </td>
                                         <td className="py-1 px-3 text-center bg-slate-200 font-medium">
                                             {formatPercent(selectedProduct.units_in_transit, totalDispatched)}
                                         </td>
                                     </tr>
                                     <tr className="bg-slate-100 border-b border-slate-300">
-                                        <td className="py-1 px-3 font-medium text-slate-800 border-r border-slate-300">Out For Return/Returned</td>
+                                        <td className="py-1 px-3 font-medium text-slate-800 border-r border-slate-300">Returned (RTO)</td>
                                         <td className="py-1 px-3 text-center font-bold bg-[#cc0000] text-white border-r border-slate-300">{selectedProduct.units_returned}</td>
-                                        <td className="py-1 px-3 text-right font-medium border-r border-slate-300">{formatDecimal(selectedProduct.cash_in_stock)}</td>
+                                        <td className="py-1 px-3 text-right font-medium border-r border-slate-300">-</td>
                                         <td className="py-1 px-3 text-center font-bold bg-[#ffff00] border border-slate-300">
                                             {formatPercent(selectedProduct.units_returned, totalDispatched)}
                                         </td>
                                     </tr>
 
-                                    {/* SECTION 4: OPERATING EXPENSE (PURPLE) */}
+                                    {/* SECTION 4: EXPENSES (PURPLE) */}
                                     <tr className="bg-white border-b border-slate-300">
-                                        <td className="py-1 px-3 font-bold text-slate-900 border-r border-slate-300">Operating Expense</td>
+                                        <td className="py-1 px-3 font-bold text-slate-900 border-r border-slate-300">Expense Breakdown</td>
                                         <td colSpan={3} className="py-1 px-3 font-bold"></td>
                                     </tr>
                                     <tr className="bg-[#e9d5ff] border-b border-purple-200">
-                                        <td className="py-1 px-3 text-slate-800 border-r border-purple-200">Product Cost</td>
+                                        <td className="py-1 px-3 text-slate-800 border-r border-purple-200">COGS (Dispatched Units)</td>
                                         <td className="py-1 px-3 text-center border-r border-purple-200">{totalDispatched}</td>
-                                        <td className="py-1 px-3 text-right font-medium border-r border-purple-200">{formatDecimal(selectedProduct.cogs_total)}</td>
+                                        <td className="py-1 px-3 text-right font-medium border-r border-purple-200">{formatDecimal(cogs)}</td>
                                         <td className="py-1 px-3"></td>
                                     </tr>
                                     <tr className="bg-[#e9d5ff] border-b border-purple-200">
-                                        <td className="py-1 px-3 text-slate-800 border-r border-purple-200">Overhead Cost</td>
+                                        <td className="py-1 px-3 text-slate-800 border-r border-purple-200">Shipping (Fwd + RTO)</td>
                                         <td className="py-1 px-3 text-center border-r border-purple-200"></td>
-                                        <td className="py-1 px-3 text-right font-medium border-r border-purple-200">{formatDecimal(selectedProduct.overhead_allocation)}</td>
-                                        <td className="py-1 px-3"></td>
-                                    </tr>
-                                    <tr className="bg-[#e9d5ff] border-b border-purple-200">
-                                        <td className="py-1 px-3 text-slate-800 border-r border-purple-200">Delivery & Packing</td>
-                                        <td className="py-1 px-3 text-center border-r border-purple-200"></td>
-                                        <td className="py-1 px-3 text-right font-medium border-r border-purple-200">{formatDecimal(selectedProduct.shipping_cost_allocation)}</td>
-                                        <td className="py-1 px-3 bg-[#cc0000] text-white text-[10px] text-center font-bold">Deliver Only</td>
+                                        <td className="py-1 px-3 text-right font-medium border-r border-purple-200">{formatDecimal(shipping)}</td>
+                                        <td className="py-1 px-3 bg-[#cc0000] text-white text-[10px] text-center font-bold">Paid</td>
                                     </tr>
                                     <tr className="bg-[#e9d5ff] border-b border-purple-200">
                                         <td className="py-1 px-3 text-slate-800 border-r border-purple-200">Marketing & Ads</td>
                                         <td className="py-1 px-3 text-center border-r border-purple-200"></td>
-                                        <td className="py-1 px-3 text-right font-medium border-r border-purple-200">{formatDecimal(selectedProduct.ad_spend_allocation)}</td>
-                                        <td className="py-1 px-3 bg-[#cc0000] text-white text-center font-bold text-xs">{formatDecimal(selectedProduct.ad_spend_allocation)}</td>
+                                        <td className="py-1 px-3 text-right font-medium border-r border-purple-200">{formatDecimal(marketing)}</td>
+                                        <td className="py-1 px-3"></td>
                                     </tr>
                                     <tr className="bg-[#e9d5ff] border-b border-purple-200">
-                                        <td className="py-1 px-3 text-slate-800 border-r border-purple-200">RsTax & WhTax Exp</td>
+                                        <td className="py-1 px-3 text-slate-800 border-r border-purple-200">Overhead & Tax</td>
                                         <td className="py-1 px-3 text-center border-r border-purple-200"></td>
-                                        <td className="py-1 px-3 text-right font-medium border-r border-purple-200">{formatDecimal(selectedProduct.tax_allocation)}</td>
-                                        <td className="py-1 px-3 text-center font-medium bg-[#d8b4fe]">4%</td>
+                                        <td className="py-1 px-3 text-right font-medium border-r border-purple-200">{formatDecimal(overhead + tax)}</td>
+                                        <td className="py-1 px-3"></td>
                                     </tr>
                                     <tr className="bg-[#d8b4fe] border-b border-purple-300 font-bold">
                                         <td className="py-1 px-3 text-slate-900 border-r border-purple-300">Total Expense</td>
-                                        <td className="py-1 px-3 text-center border-r border-purple-300">{totalDispatched}</td>
-                                        <td className="py-1 px-3 text-right border-r border-purple-300">{formatDecimal(selectedProduct.cogs_total + selectedProduct.shipping_cost_allocation + selectedProduct.overhead_allocation + selectedProduct.tax_allocation + selectedProduct.ad_spend_allocation)}</td>
+                                        <td className="py-1 px-3 text-center border-r border-purple-300"></td>
+                                        <td className="py-1 px-3 text-right border-r border-purple-300">{formatDecimal(cogs + shipping + marketing + overhead + tax)}</td>
                                         <td className="py-1 px-3 bg-[#cc0000]"></td>
                                     </tr>
 
@@ -591,28 +611,24 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
 
                                     {/* SECTION 5: PROFIT (BOTTOM) */}
                                     <tr className="bg-[#bbf7d0] border-b border-green-200">
-                                        <td className="py-1 px-3 font-bold text-slate-900 border-r border-green-300">Gross Profit</td>
-                                        <td className="py-1 px-3 text-center font-bold border-r border-green-300">{totalDispatched}</td>
-                                        <td className="py-1 px-3 text-right font-bold border-r border-green-300">{formatDecimal(selectedProduct.gross_profit)}</td>
+                                        <td className="py-1 px-3 font-bold text-slate-900 border-r border-green-300">Gross Profit (Pre-Ad)</td>
+                                        <td className="py-1 px-3 text-center font-bold border-r border-green-300">{selectedProduct.units_sold}</td>
+                                        <td className="py-1 px-3 text-right font-bold border-r border-green-300">{formatDecimal(selectedProduct.gross_profit + marketing)}</td>
                                         <td className="py-1 px-3"></td>
                                     </tr>
                                     <tr className="bg-[#fef3c7] border-b border-orange-100">
-                                        <td className="py-1 px-3 font-bold text-slate-900 border-r border-orange-200">Stock In Hand (Asset)</td>
-                                        <td className="py-1 px-3 text-center font-bold border-r border-orange-200">{selectedProduct.units_returned + selectedProduct.units_in_transit}</td>
+                                        <td className="py-1 px-3 font-bold text-slate-900 border-r border-orange-200">Cash Stuck (RTO Stock)</td>
+                                        <td className="py-1 px-3 text-center font-bold border-r border-orange-200">{selectedProduct.units_returned}</td>
                                         <td className="py-1 px-3 text-right font-bold border-r border-orange-200">{formatDecimal(selectedProduct.cash_in_stock)}</td>
                                         <td className="py-1 px-3"></td>
                                     </tr>
-                                    <tr className="bg-white border-b border-slate-200">
-                                        <td className="py-1 px-3 font-bold text-slate-900 border-r border-slate-200">Investment</td>
-                                        <td className="py-1 px-3 border-r border-slate-200"></td>
-                                        <td className="py-1 px-3 text-right font-bold border-r border-slate-200">{formatDecimal(totalInvestment)}</td>
-                                        <td className="py-1 px-3 text-center">{totalInvestment > 0 ? ((selectedProduct.net_profit / totalInvestment) * 100).toFixed(0) : 0}%</td>
-                                    </tr>
                                     <tr className="bg-[#86efac] border-t-2 border-green-500">
-                                        <td className="py-2 px-3 font-extrabold text-slate-900 border-r border-green-400">Net Profit</td>
-                                        <td className="py-2 px-3 text-center font-bold border-r border-green-400">{selectedProduct.units_sold}</td>
+                                        <td className="py-2 px-3 font-extrabold text-slate-900 border-r border-green-400">Net Profit (Cash Hand)</td>
+                                        <td className="py-2 px-3 text-center font-bold border-r border-green-400"></td>
                                         <td className="py-2 px-3 text-right font-extrabold text-slate-900 border-r border-green-400">{formatDecimal(selectedProduct.net_profit)}</td>
-                                        <td className="py-2 px-3"></td>
+                                        <td className="py-2 px-3 text-center font-bold text-green-900">
+                                            {totalInvestment > 0 ? ((selectedProduct.net_profit / totalInvestment) * 100).toFixed(0) : 0}% ROI
+                                        </td>
                                     </tr>
                                 </tbody>
                             </table>
