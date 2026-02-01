@@ -2,7 +2,7 @@
 import React, { useMemo, useState } from 'react';
 import { Order, Product, AdSpend } from '../types';
 import { calculateProductPerformance, formatCurrency, ProductPerformance } from '../services/calculator';
-import { Package, Eye, X, Banknote, ShoppingBag, CheckCircle2, RotateCcw, Clock, Layers, ChevronDown, ChevronRight, CornerDownRight, ArrowUpRight, TrendingUp, AlertCircle, Calendar, Target, Download, Loader2, Coins, Receipt, ArrowRight, Truck } from 'lucide-react';
+import { Package, Eye, X, Banknote, ShoppingBag, CheckCircle2, RotateCcw, Clock, Layers, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, Target, Download, Loader2, Coins, Receipt, ArrowRight, Tag, Factory } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -379,7 +379,14 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
       const actualCpr = p.marketing_purchases > 0 ? p.ad_spend_allocation / p.marketing_purchases : 0;
       const pCent = (part: number, total: number) => total > 0 ? `${Math.round((part/total)*100)}%` : '0%';
 
-      return { totalUnits, breakevenCpr, actualCpr, pCent };
+      // Avg Selling Price (Revenue / Sold Units)
+      const avgSellingPrice = p.units_sold > 0 ? p.gross_revenue / p.units_sold : 0;
+      
+      // Avg Cost Price (Total Cost (Delivered + Stock) / Total Dispatched Units)
+      const totalCostVal = p.cogs_total + p.cash_in_stock; 
+      const avgCostPrice = totalUnits > 0 ? totalCostVal / totalUnits : 0;
+
+      return { totalUnits, breakevenCpr, actualCpr, pCent, avgSellingPrice, avgCostPrice };
   };
 
   const handleDetailExport = (product: GroupedProductPerformance) => {
@@ -408,7 +415,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
         doc.setTextColor(100);
         doc.text(`Period: ${dateRange.start} to ${dateRange.end} | SKU: ${product.sku}`, 14, 41);
 
-        const { totalUnits, breakevenCpr, actualCpr, pCent } = getDetailStats(product);
+        const { totalUnits, breakevenCpr, actualCpr, pCent, avgSellingPrice, avgCostPrice } = getDetailStats(product);
 
         // 1. KPI Summary
         autoTable(doc, {
@@ -418,6 +425,8 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                 ['Net Profit', formatCurrency(product.net_profit), `${product.gross_revenue > 0 ? ((product.net_profit / product.gross_revenue) * 100).toFixed(0) : 0}% Margin`],
                 ['Gross Profit', formatCurrency(product.gross_profit), 'Before Cash Stuck'],
                 ['Total Revenue', formatCurrency(product.gross_revenue), `${product.units_sold} Units Sold`],
+                ['Avg Selling Price', formatCurrency(avgSellingPrice), 'Per Sold Unit'],
+                ['Avg Cost Price', formatCurrency(avgCostPrice), 'Weighted Avg of Dispatched'],
                 ['Return on Investment', `${product.cogs_total + product.shipping_cost_allocation + product.ad_spend_allocation > 0 ? ((product.net_profit / (product.cogs_total + product.shipping_cost_allocation + product.ad_spend_allocation)) * 100).toFixed(0) : 0}%`, 'Profit / Total Costs']
             ],
             theme: 'striped',
@@ -553,7 +562,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
 
         {/* --- Details Modal --- */}
         {selectedProduct && (() => {
-            const { totalUnits, breakevenCpr, actualCpr, pCent } = getDetailStats(selectedProduct);
+            const { totalUnits, breakevenCpr, actualCpr, pCent, avgSellingPrice, avgCostPrice } = getDetailStats(selectedProduct);
             return (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
                     <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -603,6 +612,28 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                     <p className="text-2xl font-bold text-purple-800 mt-2">{formatCurrency(selectedProduct.ad_spend_allocation)}</p>
                                     <div className="text-xs font-medium text-purple-600 mt-1">
                                         {selectedProduct.marketing_purchases} FB Purchases
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* 1.5 Unit Economics */}
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="bg-white p-4 rounded-xl border border-slate-200 flex items-center justify-between">
+                                    <div>
+                                        <p className="text-xs font-bold text-slate-500 uppercase">Avg Selling Price</p>
+                                        <p className="text-xl font-bold text-slate-800 mt-1">{formatCurrency(avgSellingPrice)}</p>
+                                    </div>
+                                    <div className="bg-slate-100 p-2 rounded-lg text-slate-500">
+                                        <Tag size={20} />
+                                    </div>
+                                </div>
+                                <div className="bg-white p-4 rounded-xl border border-slate-200 flex items-center justify-between">
+                                    <div>
+                                        <p className="text-xs font-bold text-slate-500 uppercase">Avg Cost Price</p>
+                                        <p className="text-xl font-bold text-slate-800 mt-1">{formatCurrency(avgCostPrice)}</p>
+                                    </div>
+                                    <div className="bg-slate-100 p-2 rounded-lg text-slate-500">
+                                        <Factory size={20} />
                                     </div>
                                 </div>
                             </div>
