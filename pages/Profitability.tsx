@@ -231,14 +231,12 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
 
   // 3. Group Logic (Aggregating Variants into Groups)
   //    AND FILTERING: Only show items with Dispatch > 0 OR Ads > 0
-  //    CHANGE: Removed check for shopify_total_orders > 0 to hide items that only have demand but no financial impact
   const groupedStats = useMemo(() => {
       const groups = new Map<string, GroupedProductPerformance>();
       const singles: GroupedProductPerformance[] = [];
 
       rawStats.forEach(stat => {
           // Filter Condition: Must have been dispatched OR have marketing spend.
-          // Pure Shopify Demand (without dispatch/ads) is excluded to focus on realized profit/loss.
           const totalDispatched = stat.units_sold + stat.units_returned + stat.units_in_transit;
           if (totalDispatched === 0 && stat.ad_spend_allocation === 0) return;
 
@@ -400,13 +398,16 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
       // Calculate Margin available for Ads
       const marginForAds = p.gross_revenue - p.cogs_total - p.shipping_cost_allocation - p.overhead_allocation - p.tax_allocation - p.cash_in_stock;
       
-      // USE SHOPIFY CONFIRMED ORDERS as denominator for CPA
-      // If no confirmed orders, fallback to dispatched (real_order_count)
-      // If neither, fallback to 1 to avoid infinity
-      const denominator = p.shopify_confirmed_orders > 0 ? p.shopify_confirmed_orders : (p.real_order_count > 0 ? p.real_order_count : 1);
+      // Real Sales for Breakeven Calculation (Denominator)
+      const realSalesCount = p.shopify_confirmed_orders > 0 ? p.shopify_confirmed_orders : (p.real_order_count > 0 ? p.real_order_count : 1);
       
-      const breakevenCpr = marginForAds / denominator;
-      const actualCpr = p.ad_spend_allocation / denominator;
+      // Breakeven CPA = Profit Margin / Real Sales (Target CPA)
+      const breakevenCpr = marginForAds / realSalesCount;
+
+      // Platform CPA = Ad Spend / Marketing Purchases (Pixel)
+      // Use Pixel Purchases for CPA calculation as requested
+      const marketingPurchases = p.marketing_purchases || 0;
+      const actualCpr = marketingPurchases > 0 ? p.ad_spend_allocation / marketingPurchases : 0;
       
       const pCent = (part: number, total: number) => total > 0 ? `${Math.round((part/total)*100)}%` : '0%';
 
@@ -417,7 +418,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
       const totalCostVal = p.cogs_total + p.cash_in_stock; 
       const avgCostPrice = totalUnits > 0 ? totalCostVal / totalUnits : 0;
 
-      return { totalUnits, breakevenCpr, actualCpr, pCent, avgSellingPrice, avgCostPrice, denominator };
+      return { totalUnits, breakevenCpr, actualCpr, pCent, avgSellingPrice, avgCostPrice, realSalesCount, marketingPurchases };
   };
 
   const handleDetailExport = (product: GroupedProductPerformance) => {
@@ -446,7 +447,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
         doc.setTextColor(100);
         doc.text(`Period: ${dateRange.start} to ${dateRange.end} | SKU: ${product.sku}`, 14, 41);
 
-        const { totalUnits, breakevenCpr, actualCpr, pCent, avgSellingPrice, avgCostPrice, denominator } = getDetailStats(product);
+        const { totalUnits, breakevenCpr, actualCpr, pCent, avgSellingPrice, avgCostPrice, realSalesCount, marketingPurchases } = getDetailStats(product);
 
         // 1. KPI Summary
         autoTable(doc, {
@@ -480,14 +481,19 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
         });
 
         // 3. Marketing
+        const getCpaStatus = () => {
+             if (product.ad_spend_allocation > 0 && actualCpr === 0) return 'No Sales (Critical)';
+             return actualCpr > breakevenCpr ? 'Over Budget' : 'Profitable';
+        };
+
         autoTable(doc, {
             startY: (doc as any).lastAutoTable.finalY + 10,
             head: [['Marketing Metric', 'Value', 'Status']],
             body: [
                 ['Total Ad Spend', formatCurrency(product.ad_spend_allocation), 'Includes Ad Tax'],
-                ['Shopify Confirmed', product.shopify_confirmed_orders, `Out of ${product.shopify_total_orders} Demand`],
-                ['Blended CPA', formatDecimal(actualCpr), actualCpr > breakevenCpr ? 'Over Budget' : 'Profitable'],
-                ['Breakeven CPA', formatDecimal(breakevenCpr), 'Max Allowable CPA']
+                ['Pixel Purchases', marketingPurchases, `Source: Ad Platforms`],
+                ['Platform CPA (Pixel)', formatDecimal(actualCpr), getCpaStatus()],
+                ['Breakeven CPA', formatDecimal(breakevenCpr), 'Max Allowable (Based on Real Sales)']
             ],
             theme: 'grid',
             headStyles: { fillColor: [124, 58, 237] }, // Purple
@@ -593,7 +599,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
 
         {/* --- Details Modal --- */}
         {selectedProduct && (() => {
-            const { totalUnits, breakevenCpr, actualCpr, pCent, avgSellingPrice, avgCostPrice, denominator } = getDetailStats(selectedProduct);
+            const { totalUnits, breakevenCpr, actualCpr, pCent, avgSellingPrice, avgCostPrice, realSalesCount, marketingPurchases } = getDetailStats(selectedProduct);
             return (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
                     <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -642,7 +648,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
                                     </p>
                                     <p className="text-2xl font-bold text-purple-800 mt-2">{formatCurrency(selectedProduct.ad_spend_allocation)}</p>
                                     <div className="text-xs font-medium text-purple-600 mt-1">
-                                        {selectedProduct.shopify_confirmed_orders} Confirmed Sales
+                                        {marketingPurchases} Pixel Purchases
                                     </div>
                                 </div>
                             </div>
@@ -705,30 +711,30 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
                                 <div className="flex gap-4">
                                     <div className="flex-1 border border-slate-200 rounded-lg p-3 flex justify-between items-center">
                                         <div>
-                                            <p className="text-xs text-slate-500 font-medium">Blended CPA (Incl. Tax)</p>
+                                            <p className="text-xs text-slate-500 font-medium">Platform CPA (Pixel)</p>
                                             <p className="text-xl font-bold text-slate-800">{formatDecimal(actualCpr)}</p>
                                         </div>
                                         <div className={`text-xs font-bold px-2 py-1 rounded ${actualCpr > breakevenCpr ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
-                                            {actualCpr > breakevenCpr ? 'Over Budget' : 'Profitable'}
+                                            {selectedProduct.ad_spend_allocation > 0 && actualCpr === 0 ? 'No Sales (Critical)' : actualCpr > breakevenCpr ? 'Over Budget' : 'Profitable'}
                                         </div>
                                     </div>
                                     <div className="flex-1 border border-slate-200 rounded-lg p-3">
-                                        <p className="text-xs text-slate-500 font-medium">Breakeven CPA (Max)</p>
+                                        <p className="text-xs text-slate-500 font-medium">Breakeven CPA (Target)</p>
                                         <p className="text-xl font-bold text-slate-600">{formatDecimal(breakevenCpr)}</p>
                                     </div>
                                 </div>
                                 <div className="grid grid-cols-2 gap-4 mt-3">
                                     <div className="bg-slate-50 rounded-lg p-2 flex justify-between px-3 items-center">
-                                        <span className="text-xs text-slate-500 font-bold uppercase">Shopify Demand</span>
-                                        <span className="text-sm font-bold text-slate-800">{selectedProduct.shopify_total_orders} Orders</span>
+                                        <span className="text-xs text-slate-500 font-bold uppercase">Pixel Purchases</span>
+                                        <span className="text-sm font-bold text-slate-800">{marketingPurchases} Events</span>
                                     </div>
                                     <div className="bg-slate-50 rounded-lg p-2 flex justify-between px-3 items-center">
-                                        <span className="text-xs text-slate-500 font-bold uppercase">Shopify Confirmed</span>
-                                        <span className="text-sm font-bold text-slate-800">{selectedProduct.shopify_confirmed_orders} Orders</span>
+                                        <span className="text-xs text-slate-500 font-bold uppercase">Real Sales</span>
+                                        <span className="text-sm font-bold text-slate-800">{realSalesCount} Confirmed</span>
                                     </div>
                                 </div>
                                 <p className="text-xs text-slate-400 mt-2">
-                                    * Blended CPA is calculated using <strong>Confirmed Shopify Orders</strong> (Fulfilled/Partial). Demand includes pending/cancelled orders.
+                                    * <strong>Platform CPA</strong> uses Pixel Purchases. <strong>Breakeven CPA</strong> is based on Profit Margin divided by Real Confirmed Sales.
                                 </p>
                             </div>
 
