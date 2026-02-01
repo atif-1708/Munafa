@@ -24,7 +24,6 @@ const App: React.FC = () => {
   const [isDemoMode, setIsDemoMode] = useState(false);
   
   // Login State
-  // Defaulting to 'login' and effectively disabling toggle in UI
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -53,6 +52,11 @@ const App: React.FC = () => {
   
   // Trigger to force re-fetch
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  // Inventory Alert Count (Items with 0 COGS)
+  const inventoryAlertCount = useMemo(() => {
+      return products.filter(p => p.current_cogs === 0).length;
+  }, [products]);
 
   // 1. Check Auth on Load
   useEffect(() => {
@@ -176,7 +180,6 @@ const App: React.FC = () => {
         let shopifyConfig: SalesChannel | undefined;
         
         if (!isDemoMode) {
-             // 1. Fetch Sales Channels - Use limit(1) instead of single() to avoid duplicate row errors
              const { data: salesData } = await supabase
                 .from('sales_channels')
                 .select('*')
@@ -189,7 +192,6 @@ const App: React.FC = () => {
                  shopifyConfig = salesData[0];
              }
 
-             // 2. Fetch Courier Configs
              const { data: courierData } = await supabase
                 .from('integration_configs')
                 .select('*')
@@ -201,7 +203,6 @@ const App: React.FC = () => {
             }
         }
 
-        // Check if anything is configured
         const anyActiveConfig = !!postExConfig || !!shopifyConfig;
 
         if (!anyActiveConfig) {
@@ -213,17 +214,15 @@ const App: React.FC = () => {
 
         setIsConfigured(true);
         const finalProducts = [...savedProducts];
-        // We use a Set to avoid adding duplicate products from live streams
         const seenFingerprints = new Set(savedProducts.map(p => p.variant_fingerprint || p.sku));
 
-        // E. Fetch Shopify Data (Isolate failure)
-        // Note: We FETCH orders for stats, but we do NOT use them to generate Inventory Items anymore.
+        // E. Fetch Shopify Data (Stats Only)
+        // Note: Removed Logic to auto-add Shopify items to Master Inventory List as requested
         if (shopifyConfig) {
             try {
                 const shopifyAdapter = new ShopifyAdapter();
                 const rawShopifyOrders = await shopifyAdapter.fetchOrders(shopifyConfig);
                 setShopifyOrders(rawShopifyOrders);
-                // Removed logic that auto-adds Shopify items to finalProducts
             } catch (e: any) {
                 console.error("Shopify Sync Error:", e);
                 setError("Shopify Sync Failed: " + e.message);
@@ -232,26 +231,20 @@ const App: React.FC = () => {
             setShopifyOrders([]);
         }
 
-        // F. Fetch Live Orders from Courier (Isolate failure)
-        // This is now the PRIMARY source for auto-discovering inventory
+        // F. Fetch Live Orders from Courier (PostEx)
         if (postExConfig) {
             try {
                 const postExAdapter = new PostExAdapter();
                 const rawOrders = await postExAdapter.fetchRecentOrders(postExConfig);
 
                 rawOrders.forEach(o => {
-                    // Update: EXCLUDE Booked and Pending (Unbooked) orders.
-                    // Only dispatched items (In Transit, Delivered, Returned) create inventory entries.
-                    const isRelevantForInventory = o.status !== OrderStatus.PENDING && 
-                                                 o.status !== OrderStatus.BOOKED && 
-                                                 o.status !== OrderStatus.CANCELLED;
-                    
-                    if (!isRelevantForInventory) return;
+                    // FILTER APPLIED: Exclude Booked and Pending orders from Inventory Discovery.
+                    // We only want to discover products that have been Dispatched, Delivered, Returned, etc.
+                    if (o.status === OrderStatus.BOOKED || o.status === OrderStatus.PENDING) return;
 
                     o.items.forEach(item => {
                         const fingerprint = item.variant_fingerprint || item.sku || 'unknown';
 
-                        // Check if we already added this via DB
                         const exists = finalProducts.some(p => 
                             p.sku === item.sku || 
                             (p.variant_fingerprint && p.variant_fingerprint === fingerprint)
@@ -287,255 +280,288 @@ const App: React.FC = () => {
 
                     return {
                         ...order,
-                        items: updatedItems,
+                        courier_fee: rateCard.forward,
+                        rto_penalty: isRto ? rateCard.rto : 0,
                         packaging_cost: fetchedSettings.packagingCost,
                         overhead_cost: fetchedSettings.overheadCost,
                         tax_amount: taxAmount,
-                        courier_fee: rateCard.forward,
-                        rto_penalty: isRto ? rateCard.rto : 0
+                        items: updatedItems
                     };
                 });
-                
-                setOrders(processedOrders);
 
+                setOrders(processedOrders);
             } catch (e: any) {
-                console.error("PostEx Sync Error:", e);
-                setError(prev => prev ? prev + " | PostEx Sync Failed: " + e.message : "PostEx Sync Failed: " + e.message);
+                console.error("Courier Sync Error:", e);
+                setError("Courier Sync Failed: " + e.message);
+                setOrders([]);
             }
-        } else {
-            setOrders([]);
+        }
+
+        // Save new products to DB for persistence
+        if (!isDemoMode && finalProducts.length > savedProducts.length) {
+             const newItems = finalProducts.filter(p => !savedProducts.find(sp => sp.id === p.id));
+             
+             if (newItems.length > 0) {
+                 const payload = newItems.map(p => ({
+                     user_id: user.id,
+                     id: p.id,
+                     shopify_id: p.shopify_id,
+                     title: p.title,
+                     sku: p.sku,
+                     image_url: p.image_url,
+                     current_cogs: p.current_cogs
+                 }));
+                 await supabase.from('products').upsert(payload);
+             }
         }
 
         setProducts(finalProducts);
+        setLoading(false);
 
-      } catch (err: any) {
-        console.error("General Data Sync Error", err);
-        setError("Failed to sync data. " + (err.message || ""));
-        setIsConfigured(true); 
-      } finally {
+      } catch (e: any) {
+        console.error("App Data Fetch Error:", e);
+        setError("Failed to load application data.");
         setLoading(false);
       }
     };
 
     fetchAppData();
-  }, [session?.user?.id, isDemoMode, refreshTrigger]);
+  }, [session, isDemoMode, refreshTrigger]);
 
   const handleUpdateProducts = async (updatedProducts: Product[]) => {
-    const updatedIds = new Set(updatedProducts.map(p => p.id));
-    const newProducts = products.map(p => updatedIds.has(p.id) ? updatedProducts.find(u => u.id === p.id)! : p);
-    setProducts(newProducts);
-    const newOrders = recalculateOrderCosts(orders, newProducts);
-    setOrders(newOrders);
-    
-    if (!isDemoMode && session?.user) {
-        try {
-            const upsertData = updatedProducts.map(p => ({
-                id: p.id,
-                user_id: session.user.id,
-                sku: p.sku, 
-                title: p.title,
-                current_cogs: p.current_cogs,
-                cost_history: p.cost_history,
-                shopify_id: p.shopify_id,
-                group_id: p.group_id,
-                group_name: p.group_name
-            }));
-            const { error } = await supabase.from('products').upsert(upsertData);
-            if (error) {
-                console.error("Failed to save product:", error);
-                throw error; // Throw to UI
-            }
-        } catch (e) { 
-            console.error("DB Error:", e);
-            throw e; // Throw to UI
-        }
-    }
-  };
+      // Optimistic UI Update
+      setProducts(prev => prev.map(p => {
+          const updated = updatedProducts.find(u => u.id === p.id);
+          return updated ? updated : p;
+      }));
 
-  const handleAddAdSpend = async (entries: AdSpend[]) => {
-    setAdSpend(prev => [...entries, ...prev]);
-    if (!isDemoMode && session?.user) {
-        try {
-            const dbPayload = entries.map(entry => ({
-                id: entry.id,
-                user_id: session.user.id,
-                date: entry.date,
-                platform: entry.platform,
-                amount_spent: entry.amount_spent,
-                product_id: entry.product_id || null
-            }));
-            await supabase.from('ad_spend').insert(dbPayload);
-        } catch (e) { console.error("DB Error:", e); }
-    }
-  };
+      // Update Orders Calculations based on new COGS
+      const mergedProducts = products.map(p => updatedProducts.find(u => u.id === p.id) || p);
+      const recalculatedOrders = recalculateOrderCosts(orders, mergedProducts);
+      setOrders(recalculatedOrders);
 
-  const handleSyncAdSpend = async (platform: string, startDate: string, endDate: string, newEntries: AdSpend[]) => {
-    setAdSpend(prev => {
-        const kept = prev.filter(a => 
-            !(a.platform === platform && a.date >= startDate && a.date <= endDate)
-        );
-        return [...kept, ...newEntries];
-    });
-    if (!isDemoMode && session?.user) {
-        try {
-            await supabase.from('ad_spend')
-                .delete()
-                .eq('user_id', session.user.id)
-                .eq('platform', platform)
-                .gte('date', startDate)
-                .lte('date', endDate);
-            if (newEntries.length > 0) {
-                const dbPayload = newEntries.map(entry => ({
-                    id: entry.id,
-                    user_id: session.user.id,
-                    date: entry.date,
-                    platform: entry.platform,
-                    amount_spent: entry.amount_spent,
-                    product_id: entry.product_id || null,
-                    campaign_id: entry.campaign_id,
-                    campaign_name: entry.campaign_name
-                }));
-                await supabase.from('ad_spend').insert(dbPayload);
-            }
-        } catch (e) { console.error("DB Sync Error:", e); }
-    }
+      // Persist to DB
+      if (!isDemoMode && session?.user) {
+          const payload = updatedProducts.map(p => ({
+              user_id: session.user.id,
+              id: p.id,
+              shopify_id: p.shopify_id,
+              title: p.title,
+              sku: p.sku,
+              image_url: p.image_url,
+              current_cogs: p.current_cogs,
+              cost_history: p.cost_history,
+              group_id: p.group_id,
+              group_name: p.group_name
+          }));
+          const { error } = await supabase.from('products').upsert(payload);
+          if (error) console.error("Failed to save product updates:", error);
+      }
+  };
+  
+  const handleUpdateAdSpend = async (newAds: AdSpend[]) => {
+      setAdSpend(prev => [...prev, ...newAds]);
+      if (!isDemoMode && session?.user) {
+          const payload = newAds.map(a => ({
+              user_id: session.user.id,
+              date: a.date,
+              platform: a.platform,
+              amount_spent: a.amount_spent,
+              product_id: a.product_id
+          }));
+          await supabase.from('ad_spend').insert(payload);
+      }
   };
 
   const handleDeleteAdSpend = async (id: string) => {
-    setAdSpend(prev => prev.filter(a => a.id !== id));
-    if (!isDemoMode && session?.user) {
-        try { await supabase.from('ad_spend').delete().eq('id', id); } catch (e) { console.error("DB Error:", e); }
-    }
+      setAdSpend(prev => prev.filter(a => a.id !== id));
+      if (!isDemoMode && session?.user) {
+          await supabase.from('ad_spend').delete().eq('id', id).eq('user_id', session.user.id);
+      }
   };
 
-  const handleAuth = async (e: React.FormEvent) => {
+  const handleSyncAdSpend = async (platform: string, start: string, end: string, newAds: AdSpend[]) => {
+      const startDate = new Date(start);
+      const endDate = new Date(end);
+      
+      // Update Local State: Remove old, add new
+      setAdSpend(prev => {
+          const others = prev.filter(a => {
+              const d = new Date(a.date);
+              const inRange = d >= startDate && d <= endDate;
+              const isPlatform = a.platform === platform;
+              return !(inRange && isPlatform);
+          });
+          return [...others, ...newAds];
+      });
+
+      // DB Sync
+      if (!isDemoMode && session?.user) {
+          // Delete old
+          await supabase.from('ad_spend')
+            .delete()
+            .eq('user_id', session.user.id)
+            .eq('platform', platform)
+            .gte('date', start)
+            .lte('date', end);
+          
+          // Insert new
+          if (newAds.length > 0) {
+              const payload = newAds.map(a => ({
+                  user_id: session.user.id,
+                  date: a.date,
+                  platform: a.platform,
+                  amount_spent: a.amount_spent,
+                  product_id: a.product_id,
+                  campaign_id: a.campaign_id,
+                  campaign_name: a.campaign_name,
+                  purchases: a.purchases
+              }));
+              await supabase.from('ad_spend').insert(payload);
+          }
+      }
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setAuthLoading(true);
     setAuthMessage(null);
-    if (authMode === 'login') {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) setAuthMessage({ type: 'error', text: error.message });
-    } else {
-        // Signup logic is kept but inaccessible via UI
-        const { error } = await supabase.auth.signUp({ email, password });
-        if (error) {
-            setAuthMessage({ type: 'error', text: error.message });
-        } else {
-            setAuthMessage({ type: 'success', text: "Account created! Please check your email." });
-            setAuthMode('login');
-        }
-    }
-    setAuthLoading(false);
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) setAuthMessage({type: 'error', text: error.message});
   };
-  
-  const missingCostCount = useMemo(() => products.filter(p => p.current_cogs === 0).length, [products]);
 
-  if (authLoading) return <div className="h-screen flex items-center justify-center bg-slate-50"><Loader2 className="animate-spin text-brand-600" size={40} /></div>;
+  const handleSignup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthMessage(null);
+    const { data, error } = await supabase.auth.signUp({ 
+        email, 
+        password,
+        options: { data: { store_name: 'My Store' } }
+    });
+    if (error) setAuthMessage({type: 'error', text: error.message});
+    else setAuthMessage({type: 'success', text: 'Account created! Please log in.'});
+  };
+
+  const handleDemoMode = () => {
+    setIsDemoMode(true);
+    setAuthMode('login');
+  };
+
+  if (authLoading) return <div className="flex h-screen items-center justify-center bg-slate-50 text-slate-400"><Loader2 className="animate-spin" size={32} /></div>;
 
   if (!session && !isDemoMode) {
-     return (
-        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-            <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md border border-slate-200">
-                <div className="text-center mb-8">
-                    <h1 className="text-3xl font-bold text-brand-600 tracking-tight">MunafaBakhsh</h1>
-                    <p className="text-slate-500 mt-2">eCommerce Profit Intelligence</p>
-                </div>
-                
-                <h2 className="text-lg font-semibold text-slate-700 mb-4 text-center">Sign In</h2>
+    return (
+        <div className="min-h-screen bg-slate-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+            <div className="sm:mx-auto sm:w-full sm:max-w-md">
+                <h2 className="text-center text-3xl font-extrabold text-slate-900 tracking-tight">MunafaBakhsh<span className="text-brand-600">Karobaar</span></h2>
+                <p className="mt-2 text-center text-sm text-slate-600">Profit Intelligence for Pakistani Sellers</p>
+            </div>
 
-                <form onSubmit={handleAuth} className="space-y-4">
-                    <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Email Address</label>
-                        <input type="email" required className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-brand-500 outline-none" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@example.com" />
+            <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
+                <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10 border border-slate-200">
+                    <div className="flex justify-center mb-6 bg-slate-100 p-1 rounded-lg">
+                        <button onClick={() => setAuthMode('login')} className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${authMode === 'login' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Login</button>
+                        <button onClick={() => setAuthMode('signup')} className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${authMode === 'signup' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Sign Up</button>
                     </div>
-                    <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Password</label>
-                        <input type="password" required className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-brand-500 outline-none" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" />
+
+                    <form className="space-y-6" onSubmit={authMode === 'login' ? handleLogin : handleSignup}>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700">Email address</label>
+                            <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="mt-1 block w-full border border-slate-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-brand-500 focus:border-brand-500 sm:text-sm" />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700">Password</label>
+                            <input type="password" required value={password} onChange={e => setPassword(e.target.value)} className="mt-1 block w-full border border-slate-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-brand-500 focus:border-brand-500 sm:text-sm" />
+                        </div>
+
+                        {authMessage && (
+                            <div className={`text-sm p-2 rounded ${authMessage.type === 'error' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
+                                {authMessage.text}
+                            </div>
+                        )}
+
+                        <div>
+                            <button type="submit" className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-slate-900 hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-500">
+                                {authMode === 'login' ? 'Sign in' : 'Create account'}
+                            </button>
+                        </div>
+                    </form>
+
+                    <div className="mt-6">
+                        <div className="relative">
+                            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-300" /></div>
+                            <div className="relative flex justify-center text-sm"><span className="px-2 bg-white text-gray-500">Or continue with</span></div>
+                        </div>
+                        <div className="mt-6">
+                            <button onClick={handleDemoMode} className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                                View Demo Account
+                            </button>
+                        </div>
                     </div>
-                    
-                    {authMessage && <div className={`p-3 rounded-lg text-sm ${authMessage.type === 'error' ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>{authMessage.text}</div>}
-                    
-                    <button type="submit" className="w-full bg-brand-600 text-white py-2.5 rounded-lg font-bold hover:bg-brand-700 transition-colors shadow-lg shadow-brand-900/20">
-                        Log In
-                    </button>
-                </form>
-                
-                {/* Guest & Signup removed as per request */}
+                </div>
             </div>
         </div>
     );
   }
 
-  if (loading) return <div className="h-screen flex items-center justify-center bg-slate-50"><Loader2 className="animate-spin" size={40} /></div>;
-
   return (
-    <div className="min-h-screen bg-slate-50 flex font-sans">
+    <div className="flex h-screen bg-slate-50 font-sans text-slate-900">
       <Sidebar 
-          currentPage={currentPage} 
-          setPage={setCurrentPage} 
-          inventoryAlertCount={missingCostCount} 
-          storeName={storeName}
-          email={session?.user?.email || 'Guest User'}
+        currentPage={currentPage} 
+        setPage={setCurrentPage} 
+        storeName={storeName}
+        email={session?.user?.email || 'demo@munafabakhsh.com'}
+        inventoryAlertCount={inventoryAlertCount}
       />
-      <main className="flex-1 ml-64 p-8 relative">
+
+      <div className="flex-1 ml-64 overflow-y-auto h-screen p-8">
+        {loading && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/80 backdrop-blur-sm">
+                <Loader2 className="animate-spin text-brand-600" size={40} />
+            </div>
+        )}
+        
         {error && (
-            <div className="mb-6 bg-red-50 border border-red-200 p-4 rounded-xl flex items-start justify-between animate-in fade-in slide-in-from-top-2 shadow-sm">
-               <div className="flex gap-3">
-                   <AlertTriangle className="shrink-0 text-red-600 mt-0.5" size={20} />
-                   <div>
-                       <h4 className="font-bold text-red-800 text-sm">Sync Error</h4>
-                       <p className="text-sm text-red-700 mt-0.5">{error}</p>
-                   </div>
-               </div>
-               <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600">
-                   <X size={18} />
-               </button>
+            <div className="mb-6 bg-red-50 border border-red-200 p-4 rounded-xl flex gap-3 text-red-800">
+                <AlertTriangle className="shrink-0" />
+                <div>
+                    <h4 className="font-bold">Sync Error</h4>
+                    <p className="text-sm">{error}</p>
+                    <button onClick={() => setRefreshTrigger(prev => prev + 1)} className="mt-2 text-xs font-bold underline">Retry Sync</button>
+                </div>
             </div>
         )}
 
-        <div className="max-w-7xl mx-auto">
-          {(isConfigured || currentPage === 'integrations') && (
-              <>
+        {!isConfigured && !loading && currentPage !== 'integrations' && currentPage !== 'settings' ? (
+             <div className="flex flex-col items-center justify-center h-[80vh] text-center max-w-lg mx-auto">
+                 <div className="w-16 h-16 bg-brand-100 text-brand-600 rounded-2xl flex items-center justify-center mb-6">
+                     <AlertTriangle size={32} />
+                 </div>
+                 <h2 className="text-2xl font-bold text-slate-900 mb-2">Setup Required</h2>
+                 <p className="text-slate-500 mb-8">
+                     To start analyzing your profits, please connect your Courier (PostEx) or Store first.
+                 </p>
+                 <button 
+                    onClick={() => setCurrentPage('integrations')}
+                    className="bg-brand-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-brand-700 transition-colors shadow-lg shadow-brand-200"
+                 >
+                     Go to Integrations
+                 </button>
+             </div>
+        ) : (
+            <>
                 {currentPage === 'dashboard' && <Dashboard orders={orders} shopifyOrders={shopifyOrders} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} storeName={storeName} />}
                 {currentPage === 'orders' && <Orders orders={orders} />}
-                {currentPage === 'reconciliation' && <Reconciliation shopifyOrders={shopifyOrders} courierOrders={orders} products={products} storeName={storeName} />}
                 {currentPage === 'couriers' && <Couriers orders={orders} />}
                 {currentPage === 'profitability' && <Profitability orders={orders} shopifyOrders={shopifyOrders} products={products} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} storeName={storeName} />}
                 {currentPage === 'inventory' && <Inventory products={products} orders={orders} onUpdateProducts={handleUpdateProducts} />}
-                {currentPage === 'marketing' && (
-                    <Marketing 
-                        adSpend={adSpend} 
-                        products={products} 
-                        orders={orders}
-                        onAddAdSpend={handleAddAdSpend} 
-                        onDeleteAdSpend={handleDeleteAdSpend}
-                        onSyncAdSpend={handleSyncAdSpend}
-                        onNavigate={setCurrentPage}
-                    />
-                )}
-                {currentPage === 'integrations' && <Integrations onConfigUpdate={() => setRefreshTrigger(p => p + 1)} />}
+                {currentPage === 'marketing' && <Marketing adSpend={adSpend} products={products} orders={orders} onAddAdSpend={handleUpdateAdSpend} onDeleteAdSpend={handleDeleteAdSpend} onSyncAdSpend={handleSyncAdSpend} onNavigate={setCurrentPage} />}
+                {currentPage === 'integrations' && <Integrations onConfigUpdate={() => setRefreshTrigger(prev => prev + 1)} />}
                 {currentPage === 'settings' && <Settings onUpdateStoreName={setStoreName} />}
-              </>
-          )}
-          {!isConfigured && currentPage !== 'integrations' && (
-             <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
-                <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-xl max-w-md w-full">
-                    <div className="w-16 h-16 bg-brand-50 rounded-full flex items-center justify-center mx-auto mb-6">
-                        <Loader2 size={32} className="text-brand-600" />
-                    </div>
-                    <h2 className="text-2xl font-bold text-slate-900 mb-2">Welcome to MunafaBakhsh</h2>
-                    <p className="text-slate-500 mb-8">To start tracking your profits, please connect your Shopify store and courier accounts.</p>
-                    <button 
-                        onClick={() => setCurrentPage('integrations')} 
-                        className="w-full bg-brand-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-brand-700 transition-colors shadow-lg shadow-brand-900/20"
-                    >
-                        Connect Integrations
-                    </button>
-                </div>
-             </div>
-          )}
-        </div>
-      </main>
+                {currentPage === 'reconciliation' && <Reconciliation shopifyOrders={shopifyOrders} courierOrders={orders} products={products} storeName={storeName} />}
+            </>
+        )}
+      </div>
     </div>
   );
 };
