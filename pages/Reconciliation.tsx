@@ -1,7 +1,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { Order, ShopifyOrder, Product, OrderStatus } from '../types';
-import { Search, Download, Package, AlertCircle, CheckCircle2, Truck, XCircle, Clock, ArrowRight, Calendar } from 'lucide-react';
+import { Search, Download, Package, ArrowRight, Calendar } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -187,7 +187,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
     });
 
     autoTable(doc, {
-        head: [['Product', 'Total Orders', 'Pending', 'Fulfilled', 'Dispatched', 'Delivered', 'RTO']],
+        head: [['Product', 'Total Orders', 'Pending Orders', 'Fulfilled Orders', 'Dispatched Orders', 'Delivered Orders', 'RTO Orders']],
         body: rows,
         startY: 55,
         theme: 'grid',
@@ -260,13 +260,13 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                 <tr>
                     <th className="px-6 py-4 w-[30%]">Product (First Item)</th>
                     <th className="px-4 py-4 text-center text-slate-500">Total Orders</th>
-                    <th className="px-4 py-4 text-center text-orange-600 bg-orange-50/50">Pending</th>
-                    <th className="px-4 py-4 text-center text-blue-600 bg-blue-50/50">Fulfilled</th>
+                    <th className="px-4 py-4 text-center text-orange-600 bg-orange-50/50">Pending Orders</th>
+                    <th className="px-4 py-4 text-center text-blue-600 bg-blue-50/50">Fulfilled Orders</th>
                     <th className="px-4 py-4 text-center text-red-400">Cancelled</th>
                     <th className="px-1 py-4 w-6"></th> {/* Arrow */}
-                    <th className="px-4 py-4 text-center text-purple-600 bg-purple-50/50">Dispatched</th>
-                    <th className="px-4 py-4 text-center text-green-600 bg-green-50/50">Delivered</th>
-                    <th className="px-4 py-4 text-center text-red-600 bg-red-50/50">RTO</th>
+                    <th className="px-4 py-4 text-center text-purple-600 bg-purple-50/50">Dispatched Orders</th>
+                    <th className="px-4 py-4 text-center text-green-600 bg-green-50/50">Delivered Orders</th>
+                    <th className="px-4 py-4 text-center text-red-600 bg-red-50/50">RTO Orders</th>
                 </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
