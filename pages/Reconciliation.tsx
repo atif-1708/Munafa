@@ -56,18 +56,26 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
     const end = new Date(dateRange.end);
     end.setHours(23, 59, 59, 999);
 
+    // DEDUPLICATION: Ensure each Shopify Order ID is processed exactly ONCE
+    const uniqueOrders = new Map<number, ShopifyOrder>();
     shopifyOrders.forEach(order => {
-        // Date Filter
         const orderDate = new Date(order.created_at);
-        if (orderDate < start || orderDate > end) return;
+        if (orderDate >= start && orderDate <= end) {
+            if (!uniqueOrders.has(order.id)) {
+                uniqueOrders.set(order.id, order);
+            }
+        }
+    });
 
+    // Iterate over UNIQUE orders only
+    uniqueOrders.forEach(order => {
         // Normalize key
         const orderKey = order.name.replace('#', '').trim();
         const courierOrder = courierMap.get(orderKey);
 
         const isCancelled = order.cancel_reason !== null;
-        const isFulfilled = order.fulfillment_status === 'fulfilled';
-        const isPending = !isCancelled && !isFulfilled; // Roughly "Unfulfilled"
+        const isFulfilled = order.fulfillment_status === 'fulfilled'; // strict check for 'fulfilled'
+        const isPending = !isCancelled && !isFulfilled; // Roughly "Unfulfilled" or "Partial"
 
         // Courier Status Flags
         let isDispatched = false;
@@ -75,15 +83,17 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
         let isRto = false;
 
         if (courierOrder) {
-            // If it exists in courier and isn't just 'Booked' or 'Cancelled', we consider it dispatched/handed over
-            if (courierOrder.status !== OrderStatus.PENDING && courierOrder.status !== OrderStatus.CANCELLED) {
+            // If it exists in courier and isn't just 'Booked' or 'Cancelled' or 'Pending', we consider it dispatched/handed over
+            if (courierOrder.status !== OrderStatus.PENDING && 
+                courierOrder.status !== OrderStatus.BOOKED && 
+                courierOrder.status !== OrderStatus.CANCELLED) {
                 isDispatched = true;
             }
             if (courierOrder.status === OrderStatus.DELIVERED) isDelivered = true;
             if (courierOrder.status === OrderStatus.RETURNED || courierOrder.status === OrderStatus.RTO_INITIATED) isRto = true;
         }
 
-        // Logic: ONLY count the first item in the order as requested
+        // Logic: ONLY count the first item in the order as requested to assign the Order to a primary product
         if (order.line_items.length > 0) {
             const item = order.line_items[0];
             const key = item.title; // Grouping Key: TITLE ONLY
@@ -104,21 +114,20 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
             }
 
             const stat = stats.get(key)!;
-            // Count 1 per order regardless of quantity, as requested
-            const count = 1;
-
-            stat.total_ordered += count;
+            
+            // STRICTLY COUNT 1 PER ORDER (Not Quantity)
+            stat.total_ordered += 1;
 
             if (isCancelled) {
-                stat.cancelled += count;
+                stat.cancelled += 1;
             } else {
-                if (isPending) stat.pending_fulfillment += count;
-                if (isFulfilled) stat.fulfilled += count;
+                if (isPending) stat.pending_fulfillment += 1;
+                if (isFulfilled) stat.fulfilled += 1;
 
                 // Courier Metrics (Only apply if valid order)
-                if (isDispatched) stat.dispatched += count;
-                if (isDelivered) stat.delivered += count;
-                if (isRto) stat.rto += count;
+                if (isDispatched) stat.dispatched += 1;
+                if (isDelivered) stat.delivered += 1;
+                if (isRto) stat.rto += 1;
             }
         }
     });
