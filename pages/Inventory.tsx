@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Product, Order, ShopifyOrder } from '../types';
 import { formatCurrency } from '../services/calculator';
 import { PackageSearch, History, Edit2, Plus, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, AlertCircle, Link as LinkIcon, Sparkles, XCircle, Check, Settings } from 'lucide-react';
@@ -42,6 +42,24 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
   const [selectedGroupId, setSelectedGroupId] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // --- SYNC EFFECT: Keep selected items fresh when main products list updates ---
+  useEffect(() => {
+      if (selectedProduct) {
+          const fresh = products.find(p => p.id === selectedProduct.id);
+          if (fresh && fresh !== selectedProduct) {
+              setSelectedProduct(fresh);
+          }
+      }
+      if (selectedGroup) {
+          // Re-fetch group items from fresh products list to ensure consistency
+          const freshItems = products.filter(p => p.group_id === selectedGroup.id);
+          // Only update if group still exists and has items
+          if (freshItems.length > 0) {
+              setSelectedGroup(prev => prev ? { ...prev, items: freshItems } : null);
+          }
+      }
+  }, [products, selectedProduct, selectedGroup]); // Dependencies ensure this runs after onUpdateProducts flow completes
 
   const filteredProducts = useMemo(() => {
       // 1. Identify active product IDs based on Date Range
@@ -155,16 +173,12 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
   const unmappedShopifyTitles = useMemo(() => {
     const usedAliases = new Set<string>();
     products.forEach(p => {
-        if (p.id !== selectedProduct?.id && p.aliases) {
+        // Exclude current selection from "used" check so we don't hide its own aliases? 
+        // Actually we only want to show aliases NOT assigned to ANYONE else.
+        if (p.aliases) {
             p.aliases.forEach(a => usedAliases.add(a));
         }
     });
-
-    // Check selected group aliases (derived from first product usually)
-    if (selectedGroup && selectedGroup.items.length > 0) {
-        const leader = selectedGroup.items[0];
-        leader.aliases?.forEach(a => usedAliases.add(a));
-    }
 
     const uniqueTitles = new Set<string>();
     shopifyOrders.forEach(o => {
@@ -174,7 +188,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
     });
 
     return Array.from(uniqueTitles).filter(t => !usedAliases.has(t)).sort();
-  }, [products, shopifyOrders, selectedProduct, selectedGroup]);
+  }, [products, shopifyOrders]); // Removed selectedProduct/Group dependency to keep list stable
 
   const toggleSelect = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -226,6 +240,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
   const handleSaveCost = async (newCost: number) => {
     if (!selectedProduct) return;
     const updated = { ...selectedProduct, current_cogs: newCost };
+    // Optimistic local update not strictly needed as useEffect syncs it, but good for responsiveness
     setSelectedProduct(updated); 
     await handleUpdateAndSave([updated]);
   };
@@ -253,19 +268,17 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
         const currentAliases = selectedProduct.aliases || [];
         if (currentAliases.includes(alias)) return;
         const updated = { ...selectedProduct, aliases: [...currentAliases, alias] };
-        setSelectedProduct(updated);
+        
         await handleUpdateAndSave([updated]);
     } else if (selectedGroup) {
-        // Add alias to first item in group
+        // Add alias to first item in group (Leader strategy)
         const leader = selectedGroup.items[0];
         if(!leader) return;
+        
         const currentAliases = leader.aliases || [];
         if(currentAliases.includes(alias)) return;
         
         const updatedLeader = { ...leader, aliases: [...currentAliases, alias] };
-        // Update local selectedGroup state to reflect change
-        const updatedItems = selectedGroup.items.map(i => i.id === leader.id ? updatedLeader : i);
-        setSelectedGroup({ ...selectedGroup, items: updatedItems });
         
         await handleUpdateAndSave([updatedLeader]);
     }
@@ -275,17 +288,12 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
     if (selectedProduct) {
         const currentAliases = selectedProduct.aliases || [];
         const updated = { ...selectedProduct, aliases: currentAliases.filter(a => a !== alias) };
-        setSelectedProduct(updated);
         await handleUpdateAndSave([updated]);
     } else if (selectedGroup) {
         const leader = selectedGroup.items[0];
         if(!leader) return;
         const currentAliases = leader.aliases || [];
         const updatedLeader = { ...leader, aliases: currentAliases.filter(a => a !== alias) };
-        
-        const updatedItems = selectedGroup.items.map(i => i.id === leader.id ? updatedLeader : i);
-        setSelectedGroup({ ...selectedGroup, items: updatedItems });
-        
         await handleUpdateAndSave([updatedLeader]);
     }
   };
@@ -350,9 +358,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
 
   const handleUngroup = async (product: Product) => {
       const updated = {...product, group_id: null, group_name: null};
-      if(selectedProduct?.id === product.id) {
-          setSelectedProduct(updated as Product);
-      }
+      // Optimistic update handled by Sync Effect
       await handleUpdateAndSave([updated as Product]);
   };
 

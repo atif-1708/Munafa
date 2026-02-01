@@ -148,9 +148,28 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
       }
   };
 
+  // Logic: Show Groups as single entries, and standalone items. Hide items that are in groups.
   const productOptions = useMemo(() => {
-      return products
-        .slice()
+      const groups = new Map<string, { id: string, title: string }>();
+      const singles: { id: string, title: string }[] = [];
+
+      products.forEach(p => {
+          if (p.group_id && p.group_name) {
+              if (!groups.has(p.group_id)) {
+                  groups.set(p.group_id, { 
+                      id: p.group_id, 
+                      title: `📦 ${p.group_name}` 
+                  });
+              }
+          } else {
+              singles.push({ 
+                  id: p.id, 
+                  title: p.title 
+              });
+          }
+      });
+
+      return [...Array.from(groups.values()), ...singles]
         .sort((a,b) => a.title.localeCompare(b.title));
   }, [products]);
 
@@ -448,6 +467,16 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                                 )}
                                 {filteredAds.map(ad => {
                                     const product = products.find(p => p.id === ad.product_id);
+                                    let displayName = 'General';
+                                    if (product) {
+                                        displayName = product.title;
+                                    } else if (ad.product_id) {
+                                        // Try finding by Group ID
+                                        const groupProduct = products.find(p => p.group_id === ad.product_id);
+                                        if (groupProduct && groupProduct.group_name) {
+                                            displayName = `📦 ${groupProduct.group_name}`;
+                                        }
+                                    }
                                     
                                     return (
                                         <tr key={ad.id} className="hover:bg-slate-50">
@@ -464,11 +493,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                                                 </div>
                                             </td>
                                             <td className="px-6 py-3 text-slate-600 text-xs">
-                                                {product ? (
-                                                    <div className="truncate max-w-[150px]">{product.title}</div>
-                                                ) : (
-                                                    <span className="text-slate-400 italic">General</span>
-                                                )}
+                                                <div className="truncate max-w-[150px]" title={displayName}>{displayName}</div>
                                             </td>
                                             <td className="px-6 py-3 font-medium text-slate-900">{formatCurrency(ad.amount_spent)}</td>
                                             <td className="px-6 py-3">
