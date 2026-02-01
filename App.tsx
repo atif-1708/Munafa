@@ -11,6 +11,7 @@ import Inventory from './pages/Inventory';
 import Marketing from './pages/Marketing';
 import Reconciliation from './pages/Reconciliation'; 
 import { PostExAdapter } from './services/couriers/postex';
+import { TcsAdapter } from './services/couriers/tcs';
 import { ShopifyAdapter } from './services/shopify'; 
 import { Order, Product, AdSpend, CourierName, SalesChannel, CourierConfig, OrderStatus, ShopifyOrder, IntegrationConfig } from './types';
 import { Loader2, AlertTriangle, X } from 'lucide-react';
@@ -178,6 +179,7 @@ const App: React.FC = () => {
 
         // D. Fetch Integrations
         let postExConfig: IntegrationConfig | undefined;
+        let tcsConfig: IntegrationConfig | undefined;
         let shopifyConfig: SalesChannel | undefined;
         
         if (!isDemoMode) {
@@ -201,10 +203,11 @@ const App: React.FC = () => {
             
             if (courierData) {
                 postExConfig = courierData.find((c: any) => c.provider_id === CourierName.POSTEX);
+                tcsConfig = courierData.find((c: any) => c.provider_id === CourierName.TCS);
             }
         }
 
-        const anyActiveConfig = !!postExConfig || !!shopifyConfig;
+        const anyActiveConfig = !!postExConfig || !!tcsConfig || !!shopifyConfig;
 
         if (!anyActiveConfig) {
             setLoading(false);
@@ -218,7 +221,6 @@ const App: React.FC = () => {
         const seenFingerprints = new Set(savedProducts.map(p => p.variant_fingerprint || p.sku));
 
         // E. Fetch Shopify Data (Stats Only)
-        // Note: Removed Logic to auto-add Shopify items to Master Inventory List as requested
         if (shopifyConfig) {
             try {
                 const shopifyAdapter = new ShopifyAdapter();
@@ -232,69 +234,84 @@ const App: React.FC = () => {
             setShopifyOrders([]);
         }
 
-        // F. Fetch Live Orders from Courier (PostEx)
+        // F. Fetch Live Orders from Couriers
+        let fetchedOrders: Order[] = [];
+
+        // 1. PostEx
         if (postExConfig) {
             try {
                 const postExAdapter = new PostExAdapter();
-                const rawOrders = await postExAdapter.fetchRecentOrders(postExConfig);
-
-                rawOrders.forEach(o => {
-                    // NOTE: Removed filter for BOOKED/PENDING. We want to discover products from ALL orders.
-                    o.items.forEach(item => {
-                        const fingerprint = item.variant_fingerprint || item.sku || 'unknown';
-
-                        const exists = finalProducts.some(p => 
-                            p.sku === item.sku || 
-                            (p.variant_fingerprint && p.variant_fingerprint === fingerprint)
-                        );
-
-                        if (!exists && !seenFingerprints.has(fingerprint)) {
-                            seenFingerprints.add(fingerprint);
-                            const uniqueId = (item.product_id && item.product_id !== 'unknown') ? item.product_id : fingerprint;
-                            finalProducts.push({
-                                id: uniqueId,
-                                shopify_id: 'unknown',
-                                title: item.product_name,
-                                sku: fingerprint, 
-                                variant_fingerprint: fingerprint,
-                                image_url: '',
-                                current_cogs: 0,
-                                cost_history: [],
-                                aliases: []
-                            });
-                        }
-                    });
-                });
-
-                const processedOrders = rawOrders.map(order => {
-                    const rateCard = fetchedSettings.rates[order.courier] || fetchedSettings.rates[CourierName.POSTEX];
-                    const isRto = order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED;
-                    const updatedItems = order.items.map(item => {
-                        const productDef = finalProducts.find(p => (p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) || p.sku === item.sku);
-                        const historicalCogs = productDef ? getCostAtDate(productDef, order.created_at) : 0;
-                        return { ...item, cogs_at_time_of_order: historicalCogs };
-                    });
-                    
-                    const taxAmount = order.status === OrderStatus.DELIVERED ? (order.cod_amount * (fetchedSettings.taxRate / 100)) : 0;
-
-                    return {
-                        ...order,
-                        courier_fee: rateCard.forward,
-                        rto_penalty: isRto ? rateCard.rto : 0,
-                        packaging_cost: fetchedSettings.packagingCost,
-                        overhead_cost: fetchedSettings.overheadCost,
-                        tax_amount: taxAmount,
-                        items: updatedItems
-                    };
-                });
-
-                setOrders(processedOrders);
+                const pxOrders = await postExAdapter.fetchRecentOrders(postExConfig);
+                fetchedOrders = [...fetchedOrders, ...pxOrders];
             } catch (e: any) {
-                console.error("Courier Sync Error:", e);
-                setError("Courier Sync Failed: " + e.message);
-                setOrders([]);
+                console.error("PostEx Sync Error:", e);
+                setError((prev) => (prev ? prev + " | " : "") + "PostEx Failed: " + e.message);
             }
         }
+
+        // 2. TCS
+        if (tcsConfig) {
+            try {
+                const tcsAdapter = new TcsAdapter();
+                const tcsOrders = await tcsAdapter.fetchRecentOrders(tcsConfig);
+                fetchedOrders = [...fetchedOrders, ...tcsOrders];
+            } catch (e: any) {
+                console.error("TCS Sync Error:", e);
+                setError((prev) => (prev ? prev + " | " : "") + "TCS Failed: " + e.message);
+            }
+        }
+
+        // Process discovered items from Courier Orders
+        fetchedOrders.forEach(o => {
+            o.items.forEach(item => {
+                const fingerprint = item.variant_fingerprint || item.sku || 'unknown';
+
+                const exists = finalProducts.some(p => 
+                    p.sku === item.sku || 
+                    (p.variant_fingerprint && p.variant_fingerprint === fingerprint)
+                );
+
+                if (!exists && !seenFingerprints.has(fingerprint)) {
+                    seenFingerprints.add(fingerprint);
+                    const uniqueId = (item.product_id && item.product_id !== 'unknown') ? item.product_id : fingerprint;
+                    finalProducts.push({
+                        id: uniqueId,
+                        shopify_id: 'unknown',
+                        title: item.product_name,
+                        sku: fingerprint, 
+                        variant_fingerprint: fingerprint,
+                        image_url: '',
+                        current_cogs: 0,
+                        cost_history: [],
+                        aliases: []
+                    });
+                }
+            });
+        });
+
+        const processedOrders = fetchedOrders.map(order => {
+            const rateCard = fetchedSettings.rates[order.courier] || fetchedSettings.rates[CourierName.POSTEX];
+            const isRto = order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED;
+            const updatedItems = order.items.map(item => {
+                const productDef = finalProducts.find(p => (p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) || p.sku === item.sku);
+                const historicalCogs = productDef ? getCostAtDate(productDef, order.created_at) : 0;
+                return { ...item, cogs_at_time_of_order: historicalCogs };
+            });
+            
+            const taxAmount = order.status === OrderStatus.DELIVERED ? (order.cod_amount * (fetchedSettings.taxRate / 100)) : 0;
+
+            return {
+                ...order,
+                courier_fee: rateCard.forward,
+                rto_penalty: isRto ? rateCard.rto : 0,
+                packaging_cost: fetchedSettings.packagingCost,
+                overhead_cost: fetchedSettings.overheadCost,
+                tax_amount: taxAmount,
+                items: updatedItems
+            };
+        });
+
+        setOrders(processedOrders);
 
         // Save new products to DB for persistence
         if (!isDemoMode && finalProducts.length > savedProducts.length) {
@@ -566,7 +583,7 @@ const App: React.FC = () => {
                  </div>
                  <h2 className="text-2xl font-bold text-slate-900 mb-2">Setup Required</h2>
                  <p className="text-slate-500 mb-8">
-                     To start analyzing your profits, please connect your Courier (PostEx) or Store first.
+                     To start analyzing your profits, please connect your Courier (PostEx, TCS) or Store first.
                  </p>
                  <button 
                     onClick={() => setCurrentPage('integrations')}
