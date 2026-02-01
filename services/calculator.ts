@@ -227,6 +227,7 @@ export interface ProductPerformance {
   units_sold: number;
   units_returned: number;
   units_in_transit: number; 
+  real_order_count: number; // NEW: Unique Dispatched Orders count (ignoring quantity)
   gross_revenue: number;
   cogs_total: number;
   gross_profit: number; 
@@ -235,7 +236,7 @@ export interface ProductPerformance {
   overhead_allocation: number;
   tax_allocation: number;
   ad_spend_allocation: number;
-  marketing_purchases: number; // NEW: Facebook Pixel Purchase Count
+  marketing_purchases: number; // Facebook Pixel Purchase Count
   net_profit: number;
   rto_rate: number;
 }
@@ -248,6 +249,7 @@ export const calculateProductPerformance = (
 ): ProductPerformance[] => {
   // Aggregate by TITLE instead of SKU/ID
   const perf: Record<string, ProductPerformance> = {};
+  const orderTracker: Record<string, Set<string>> = {};
 
   // 1. Initialize from Product Definitions
   products.forEach(p => {
@@ -263,6 +265,7 @@ export const calculateProductPerformance = (
             units_sold: 0, 
             units_returned: 0,
             units_in_transit: 0,
+            real_order_count: 0,
             gross_revenue: 0, 
             cogs_total: 0,
             gross_profit: 0,
@@ -275,6 +278,7 @@ export const calculateProductPerformance = (
             net_profit: 0,
             rto_rate: 0
         };
+        orderTracker[lookupKey] = new Set();
     }
   });
 
@@ -308,13 +312,19 @@ export const calculateProductPerformance = (
              // Fallback if not initialized
              perf[key] = {
                  id: key, title: key, sku: 'UNKNOWN',
-                 units_sold: 0, units_returned: 0, units_in_transit: 0,
+                 units_sold: 0, units_returned: 0, units_in_transit: 0, real_order_count: 0,
                  gross_revenue: 0, cogs_total: 0, gross_profit: 0, cash_in_stock: 0,
                  shipping_cost_allocation: 0, overhead_allocation: 0, tax_allocation: 0,
                  ad_spend_allocation: 0, marketing_purchases: 0, net_profit: 0, rto_rate: 0
              };
+             orderTracker[key] = new Set();
         }
         
+        // Track Real Order (Dispatched)
+        if (isChargeable) {
+            orderTracker[key].add(order.id);
+        }
+
         const p = perf[key];
         const historicalCogs = productDef ? getCostAtDate(productDef, order.created_at) : item.cogs_at_time_of_order;
 
@@ -372,6 +382,9 @@ export const calculateProductPerformance = (
     .map(p => {
       const expenses = p.cogs_total + p.shipping_cost_allocation + p.overhead_allocation + p.tax_allocation + p.ad_spend_allocation;
       
+      // Calculate Real Orders Count
+      p.real_order_count = orderTracker[p.id]?.size || 0;
+
       p.net_profit = p.gross_revenue - expenses - p.cash_in_stock;
       p.gross_profit = p.net_profit + p.cash_in_stock;
       

@@ -27,6 +27,16 @@ interface ProfitabilityRowProps {
     isChild?: boolean;
 }
 
+// New helper for 2 decimal places
+const formatDecimal = (amount: number): string => {
+  return new Intl.NumberFormat('en-PK', {
+    style: 'currency',
+    currency: 'PKR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+};
+
 // --- Extracted Row Component ---
 const ProfitabilityRow: React.FC<ProfitabilityRowProps> = ({ 
     item, 
@@ -235,6 +245,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                       units_sold: 0,
                       units_returned: 0,
                       units_in_transit: 0,
+                      real_order_count: 0,
                       gross_revenue: 0,
                       cogs_total: 0,
                       gross_profit: 0,
@@ -258,6 +269,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
               group.units_sold += stat.units_sold;
               group.units_returned += stat.units_returned;
               group.units_in_transit += stat.units_in_transit;
+              group.real_order_count += stat.real_order_count; // Sum Up Real Orders
               group.gross_revenue += stat.gross_revenue;
               group.cogs_total += stat.cogs_total;
               group.gross_profit += stat.gross_profit;
@@ -368,15 +380,18 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
   // Helper for Detail View Stats
   const getDetailStats = (p: ProductPerformance) => {
       const totalUnits = p.units_sold + p.units_returned + p.units_in_transit;
+      const realOrders = p.real_order_count;
       
       // Calculate Margin available for Ads (using Net Profit Cash Basis definition: Revenue - COGS - Ship - Overhead - Tax - CashStuck)
       // If we spend exactly this amount on ads, Net Profit (Cash) will be 0.
       const marginForAds = p.gross_revenue - p.cogs_total - p.shipping_cost_allocation - p.overhead_allocation - p.tax_allocation - p.cash_in_stock;
       
-      const denominator = p.marketing_purchases > 0 ? p.marketing_purchases : (p.units_sold > 0 ? p.units_sold : 1);
-      const breakevenCpr = marginForAds / denominator;
+      // Use Real Orders (Dispatched) as denominator for CPA if available, otherwise fallback to Sold Units
+      const denominator = realOrders > 0 ? realOrders : (p.units_sold > 0 ? p.units_sold : 1);
       
-      const actualCpr = p.marketing_purchases > 0 ? p.ad_spend_allocation / p.marketing_purchases : 0;
+      const breakevenCpr = marginForAds / denominator;
+      const actualCpr = p.ad_spend_allocation / denominator;
+      
       const pCent = (part: number, total: number) => total > 0 ? `${Math.round((part/total)*100)}%` : '0%';
 
       // Avg Selling Price (Revenue / Sold Units)
@@ -386,7 +401,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
       const totalCostVal = p.cogs_total + p.cash_in_stock; 
       const avgCostPrice = totalUnits > 0 ? totalCostVal / totalUnits : 0;
 
-      return { totalUnits, breakevenCpr, actualCpr, pCent, avgSellingPrice, avgCostPrice };
+      return { totalUnits, realOrders, breakevenCpr, actualCpr, pCent, avgSellingPrice, avgCostPrice };
   };
 
   const handleDetailExport = (product: GroupedProductPerformance) => {
@@ -415,7 +430,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
         doc.setTextColor(100);
         doc.text(`Period: ${dateRange.start} to ${dateRange.end} | SKU: ${product.sku}`, 14, 41);
 
-        const { totalUnits, breakevenCpr, actualCpr, pCent, avgSellingPrice, avgCostPrice } = getDetailStats(product);
+        const { totalUnits, realOrders, breakevenCpr, actualCpr, pCent, avgSellingPrice, avgCostPrice } = getDetailStats(product);
 
         // 1. KPI Summary
         autoTable(doc, {
@@ -425,8 +440,8 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                 ['Net Profit', formatCurrency(product.net_profit), `${product.gross_revenue > 0 ? ((product.net_profit / product.gross_revenue) * 100).toFixed(0) : 0}% Margin`],
                 ['Gross Profit', formatCurrency(product.gross_profit), 'Before Cash Stuck'],
                 ['Total Revenue', formatCurrency(product.gross_revenue), `${product.units_sold} Units Sold`],
-                ['Avg Selling Price', formatCurrency(avgSellingPrice), 'Per Sold Unit'],
-                ['Avg Cost Price', formatCurrency(avgCostPrice), 'Weighted Avg of Dispatched'],
+                ['Avg Selling Price', formatDecimal(avgSellingPrice), 'Per Sold Unit'],
+                ['Avg Cost Price', formatDecimal(avgCostPrice), 'Weighted Avg of Dispatched'],
                 ['Return on Investment', `${product.cogs_total + product.shipping_cost_allocation + product.ad_spend_allocation > 0 ? ((product.net_profit / (product.cogs_total + product.shipping_cost_allocation + product.ad_spend_allocation)) * 100).toFixed(0) : 0}%`, 'Profit / Total Costs']
             ],
             theme: 'striped',
@@ -454,9 +469,9 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
             head: [['Marketing Metric', 'Value', 'Status']],
             body: [
                 ['Total Ad Spend', formatCurrency(product.ad_spend_allocation), 'Includes Ad Tax'],
-                ['Facebook Purchases', product.marketing_purchases, '-'],
-                ['Actual CPR', formatCurrency(actualCpr), actualCpr > breakevenCpr ? 'Over Budget' : 'Profitable'],
-                ['Breakeven CPR', formatCurrency(breakevenCpr), 'Max Allowable CPR to hit 0 Net Profit (Cash)']
+                ['Real System Orders', realOrders, 'Unique Orders Dispatched'],
+                ['Blended CPA', formatDecimal(actualCpr), actualCpr > breakevenCpr ? 'Over Budget' : 'Profitable'],
+                ['Breakeven CPA', formatDecimal(breakevenCpr), 'Max Allowable CPA']
             ],
             theme: 'grid',
             headStyles: { fillColor: [124, 58, 237] }, // Purple
@@ -562,7 +577,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
 
         {/* --- Details Modal --- */}
         {selectedProduct && (() => {
-            const { totalUnits, breakevenCpr, actualCpr, pCent, avgSellingPrice, avgCostPrice } = getDetailStats(selectedProduct);
+            const { totalUnits, realOrders, breakevenCpr, actualCpr, pCent, avgSellingPrice, avgCostPrice } = getDetailStats(selectedProduct);
             return (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
                     <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -621,7 +636,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                 <div className="bg-white p-4 rounded-xl border border-slate-200 flex items-center justify-between">
                                     <div>
                                         <p className="text-xs font-bold text-slate-500 uppercase">Avg Selling Price</p>
-                                        <p className="text-xl font-bold text-slate-800 mt-1">{formatCurrency(avgSellingPrice)}</p>
+                                        <p className="text-xl font-bold text-slate-800 mt-1">{formatDecimal(avgSellingPrice)}</p>
                                     </div>
                                     <div className="bg-slate-100 p-2 rounded-lg text-slate-500">
                                         <Tag size={20} />
@@ -630,7 +645,7 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                 <div className="bg-white p-4 rounded-xl border border-slate-200 flex items-center justify-between">
                                     <div>
                                         <p className="text-xs font-bold text-slate-500 uppercase">Avg Cost Price</p>
-                                        <p className="text-xl font-bold text-slate-800 mt-1">{formatCurrency(avgCostPrice)}</p>
+                                        <p className="text-xl font-bold text-slate-800 mt-1">{formatDecimal(avgCostPrice)}</p>
                                     </div>
                                     <div className="bg-slate-100 p-2 rounded-lg text-slate-500">
                                         <Factory size={20} />
@@ -674,20 +689,30 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, products, adSpend
                                 <div className="flex gap-4">
                                     <div className="flex-1 border border-slate-200 rounded-lg p-3 flex justify-between items-center">
                                         <div>
-                                            <p className="text-xs text-slate-500 font-medium">Actual CPR (Incl. Tax)</p>
-                                            <p className="text-xl font-bold text-slate-800">{formatCurrency(actualCpr)}</p>
+                                            <p className="text-xs text-slate-500 font-medium">Blended CPA (Incl. Tax)</p>
+                                            <p className="text-xl font-bold text-slate-800">{formatDecimal(actualCpr)}</p>
                                         </div>
                                         <div className={`text-xs font-bold px-2 py-1 rounded ${actualCpr > breakevenCpr ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
                                             {actualCpr > breakevenCpr ? 'Over Budget' : 'Profitable'}
                                         </div>
                                     </div>
                                     <div className="flex-1 border border-slate-200 rounded-lg p-3">
-                                        <p className="text-xs text-slate-500 font-medium">Breakeven CPR (Max)</p>
-                                        <p className="text-xl font-bold text-slate-600">{formatCurrency(breakevenCpr)}</p>
+                                        <p className="text-xs text-slate-500 font-medium">Breakeven CPA (Max)</p>
+                                        <p className="text-xl font-bold text-slate-600">{formatDecimal(breakevenCpr)}</p>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4 mt-3">
+                                    <div className="bg-slate-50 rounded-lg p-2 flex justify-between px-3 items-center">
+                                        <span className="text-xs text-slate-500 font-bold uppercase">Real Orders (System)</span>
+                                        <span className="text-sm font-bold text-slate-800">{realOrders}</span>
+                                    </div>
+                                    <div className="bg-slate-50 rounded-lg p-2 flex justify-between px-3 items-center">
+                                        <span className="text-xs text-slate-500 font-bold uppercase">FB/TikTok Reported</span>
+                                        <span className="text-sm font-bold text-slate-500">{selectedProduct.marketing_purchases}</span>
                                     </div>
                                 </div>
                                 <p className="text-xs text-slate-400 mt-2">
-                                    * Breakeven CPR is the max you can spend per order to hit 0 Net Profit (Calculated as Margin - Cash Stuck / Orders).
+                                    * Blended CPA is calculated using <strong>Real System Orders</strong> (Dispatched), not Pixel data.
                                 </p>
                             </div>
 
