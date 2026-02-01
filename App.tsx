@@ -217,43 +217,13 @@ const App: React.FC = () => {
         const seenFingerprints = new Set(savedProducts.map(p => p.variant_fingerprint || p.sku));
 
         // E. Fetch Shopify Data (Isolate failure)
-        // Also MERGE product definitions from Shopify so we see Demand even if not shipped via courier yet.
+        // Note: We FETCH orders for stats, but we do NOT use them to generate Inventory Items anymore.
         if (shopifyConfig) {
             try {
                 const shopifyAdapter = new ShopifyAdapter();
                 const rawShopifyOrders = await shopifyAdapter.fetchOrders(shopifyConfig);
                 setShopifyOrders(rawShopifyOrders);
-
-                // --- MERGE SHOPIFY PRODUCTS ---
-                rawShopifyOrders.forEach(o => {
-                    o.line_items.forEach(item => {
-                        // Use SKU or Title as unique key
-                        const fingerprint = item.sku || item.title;
-                        
-                        // Check if we already have this product (by ID or SKU)
-                        const exists = finalProducts.some(p => 
-                            p.shopify_id === String(item.variant_id) || 
-                            p.sku === item.sku ||
-                            (p.variant_fingerprint && p.variant_fingerprint === fingerprint)
-                        );
-
-                        if (!exists && !seenFingerprints.has(fingerprint)) {
-                            seenFingerprints.add(fingerprint);
-                            finalProducts.push({
-                                id: String(item.variant_id) || `sp-${Math.random()}`,
-                                shopify_id: String(item.variant_id),
-                                title: item.title,
-                                sku: item.sku || 'NO-SKU',
-                                variant_fingerprint: fingerprint,
-                                image_url: '',
-                                current_cogs: 0,
-                                cost_history: []
-                            });
-                        }
-                    });
-                });
-                // -----------------------------
-
+                // Removed logic that auto-adds Shopify items to finalProducts
             } catch (e: any) {
                 console.error("Shopify Sync Error:", e);
                 setError("Shopify Sync Failed: " + e.message);
@@ -263,6 +233,7 @@ const App: React.FC = () => {
         }
 
         // F. Fetch Live Orders from Courier (Isolate failure)
+        // This is now the PRIMARY source for auto-discovering inventory
         if (postExConfig) {
             try {
                 const postExAdapter = new PostExAdapter();
@@ -275,7 +246,7 @@ const App: React.FC = () => {
                     o.items.forEach(item => {
                         const fingerprint = item.variant_fingerprint || item.sku || 'unknown';
 
-                        // Check if we already added this via Shopify loop or DB
+                        // Check if we already added this via DB
                         const exists = finalProducts.some(p => 
                             p.sku === item.sku || 
                             (p.variant_fingerprint && p.variant_fingerprint === fingerprint)
