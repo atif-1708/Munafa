@@ -3,7 +3,6 @@ import React, { useState, useMemo } from 'react';
 import { Product, Order } from '../types';
 import { formatCurrency } from '../services/calculator';
 import { PackageSearch, History, Edit2, Plus, Save, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, AlertCircle } from 'lucide-react';
-import { supabase } from '../services/supabase';
 
 interface InventoryProps {
   products: Product[];
@@ -38,6 +37,12 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
     };
   });
 
+  // Helper: Aggressive Normalization for matching (removes spaces, dashes, special chars)
+  const smartNormalize = (str: string | undefined | null) => {
+      if (!str) return '';
+      return str.toLowerCase().replace(/[^a-z0-9]/g, '');
+  };
+
   // Calculate active items in the date range based on COURIER ORDERS
   const activeItemKeys = useMemo(() => {
       const start = new Date(dateRange.start);
@@ -46,13 +51,20 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
       end.setHours(23,59,59,999);
 
       const keys = new Set<string>();
+      
       orders.forEach(o => {
           const d = new Date(o.created_at);
           if (d >= start && d <= end) {
               o.items.forEach(i => {
+                  // Add strict keys
                   if (i.variant_fingerprint) keys.add(i.variant_fingerprint);
                   if (i.sku) keys.add(i.sku);
                   if (i.product_id) keys.add(i.product_id);
+                  
+                  // Add Normalized Keys (Broad Match)
+                  keys.add(smartNormalize(i.product_name));
+                  keys.add(smartNormalize(i.sku));
+                  keys.add(smartNormalize(i.variant_fingerprint));
               });
           }
       });
@@ -61,10 +73,21 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
 
   const filteredProducts = useMemo(() => {
       return products.filter(p => {
-          // 1. Date/Active Filter (Strict: Must exist in Courier Orders for this date)
-          const isActive = activeItemKeys.has(p.variant_fingerprint || '') || 
-                           activeItemKeys.has(p.sku) || 
-                           activeItemKeys.has(p.id);
+          // 1. Date/Active Filter using Smart Matching
+          // We check both strict values AND normalized values against the active set
+          const pTitleNorm = smartNormalize(p.title);
+          const pSkuNorm = smartNormalize(p.sku);
+          const pFingerNorm = smartNormalize(p.variant_fingerprint);
+
+          const isActive = 
+               // Strict Check
+               activeItemKeys.has(p.variant_fingerprint || '') || 
+               activeItemKeys.has(p.sku) || 
+               activeItemKeys.has(p.id) ||
+               // Normalized Check (Fixes "Blue Shirt" vs "blue-shirt" mismatch)
+               activeItemKeys.has(pTitleNorm) ||
+               activeItemKeys.has(pSkuNorm) ||
+               activeItemKeys.has(pFingerNorm);
           
           if (!isActive) return false;
 
