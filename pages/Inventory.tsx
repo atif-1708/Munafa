@@ -2,12 +2,13 @@
 import React, { useState, useMemo } from 'react';
 import { Product, Order } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { PackageSearch, History, Edit2, Plus, Save, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar } from 'lucide-react';
+import { PackageSearch, History, Edit2, Plus, Save, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, AlertCircle } from 'lucide-react';
+import { supabase } from '../services/supabase';
 
 interface InventoryProps {
   products: Product[];
   orders: Order[]; // Passed for date filtering
-  onUpdateProducts: (products: Product[]) => void;
+  onUpdateProducts: (products: Product[]) => Promise<void>;
 }
 
 const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProducts }) => {
@@ -23,6 +24,8 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
   const [groupAction, setGroupAction] = useState<'create' | 'existing'>('create');
   const [newGroupName, setNewGroupName] = useState('');
   const [selectedGroupId, setSelectedGroupId] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Default to Last 60 Days
   const [dateRange, setDateRange] = useState(() => {
@@ -64,8 +67,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
           if (!matchesSearch) return false;
 
           // 2. Date/Active Filter
-          // Logic: Show if product is active in period OR if it's currently selected OR if user is searching specifically
-          // If search is empty, enforce date filter strictly.
           if (search.length === 0) {
               const isActive = activeItemKeys.has(p.variant_fingerprint || '') || 
                                activeItemKeys.has(p.sku) || 
@@ -129,32 +130,55 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
       setExpandedGroups(newSet);
   };
 
-  const handleSaveCost = (newCost: number) => {
-    if (!selectedProduct) return;
-    const updated = { ...selectedProduct, current_cogs: newCost };
-    onUpdateProducts([updated]);
-    setSelectedProduct(updated);
+  const handleUpdateAndSave = async (updatedProducts: Product[]) => {
+      setSaveError(null);
+      setIsSaving(true);
+      try {
+          await onUpdateProducts(updatedProducts);
+      } catch (e: any) {
+          console.error("Save failed:", e);
+          setSaveError("Failed to save. Please check your connection.");
+      } finally {
+          setIsSaving(false);
+      }
   };
 
-  const handleAddHistory = (date: string, cost: number) => {
+  const handleSaveCost = async (newCost: number) => {
+    if (!selectedProduct) return;
+    const updated = { ...selectedProduct, current_cogs: newCost };
+    setSelectedProduct(updated); // Optimistic Update UI
+    await handleUpdateAndSave([updated]);
+  };
+
+  const handleAddHistory = async (date: string, cost: number) => {
     if (!selectedProduct) return;
     const newHistory = [...selectedProduct.cost_history, { date, cogs: cost }];
     newHistory.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     const updated = { ...selectedProduct, cost_history: newHistory };
-    onUpdateProducts([updated]);
     setSelectedProduct(updated);
+    await handleUpdateAndSave([updated]);
   };
 
-  const handleDeleteHistory = (index: number) => {
+  const handleDeleteHistory = async (index: number) => {
     if (!selectedProduct) return;
     const newHistory = [...selectedProduct.cost_history];
     newHistory.splice(index, 1);
     const updated = { ...selectedProduct, cost_history: newHistory };
-    onUpdateProducts([updated]);
     setSelectedProduct(updated);
+    await handleUpdateAndSave([updated]);
   };
 
-  const handleApplyGroup = () => {
+  const generateUUID = () => {
+      if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+          return crypto.randomUUID();
+      }
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+          var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+          return v.toString(16);
+      });
+  };
+
+  const handleApplyGroup = async () => {
     if (selectedIds.size === 0) return;
 
     let targetId = '';
@@ -162,7 +186,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
 
     if (groupAction === 'create') {
         if (!newGroupName.trim()) return;
-        targetId = crypto.randomUUID();
+        targetId = generateUUID();
         targetName = newGroupName;
     } else {
         if (!selectedGroupId) return;
@@ -179,7 +203,8 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
         }
     });
 
-    onUpdateProducts(updates);
+    await handleUpdateAndSave(updates);
+    
     setSelectedIds(new Set());
     setIsGroupModalOpen(false);
     setNewGroupName('');
@@ -187,16 +212,15 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
     setGroupAction('create');
   };
 
-  const handleUngroup = (product: Product) => {
-      onUpdateProducts([{...product, group_id: null, group_name: null}]);
+  const handleUngroup = async (product: Product) => {
+      const updated = {...product, group_id: null, group_name: null};
       if(selectedProduct?.id === product.id) {
-          setSelectedProduct({...product, group_id: null, group_name: null});
+          setSelectedProduct(updated as Product); // Fix type mismatch manually
       }
+      await handleUpdateAndSave([updated as Product]);
   };
 
   const openGroupModal = () => {
-      // If groups exist, default to existing if convenient, but let's stick to 'create' default
-      // or check if we want smart defaults. 'create' is safer.
       if (inventoryTree.groups.length > 0) {
           setGroupAction('existing');
           setSelectedGroupId(inventoryTree.groups[0].id);
@@ -433,10 +457,21 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
                              </button>
                         </div>
                     )}
+                    
+                    {saveError && (
+                        <div className="mb-4 p-3 bg-red-50 text-red-700 text-xs rounded-lg border border-red-200 flex items-start gap-2">
+                             <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                             <div>
+                                <strong>Save Failed:</strong> {saveError}
+                                <br/>Check your database permissions.
+                             </div>
+                        </div>
+                    )}
 
                     <div className="mb-8">
-                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
-                            Default Cost Price (COGS)
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 flex justify-between">
+                            <span>Default Cost Price (COGS)</span>
+                            {isSaving && <span className="text-brand-600 italic">Saving...</span>}
                         </label>
                         <div className="flex gap-2">
                             <input 
@@ -579,9 +614,10 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, onUpdateProduct
                       </button>
                       <button 
                         onClick={handleApplyGroup} 
-                        className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium"
+                        disabled={isSaving}
+                        className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium disabled:opacity-70 flex items-center justify-center gap-2"
                       >
-                        {groupAction === 'create' ? 'Create Group' : 'Update Group'}
+                        {isSaving ? 'Saving...' : (groupAction === 'create' ? 'Create Group' : 'Update Group')}
                       </button>
                   </div>
               </div>

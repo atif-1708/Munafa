@@ -8,7 +8,7 @@ import { TikTokService } from '../services/tiktok';
 import { supabase } from '../services/supabase';
 import { 
     CheckCircle2, AlertTriangle, Key, Globe, Loader2, Store, ArrowRight, 
-    RefreshCw, ShieldCheck, Link, Truck, Info, Settings, Facebook, ExternalLink, Zap, Lock, LayoutGrid
+    RefreshCw, ShieldCheck, Link, Truck, Info, Settings, Facebook, ExternalLink, Zap, Lock, Grid
 } from 'lucide-react';
 
 const COURIER_META: Record<string, { color: string, bg: string, border: string, icon: string, label: string, desc: string }> = {
@@ -228,6 +228,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
              ad_account_ids: fbConfig.ad_account_ids, 
              is_active: true 
          };
+         // FIXED: Explicitly filter by platform to avoid updating wrong row (e.g. TikTok row)
          const { data: existing } = await supabase.from('marketing_configs')
             .select('id')
             .eq('user_id', session.user.id)
@@ -309,7 +310,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
       {/* CORE PLATFORMS GRID */}
       <section>
           <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-              <LayoutGrid className="text-slate-500" size={20} /> Core Platforms
+              <Grid className="text-slate-500" size={20} /> Core Platforms
           </h3>
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
               

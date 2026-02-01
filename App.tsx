@@ -310,6 +310,7 @@ const App: React.FC = () => {
     setProducts(newProducts);
     const newOrders = recalculateOrderCosts(orders, newProducts);
     setOrders(newOrders);
+    
     if (!isDemoMode && session?.user) {
         try {
             const upsertData = updatedProducts.map(p => ({
@@ -324,8 +325,14 @@ const App: React.FC = () => {
                 group_name: p.group_name
             }));
             const { error } = await supabase.from('products').upsert(upsertData);
-            if (error) console.error("Failed to save product:", error);
-        } catch (e) { console.error("DB Error:", e); }
+            if (error) {
+                console.error("Failed to save product:", error);
+                throw error; // Throw to UI
+            }
+        } catch (e) { 
+            console.error("DB Error:", e);
+            throw e; // Throw to UI
+        }
     }
   };
 
