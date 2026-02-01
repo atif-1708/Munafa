@@ -49,23 +49,47 @@ export class TcsAdapter implements CourierAdapter {
     throw lastError || new Error("Network Error: Could not connect to TCS.");
   }
 
-  // Page 4: Authorization API
-  private async getToken(config: IntegrationConfig): Promise<string> {
-      // Mapping: username -> clientId, password -> clientSecret
-      const clientId = config.username; 
-      const clientSecret = config.password;
-
-      if (!clientId || !clientSecret) throw new Error("Missing TCS Client ID or Secret");
-
+  // Method 1: Authorization API (Client ID / Secret) - Page 4
+  private async getTokenByClientId(clientId: string, clientSecret: string): Promise<string> {
       const url = `${this.BASE_URL}/auth/api/auth?clientid=${clientId}&clientsecret=${clientSecret}`;
-      
       const response = await this.fetchWithFallback(url, { method: 'GET' });
       
       if (response && response.result && response.result.accessToken) {
           return response.result.accessToken;
       }
+      throw new Error("Invalid Client ID/Secret");
+  }
+
+  // Method 2: Authentication API (Username / Password) - Page 5
+  private async getTokenByCredentials(username: string, password: string): Promise<string> {
+      const url = `${this.BASE_URL}/ecom/api/authentication/token?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+      const response = await this.fetchWithFallback(url, { method: 'GET' });
       
-      throw new Error("Failed to authenticate with TCS. Check Client ID/Secret.");
+      // Page 5 Response: { "accesstoken": "...", "expiry": "...", "message": "success" }
+      if (response && response.accesstoken) {
+          return response.accesstoken;
+      }
+      throw new Error("Invalid Username/Password");
+  }
+
+  // Main Token Handler - Tries both methods
+  private async getToken(config: IntegrationConfig): Promise<string> {
+      const u = config.username;
+      const p = config.password;
+
+      if (!u || !p) throw new Error("Missing TCS Credentials");
+
+      // 1. Try Client ID / Secret first (Preferred for OCI)
+      try {
+          return await this.getTokenByClientId(u, p);
+      } catch (e) {
+          // 2. If that fails, try Username / Password (Legacy/E-Com)
+          try {
+              return await this.getTokenByCredentials(u, p);
+          } catch (e2) {
+              throw new Error("TCS Authentication Failed. Please check your Client ID/Secret OR Username/Password.");
+          }
+      }
   }
 
   private mapStatus(rawStatus: string): OrderStatus {
@@ -155,9 +179,6 @@ export class TcsAdapter implements CourierAdapter {
           // We use 'amount paid' as the COD amount for Delivered items.
           let amount = parseFloat(tcsOrder['amount paid'] || 0);
           
-          // If amount is 0 but it's delivered, we might be missing data, but we can't invent it.
-          // We'll rely on the app's reconciliation to fill gaps if Shopify is connected.
-          
           const deliveryCharges = parseFloat(tcsOrder['delivery charges'] || 0);
           
           return {
@@ -170,10 +191,10 @@ export class TcsAdapter implements CourierAdapter {
               status: status,
               payment_status: tcsOrder['payment status'] === 'Y' ? PaymentStatus.REMITTED : PaymentStatus.UNPAID,
               
-              cod_amount: amount, // Limitation: May be 0 if unpaid
+              cod_amount: amount, 
               shipping_fee_paid_by_customer: 0,
               
-              courier_fee: deliveryCharges > 0 ? deliveryCharges : 250, // Default to 250 if missing
+              courier_fee: deliveryCharges > 0 ? deliveryCharges : 250, 
               rto_penalty: status === OrderStatus.RETURNED ? 0 : 0, // TCS RTO often charged upfront or 0
               packaging_cost: 45, // Global default
               overhead_cost: 0,

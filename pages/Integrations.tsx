@@ -311,7 +311,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                                 <input 
                                                     type="text"
                                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
-                                                    placeholder="Client ID" 
+                                                    placeholder="Client ID (or Username)" 
                                                     value={config.username} 
                                                     onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], username: e.target.value } }))} 
                                                 />
@@ -320,7 +320,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                                 <input 
                                                     type="password"
                                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
-                                                    placeholder="Client Secret" 
+                                                    placeholder="Client Secret (or Password)" 
                                                     value={config.password} 
                                                     onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], password: e.target.value } }))} 
                                                 />
