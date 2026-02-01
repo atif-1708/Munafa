@@ -5,12 +5,12 @@ import { formatCurrency } from '../services/calculator';
 import { FacebookService } from '../services/facebook';
 import { TikTokService } from '../services/tiktok';
 import { supabase } from '../services/supabase';
-import { BarChart3, Plus, Trash2, Layers, Calendar, DollarSign, CalendarRange, RefreshCw, Facebook, AlertTriangle, Link, ArrowRight, X, CheckCircle2, LayoutGrid, ListFilter, Zap, Settings, ShoppingBag, Target } from 'lucide-react';
+import { BarChart3, Plus, Trash2, Calendar, DollarSign, CalendarRange, RefreshCw, Facebook, AlertTriangle, Link, CheckCircle2, LayoutGrid, ListFilter, Settings, ShoppingBag } from 'lucide-react';
 
 interface MarketingProps {
   adSpend: AdSpend[];
   products: Product[];
-  orders: Order[]; // New prop for filtering active products
+  orders: Order[];
   onAddAdSpend: (ads: AdSpend[]) => void;
   onDeleteAdSpend: (id: string) => void;
   onSyncAdSpend?: (platform: string, start: string, end: string, ads: AdSpend[]) => void;
@@ -34,7 +34,6 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
       product_id: ''
   });
 
-  // Default to Last 60 Days
   const [dateRange, setDateRange] = useState(() => {
     const end = new Date();
     const start = new Date();
@@ -45,17 +44,15 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
     };
   });
 
-  // State for Integrations
   const [fbConfig, setFbConfig] = useState<MarketingConfig | null>(null);
   const [tiktokConfig, setTiktokConfig] = useState<MarketingConfig | null>(null);
-  const [exchangeRate, setExchangeRate] = useState<number>(278); // Default PKR Rate for TikTok USD
+  const [exchangeRate, setExchangeRate] = useState<number>(278);
 
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [mappings, setMappings] = useState<CampaignMapping[]>([]);
   const hasLoadedConfig = useRef(false);
 
-  // Load Config
   useEffect(() => {
       const loadConfig = async () => {
           const { data: { session } } = await supabase.auth.getSession();
@@ -74,21 +71,18 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
       loadConfig();
   }, []);
 
-  // --- AUTO-SYNC LOGIC ---
   useEffect(() => {
       if (hasLoadedConfig.current && onSyncAdSpend) {
           const timer = setTimeout(() => {
               if (activeTab === 'facebook' && fbConfig?.is_active) {
                   fetchAndSyncFacebookData();
               } else if (activeTab === 'tiktok' && tiktokConfig?.is_active) {
-                  // Wait for user to trigger sync explicitly usually for rate change? 
-                  // No, let's auto-sync if configured, using default rate or updated rate
                   fetchAndSyncTikTokData();
               }
           }, 500);
           return () => clearTimeout(timer);
       }
-  }, [activeTab, dateRange, fbConfig, tiktokConfig, mappings, exchangeRate]); // Add exchangeRate dependency to re-sync when rate changes
+  }, [activeTab, dateRange, fbConfig, tiktokConfig, mappings, exchangeRate]);
 
   const fetchAndSyncFacebookData = async () => {
       if (!fbConfig || !fbConfig.is_active || !fbConfig.ad_account_ids || fbConfig.ad_account_ids.length === 0) return;
@@ -112,7 +106,6 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
               };
           });
 
-          // SYNC: Replace data for this range
           onSyncAdSpend('Facebook', start, end, newEntries);
 
       } catch (e: any) {
@@ -155,48 +148,11 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
       }
   };
 
-  // Calculate active items in the date range for dropdown filtering
-  const activeItemKeys = useMemo(() => {
-      const start = new Date(dateRange.start);
-      start.setHours(0,0,0,0);
-      const end = new Date(dateRange.end);
-      end.setHours(23,59,59,999);
-
-      const keys = new Set<string>();
-      orders.forEach(o => {
-          const d = new Date(o.created_at);
-          if (d >= start && d <= end) {
-              o.items.forEach(i => {
-                  if (i.variant_fingerprint) keys.add(i.variant_fingerprint);
-                  if (i.sku) keys.add(i.sku);
-                  if (i.product_id) keys.add(i.product_id);
-              });
-          }
-      });
-      return keys;
-  }, [orders, dateRange]);
-
-  // Extract unique groups (Filtered by activity)
-  const groups = useMemo(() => {
-      const uniqueGroups = new Map();
-      products.forEach(p => {
-          const isActive = activeItemKeys.has(p.variant_fingerprint || '') || activeItemKeys.has(p.sku) || activeItemKeys.has(p.id);
-          
-          if (isActive && p.group_id && p.group_name) {
-              uniqueGroups.set(p.group_id, p.group_name);
-          }
-      });
-      return Array.from(uniqueGroups.entries()).map(([id, name]) => ({ id, name }));
-  }, [products, activeItemKeys]);
-
-  // Filter standalone products (Filtered by activity)
-  const standaloneProducts = useMemo(() => {
-      return products.filter(p => {
-          if (p.group_id) return false;
-          const isActive = activeItemKeys.has(p.variant_fingerprint || '') || activeItemKeys.has(p.sku) || activeItemKeys.has(p.id);
-          return isActive;
-      });
-  }, [products, activeItemKeys]);
+  const productOptions = useMemo(() => {
+      return products
+        .slice()
+        .sort((a,b) => a.title.localeCompare(b.title));
+  }, [products]);
 
   const generateUUID = () => {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -215,14 +171,13 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
     const start = new Date(newAd.startDate);
     const end = new Date(newAd.endDate);
     
-    // Safety check
     if (end < start) {
         alert("End date cannot be before start date");
         return;
     }
 
     const diffTime = Math.abs(end.getTime() - start.getTime());
-    const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // Inclusive of start day
+    const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
     
     const totalAmount = parseFloat(newAd.amount);
     const dailyAmount = totalAmount / days;
@@ -242,7 +197,6 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
     }
 
     onAddAdSpend(entries);
-    // Reset amount but keep dates/platform for easier consecutive entry
     setNewAd(prev => ({ ...prev, amount: '' }));
   };
 
@@ -257,13 +211,11 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
           platform: platform
       };
 
-      // 1. Save to DB
       await supabase.from('campaign_mappings').upsert({
           user_id: session.user.id,
           ...mapping
       });
 
-      // 2. Update Local State (Will trigger re-sync in useEffect due to dependency)
       setMappings(prev => {
           const filtered = prev.filter(m => m.campaign_id !== campaignId);
           return [...filtered, mapping];
@@ -284,7 +236,6 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
 
   const totalPeriodSpend = useMemo(() => filteredAds.reduce((sum, ad) => sum + ad.amount_spent, 0), [filteredAds]);
   
-  // Aggregate Campaigns for current view
   const aggregateCampaigns = (platform: 'Facebook' | 'TikTok') => {
       const stats = new Map<string, { id: string, name: string, spend: number, purchases: number, productId: string | undefined }>();
       
@@ -313,7 +264,6 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
   const unmappedFbCount = facebookCampaigns.filter(c => !c.productId).length;
   const unmappedTkCount = tiktokCampaigns.filter(c => !c.productId).length;
 
-  // Helper for UI calculation
   const dailyPreview = useMemo(() => {
      if (!newAd.startDate || !newAd.endDate || !newAd.amount) return null;
      const start = new Date(newAd.startDate);
@@ -324,36 +274,14 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
      return days > 1 ? (parseFloat(newAd.amount) / days) : null;
   }, [newAd]);
 
-  const renderProductOptions = () => (
-      <>
-          <option value="">-- General Store Spend --</option>
-          {groups.length > 0 && (
-              <optgroup label="Active Product Groups">
-                  {groups.map(g => (
-                      <option key={g.id} value={g.id}>{g.name} (Group)</option>
-                  ))}
-              </optgroup>
-          )}
-          {standaloneProducts.length > 0 && (
-              <optgroup label="Active Individual Variants">
-                  {standaloneProducts.map(p => (
-                      <option key={p.id} value={p.id}>{p.title}</option>
-                  ))}
-              </optgroup>
-          )}
-      </>
-  );
-
   return (
     <div className="space-y-6">
-      {/* Page Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Marketing Intelligence</h2>
           <p className="text-slate-500 text-sm">Track daily ad spend and attribute costs to products.</p>
         </div>
         
-        {/* Date Filter (Global for Tab) */}
         <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm">
             <Calendar size={16} className="text-slate-500" />
             <input 
@@ -372,7 +300,6 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="flex border-b border-slate-200 overflow-x-auto">
           <button 
             onClick={() => setActiveTab('overview')}
@@ -391,7 +318,6 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
             onClick={() => setActiveTab('tiktok')}
             className={`px-6 py-3 text-sm font-medium flex items-center gap-2 transition-colors border-b-2 whitespace-nowrap ${activeTab === 'tiktok' ? 'border-slate-800 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
           >
-              {/* TikTok Icon */}
               <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
                   <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z"/>
               </svg>
@@ -402,7 +328,6 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
 
       {activeTab === 'overview' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-left-2 duration-300">
-            {/* Input Form */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-fit">
                 <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
                     <Plus size={18} className="text-brand-600" />
@@ -477,7 +402,10 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                             value={newAd.product_id}
                             onChange={e => setNewAd({...newAd, product_id: e.target.value})}
                         >
-                            {renderProductOptions()}
+                            <option value="">-- General Store Spend --</option>
+                            {productOptions.map(p => (
+                                <option key={p.id} value={p.id}>{p.title}</option>
+                            ))}
                         </select>
                     </div>
                     <button type="submit" className="w-full bg-slate-900 text-white py-2 rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors">
@@ -486,9 +414,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                 </form>
             </div>
 
-            {/* List */}
             <div className="lg:col-span-2 space-y-4">
-                {/* Total Card */}
                 <div className="bg-slate-900 text-white p-5 rounded-xl shadow-md flex justify-between items-center">
                     <div>
                         <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Total Period Spend</p>
@@ -522,7 +448,6 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                                 )}
                                 {filteredAds.map(ad => {
                                     const product = products.find(p => p.id === ad.product_id);
-                                    const group = groups.find(g => g.id === ad.product_id);
                                     
                                     return (
                                         <tr key={ad.id} className="hover:bg-slate-50">
@@ -539,11 +464,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                                                 </div>
                                             </td>
                                             <td className="px-6 py-3 text-slate-600 text-xs">
-                                                {group ? (
-                                                    <span className="font-bold text-indigo-700 flex items-center gap-1">
-                                                        <Layers size={12} /> {group.name}
-                                                    </span>
-                                                ) : product ? (
+                                                {product ? (
                                                     <div className="truncate max-w-[150px]">{product.title}</div>
                                                 ) : (
                                                     <span className="text-slate-400 italic">General</span>
@@ -596,7 +517,6 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                   </div>
               </div>
 
-              {/* Campaign Table (Reused Structure) */}
               {fbConfig?.is_active && (
                   <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                       <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
@@ -658,7 +578,10 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                                               value={camp.productId || ''}
                                               onChange={(e) => saveMapping(camp.id, camp.name, e.target.value, 'Facebook')}
                                           >
-                                              {renderProductOptions()}
+                                              <option value="">-- General Store Spend --</option>
+                                              {productOptions.map(p => (
+                                                  <option key={p.id} value={p.id}>{p.title}</option>
+                                              ))}
                                           </select>
                                       </td>
                                   </tr>
@@ -692,7 +615,6 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                       </div>
                   </div>
                   
-                  {/* Exchange Rate Input */}
                   <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-lg border border-slate-300 shadow-sm">
                         <div className="text-xs font-bold text-slate-500 uppercase flex flex-col items-end">
                             <span>USD to PKR</span>
@@ -724,7 +646,6 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                   </div>
               )}
 
-              {/* TikTok Campaign Table */}
               {tiktokConfig?.is_active && (
                   <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                       <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
@@ -786,7 +707,10 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                                               value={camp.productId || ''}
                                               onChange={(e) => saveMapping(camp.id, camp.name, e.target.value, 'TikTok')}
                                           >
-                                              {renderProductOptions()}
+                                              <option value="">-- General Store Spend --</option>
+                                              {productOptions.map(p => (
+                                                  <option key={p.id} value={p.id}>{p.title}</option>
+                                              ))}
                                           </select>
                                       </td>
                                   </tr>

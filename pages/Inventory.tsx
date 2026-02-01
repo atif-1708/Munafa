@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { Product, Order, ShopifyOrder } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { PackageSearch, History, Edit2, Plus, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, AlertCircle, Link as LinkIcon, Sparkles, XCircle, Check } from 'lucide-react';
+import { PackageSearch, History, Edit2, Plus, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, AlertCircle, Link as LinkIcon, Sparkles, XCircle, Check, Settings } from 'lucide-react';
 
 interface InventoryProps {
   products: Product[];
@@ -13,6 +13,8 @@ interface InventoryProps {
 
 const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, onUpdateProducts }) => {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<{id: string, name: string, items: Product[]} | null>(null);
+  
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
   const [selectedAliasToAdd, setSelectedAliasToAdd] = useState('');
@@ -62,7 +64,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
 
       return products.filter(p => {
           // 2. Text Search - PRIORITY OVER DATE FILTER
-          // If user searches, we search EVERYTHING (Global Search) to ensure no items are "missing"
           if (search) {
              const term = search.toLowerCase();
              return p.title.toLowerCase().includes(term) || 
@@ -70,7 +71,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
           }
           
           // 3. Date Active Filter (Only applied when NOT searching)
-          // Filters automatically based on date range as requested
           const fingerprint = p.variant_fingerprint || p.sku;
           const isActive = activeIds.has(p.id) || activeIds.has(p.sku) || activeIds.has(fingerprint || '');
           return isActive;
@@ -97,7 +97,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
 
   // --- Auto-Suggestion Logic (Smart Match) ---
   const suggestions = useMemo(() => {
-      // Sort by title first to group similar strings alphabetically
       const singles = [...inventoryTree.singles].sort((a, b) => a.title.localeCompare(b.title));
       const results: { key: string, name: string, items: Product[] }[] = [];
       const usedIds = new Set<string>();
@@ -116,13 +115,8 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
               const next = singles[j];
               const cleanNext = cleanTitleForGrouping(next.title);
               
-              // Compare Cleaned Titles
-              // We check if they share a very strong common prefix AFTER cleaning brackets/numbers
               const common = getCommonPrefix(cleanCurrent, cleanNext);
               
-              // Thresholds:
-              // 1. Common prefix must be at least 4 chars (avoid matching "The" or "New")
-              // 2. Or if one contains the other entirely
               const matchCondition = 
                   (common.length >= 4 && (cleanCurrent.startsWith(common) || cleanNext.startsWith(common))) ||
                   (cleanCurrent.includes(cleanNext) || cleanNext.includes(cleanCurrent));
@@ -131,22 +125,14 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                   cluster.push(next);
                   j++;
               } else {
-                  // Since list is sorted alphabetically, if the next one fails significantly, 
-                  // subsequent ones likely will too unless it's a very small difference.
-                  // However, strict sorting might separate "Apple" and "Green Apple". 
-                  // For now, we rely on the primary sort being correct for "Item Name..." structure.
-                  // Break optimization for performance.
                   break; 
               }
           }
 
           if (cluster.length >= 2) {
-              // Determine suggested name from the cleaned version of the first item
-              // We Capitalize the cleaned words for display
               const rawName = getCommonPrefix(cleanTitleForGrouping(cluster[0].title), cleanTitleForGrouping(cluster[1].title));
               let name = rawName.replace(/\b\w/g, c => c.toUpperCase()).trim();
               
-              // Fallback if common prefix is empty or too short
               if (name.length < 3) {
                   name = cleanTitleForGrouping(cluster[0].title).replace(/\b\w/g, c => c.toUpperCase());
               }
@@ -167,7 +153,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
 
   // Calculate unmapped titles for the alias dropdown
   const unmappedShopifyTitles = useMemo(() => {
-    // 1. Collect all aliases currently used by OTHER products
     const usedAliases = new Set<string>();
     products.forEach(p => {
         if (p.id !== selectedProduct?.id && p.aliases) {
@@ -175,7 +160,12 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
         }
     });
 
-    // 2. Get unique titles from Shopify Orders
+    // Check selected group aliases (derived from first product usually)
+    if (selectedGroup && selectedGroup.items.length > 0) {
+        const leader = selectedGroup.items[0];
+        leader.aliases?.forEach(a => usedAliases.add(a));
+    }
+
     const uniqueTitles = new Set<string>();
     shopifyOrders.forEach(o => {
         o.line_items.forEach(item => {
@@ -183,9 +173,8 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
         });
     });
 
-    // 3. Filter
-    return Array.from(uniqueTitles).filter(t => !usedAliases.has(t) && !selectedProduct?.aliases?.includes(t)).sort();
-  }, [products, shopifyOrders, selectedProduct]);
+    return Array.from(uniqueTitles).filter(t => !usedAliases.has(t)).sort();
+  }, [products, shopifyOrders, selectedProduct, selectedGroup]);
 
   const toggleSelect = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -200,7 +189,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
 
   const toggleGroupSelection = (groupId: string, variants: Product[], e: React.MouseEvent) => {
     e.stopPropagation();
-    // Check if all variants in this group are currently selected
     const allSelected = variants.every(v => selectedIds.has(v.id));
     const newSet = new Set(selectedIds);
     
@@ -238,7 +226,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
   const handleSaveCost = async (newCost: number) => {
     if (!selectedProduct) return;
     const updated = { ...selectedProduct, current_cogs: newCost };
-    setSelectedProduct(updated); // Optimistic Update UI
+    setSelectedProduct(updated); 
     await handleUpdateAndSave([updated]);
   };
 
@@ -261,21 +249,45 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
   };
 
   const handleAddAlias = async (alias: string) => {
-    if (!selectedProduct) return;
-    const currentAliases = selectedProduct.aliases || [];
-    if (currentAliases.includes(alias)) return;
-    
-    const updated = { ...selectedProduct, aliases: [...currentAliases, alias] };
-    setSelectedProduct(updated);
-    await handleUpdateAndSave([updated]);
+    if (selectedProduct) {
+        const currentAliases = selectedProduct.aliases || [];
+        if (currentAliases.includes(alias)) return;
+        const updated = { ...selectedProduct, aliases: [...currentAliases, alias] };
+        setSelectedProduct(updated);
+        await handleUpdateAndSave([updated]);
+    } else if (selectedGroup) {
+        // Add alias to first item in group
+        const leader = selectedGroup.items[0];
+        if(!leader) return;
+        const currentAliases = leader.aliases || [];
+        if(currentAliases.includes(alias)) return;
+        
+        const updatedLeader = { ...leader, aliases: [...currentAliases, alias] };
+        // Update local selectedGroup state to reflect change
+        const updatedItems = selectedGroup.items.map(i => i.id === leader.id ? updatedLeader : i);
+        setSelectedGroup({ ...selectedGroup, items: updatedItems });
+        
+        await handleUpdateAndSave([updatedLeader]);
+    }
   };
 
   const handleRemoveAlias = async (alias: string) => {
-    if (!selectedProduct) return;
-    const currentAliases = selectedProduct.aliases || [];
-    const updated = { ...selectedProduct, aliases: currentAliases.filter(a => a !== alias) };
-    setSelectedProduct(updated);
-    await handleUpdateAndSave([updated]);
+    if (selectedProduct) {
+        const currentAliases = selectedProduct.aliases || [];
+        const updated = { ...selectedProduct, aliases: currentAliases.filter(a => a !== alias) };
+        setSelectedProduct(updated);
+        await handleUpdateAndSave([updated]);
+    } else if (selectedGroup) {
+        const leader = selectedGroup.items[0];
+        if(!leader) return;
+        const currentAliases = leader.aliases || [];
+        const updatedLeader = { ...leader, aliases: currentAliases.filter(a => a !== alias) };
+        
+        const updatedItems = selectedGroup.items.map(i => i.id === leader.id ? updatedLeader : i);
+        setSelectedGroup({ ...selectedGroup, items: updatedItems });
+        
+        await handleUpdateAndSave([updatedLeader]);
+    }
   };
 
   const generateUUID = () => {
@@ -339,7 +351,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
   const handleUngroup = async (product: Product) => {
       const updated = {...product, group_id: null, group_name: null};
       if(selectedProduct?.id === product.id) {
-          setSelectedProduct(updated as Product); // Fix type mismatch manually
+          setSelectedProduct(updated as Product);
       }
       await handleUpdateAndSave([updated as Product]);
   };
@@ -363,7 +375,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
         </div>
         
         <div className="flex flex-col xl:flex-row items-center gap-3 w-full md:w-auto">
-             {/* Date Filter */}
              <div className="flex items-center gap-2 bg-white px-3 py-2 border rounded-lg shadow-sm w-full md:w-auto">
                 <Calendar size={16} className="text-slate-500" />
                 <input 
@@ -381,7 +392,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                 />
             </div>
 
-             {/* Search */}
              <div className="relative w-full md:w-auto">
                  <input 
                     type="text" 
@@ -404,7 +414,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
         </div>
       </div>
 
-      {/* Auto-Suggestion Banner */}
       {suggestions.length > 0 && (
           <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 animate-in fade-in slide-in-from-top-2">
               <div className="flex justify-between items-center mb-3">
@@ -467,8 +476,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
       )}
 
       <div className="flex gap-6">
-        {/* List View */}
-        <div className={`transition-all duration-300 ${selectedProduct ? 'w-2/3' : 'w-full'}`}>
+        <div className={`transition-all duration-300 ${selectedProduct || selectedGroup ? 'w-2/3' : 'w-full'}`}>
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                 <table className="w-full text-left text-sm">
                     <thead className="bg-slate-50 border-b border-slate-200">
@@ -500,9 +508,8 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
 
                             return (
                                 <React.Fragment key={group.id}>
-                                    {/* Group Header Row */}
                                     <tr 
-                                        className="hover:bg-slate-50 cursor-pointer bg-slate-50/50"
+                                        className={`hover:bg-slate-50 cursor-pointer ${selectedGroup?.id === group.id ? 'bg-indigo-50 border-l-4 border-indigo-600' : 'bg-slate-50/50'}`}
                                         onClick={(e) => toggleGroupExpand(group.id, e)}
                                     >
                                         <td className="px-6 py-4" onClick={(e) => toggleGroupSelection(group.id, group.items, e)}>
@@ -538,18 +545,24 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                         <td className="px-6 py-4 text-slate-400 text-right font-medium text-xs italic">
                                             Varies
                                         </td>
-                                        <td className="px-6 py-4 text-center"></td>
+                                        <td className="px-6 py-4 text-center">
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); setSelectedGroup(group); setSelectedProduct(null); }}
+                                                className="text-indigo-600 hover:text-indigo-800 font-medium text-xs flex items-center justify-center gap-1 w-full"
+                                            >
+                                                <Settings size={14} /> Manage
+                                            </button>
+                                        </td>
                                     </tr>
                                     
-                                    {/* Expanded Variants */}
                                     {isExpanded && group.items.map(p => (
                                         <tr 
                                             key={p.id} 
                                             className={`hover:bg-slate-50 cursor-pointer ${selectedProduct?.id === p.id ? 'bg-blue-50' : 'bg-white'}`} 
-                                            onClick={(e) => { e.stopPropagation(); setSelectedProduct(p); }}
+                                            onClick={(e) => { e.stopPropagation(); setSelectedProduct(p); setSelectedGroup(null); }}
                                         >
                                             <td className="px-6 py-4" onClick={(e) => toggleSelect(p.id, e)}>
-                                                <div className="pl-6"> {/* Indent Checkbox */}
+                                                <div className="pl-6">
                                                     {selectedIds.has(p.id) ? (
                                                         <CheckSquare className="text-brand-600 cursor-pointer" size={18} />
                                                     ) : (
@@ -558,7 +571,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4">
-                                                <div className="flex items-center gap-3 pl-8"> {/* Indent Content */}
+                                                <div className="flex items-center gap-3 pl-8">
                                                     <CornerDownRight size={16} className="text-slate-300" />
                                                     <div className="w-8 h-8 rounded bg-slate-100 flex items-center justify-center text-slate-400 shrink-0">
                                                         <Package size={16} />
@@ -568,9 +581,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                                     </div>
                                                 </div>
                                             </td>
-                                            <td className="px-6 py-4">
-                                                {/* Empty Status for Child */}
-                                            </td>
+                                            <td className="px-6 py-4"></td>
                                             <td className="px-6 py-4 text-slate-900 text-right font-medium">{formatCurrency(p.current_cogs)}</td>
                                             <td className="px-6 py-4 text-center">
                                                 <button className="text-brand-600 hover:text-brand-700 font-medium text-xs flex items-center justify-center gap-1 w-full">
@@ -585,7 +596,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
 
                         {/* 2. Render Singles */}
                         {inventoryTree.singles.map(p => (
-                            <tr key={p.id} className={`hover:bg-slate-50 cursor-pointer ${selectedProduct?.id === p.id ? 'bg-blue-50' : ''}`} onClick={() => setSelectedProduct(p)}>
+                            <tr key={p.id} className={`hover:bg-slate-50 cursor-pointer ${selectedProduct?.id === p.id ? 'bg-blue-50' : ''}`} onClick={() => { setSelectedProduct(p); setSelectedGroup(null); }}>
                                 <td className="px-6 py-4" onClick={(e) => toggleSelect(p.id, e)}>
                                     {selectedIds.has(p.id) ? (
                                         <CheckSquare className="text-brand-600 cursor-pointer" size={18} />
@@ -619,135 +630,135 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
             </div>
         </div>
 
-        {/* Detail/Edit View */}
-        {selectedProduct && (
+        {/* Sidebar Logic */}
+        {(selectedProduct || selectedGroup) && (
             <div className="w-1/3 space-y-6">
                 <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6 relative">
                     <button 
-                        onClick={() => setSelectedProduct(null)}
+                        onClick={() => { setSelectedProduct(null); setSelectedGroup(null); }}
                         className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
                     >
                         <X size={20} />
                     </button>
                     
-                    <h3 className="text-lg font-bold text-slate-900 mb-1">{selectedProduct.title}</h3>
-
-                    {selectedProduct.group_id && (
-                        <div className="mb-6 p-3 bg-indigo-50 rounded-lg flex justify-between items-center">
-                             <div className="flex items-center gap-2 text-indigo-700 text-sm font-medium">
-                                 <Layers size={16} />
-                                 Part of: {selectedProduct.group_name}
-                             </div>
-                             <button 
-                                onClick={() => handleUngroup(selectedProduct)}
-                                className="text-xs text-red-500 hover:text-red-700 hover:underline"
-                             >
-                                Ungroup
-                             </button>
-                        </div>
-                    )}
-                    
-                    {saveError && (
-                        <div className="mb-4 p-3 bg-red-50 text-red-700 text-xs rounded-lg border border-red-200 flex items-start gap-2">
-                             <AlertCircle size={14} className="shrink-0 mt-0.5" />
-                             <div>
-                                <strong>Save Failed:</strong> {saveError}
-                                <br/>Check your database permissions.
-                             </div>
-                        </div>
-                    )}
-
-                    <div className="mb-8">
-                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 flex justify-between">
-                            <span>Default Cost Price (COGS)</span>
-                            {isSaving && <span className="text-brand-600 italic">Saving...</span>}
-                        </label>
-                        <div className="flex gap-2">
-                            <input 
-                                type="number" 
-                                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-brand-500 outline-none"
-                                defaultValue={selectedProduct.current_cogs}
-                                onBlur={(e) => handleSaveCost(parseFloat(e.target.value) || 0)}
-                            />
-                        </div>
-                        <p className="text-xs text-slate-400 mt-2">
-                            This cost is applied to all orders unless a specific date rule exists below.
-                        </p>
-                    </div>
-
-                    <div className="border-t border-slate-100 pt-6">
-                        <div className="flex items-center justify-between mb-4">
-                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide flex items-center gap-2">
-                                <History size={14} /> Cost History
-                            </label>
-                        </div>
-                        
-                        {/* Add History Form */}
-                        <form 
-                            onSubmit={(e) => {
-                                e.preventDefault();
-                                const form = e.target as HTMLFormElement;
-                                const date = (form.elements.namedItem('date') as HTMLInputElement).value;
-                                const cost = (form.elements.namedItem('cost') as HTMLInputElement).value;
-                                if(date && cost) {
-                                    handleAddHistory(date, parseFloat(cost));
-                                    form.reset();
-                                }
-                            }}
-                            className="flex gap-2 mb-4"
-                        >
-                            <input name="date" type="date" className="w-32 px-2 py-1.5 border rounded text-sm" required />
-                            <input name="cost" type="number" placeholder="Cost" className="flex-1 px-2 py-1.5 border rounded text-sm" required />
-                            <button type="submit" className="p-2 bg-slate-900 text-white rounded hover:bg-slate-800">
-                                <Plus size={16} />
-                            </button>
-                        </form>
-
-                        <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                            {selectedProduct.cost_history.length === 0 && (
-                                <p className="text-xs text-slate-400 italic text-center py-4">No history rules added.</p>
-                            )}
-                            {selectedProduct.cost_history.map((h, idx) => (
-                                <div key={idx} className="flex justify-between items-center text-sm p-2 bg-slate-50 rounded border border-slate-100 group">
-                                    <div className="flex gap-4">
-                                        <span className="text-slate-600">From {h.date}</span>
-                                        <span className="font-bold text-slate-900">{formatCurrency(h.cogs)}</span>
-                                    </div>
-                                    <button 
-                                        onClick={() => handleDeleteHistory(idx)}
-                                        className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                                        title="Remove Rule"
-                                    >
-                                        <Trash2 size={14} />
-                                    </button>
+                    {selectedProduct && (
+                        <>
+                            <h3 className="text-lg font-bold text-slate-900 mb-1">{selectedProduct.title}</h3>
+                            {selectedProduct.group_id && (
+                                <div className="mb-6 p-3 bg-indigo-50 rounded-lg flex justify-between items-center">
+                                     <div className="flex items-center gap-2 text-indigo-700 text-sm font-medium">
+                                         <Layers size={16} />
+                                         Part of: {selectedProduct.group_name}
+                                     </div>
+                                     <button 
+                                        onClick={() => handleUngroup(selectedProduct)}
+                                        className="text-xs text-red-500 hover:text-red-700 hover:underline"
+                                     >
+                                        Ungroup
+                                     </button>
                                 </div>
-                            ))}
-                        </div>
-                    </div>
+                            )}
+                            
+                            <div className="mb-8">
+                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 flex justify-between">
+                                    <span>Default Cost Price (COGS)</span>
+                                    {isSaving && <span className="text-brand-600 italic">Saving...</span>}
+                                </label>
+                                <div className="flex gap-2">
+                                    <input 
+                                        type="number" 
+                                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-brand-500 outline-none"
+                                        defaultValue={selectedProduct.current_cogs}
+                                        onBlur={(e) => handleSaveCost(parseFloat(e.target.value) || 0)}
+                                    />
+                                </div>
+                                <p className="text-xs text-slate-400 mt-2">
+                                    This cost is applied to all orders unless a specific date rule exists below.
+                                </p>
+                            </div>
 
-                    {/* Linked Shopify Items Section */}
+                            <div className="border-t border-slate-100 pt-6">
+                                <div className="flex items-center justify-between mb-4">
+                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide flex items-center gap-2">
+                                        <History size={14} /> Cost History
+                                    </label>
+                                </div>
+                                <form 
+                                    onSubmit={(e) => {
+                                        e.preventDefault();
+                                        const form = e.target as HTMLFormElement;
+                                        const date = (form.elements.namedItem('date') as HTMLInputElement).value;
+                                        const cost = (form.elements.namedItem('cost') as HTMLInputElement).value;
+                                        if(date && cost) {
+                                            handleAddHistory(date, parseFloat(cost));
+                                            form.reset();
+                                        }
+                                    }}
+                                    className="flex gap-2 mb-4"
+                                >
+                                    <input name="date" type="date" className="w-32 px-2 py-1.5 border rounded text-sm" required />
+                                    <input name="cost" type="number" placeholder="Cost" className="flex-1 px-2 py-1.5 border rounded text-sm" required />
+                                    <button type="submit" className="p-2 bg-slate-900 text-white rounded hover:bg-slate-800">
+                                        <Plus size={16} />
+                                    </button>
+                                </form>
+                                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                                    {selectedProduct.cost_history.map((h, idx) => (
+                                        <div key={idx} className="flex justify-between items-center text-sm p-2 bg-slate-50 rounded border border-slate-100 group">
+                                            <div className="flex gap-4">
+                                                <span className="text-slate-600">From {h.date}</span>
+                                                <span className="font-bold text-slate-900">{formatCurrency(h.cogs)}</span>
+                                            </div>
+                                            <button 
+                                                onClick={() => handleDeleteHistory(idx)}
+                                                className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                title="Remove Rule"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </>
+                    )}
+
+                    {selectedGroup && (
+                        <>
+                            <h3 className="text-lg font-bold text-slate-900 mb-1 flex items-center gap-2">
+                                <Folder size={20} className="text-indigo-600" /> {selectedGroup.name}
+                            </h3>
+                            <p className="text-sm text-slate-500 mb-6">{selectedGroup.items.length} Variants Included</p>
+                            
+                            <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-700 mb-6">
+                                <strong>Group Management:</strong> Adding a Linked Store Item here will map incoming sales with that title to this entire group (tracked via the primary variant).
+                            </div>
+                        </>
+                    )}
+
                     <div className="border-t border-slate-100 pt-6">
                         <div className="flex items-center justify-between mb-4">
                             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide flex items-center gap-2">
-                                <LinkIcon size={14} /> Linked Store Items
+                                <LinkIcon size={14} /> Linked Store Items (Aliases)
                             </label>
                         </div>
                         
-                        {/* List Existing */}
                         <div className="flex flex-wrap gap-2 mb-4">
-                            {selectedProduct.aliases && selectedProduct.aliases.length > 0 ? (
-                                selectedProduct.aliases.map(alias => (
-                                    <span key={alias} className="inline-flex items-center gap-1 px-2 py-1 rounded bg-indigo-50 text-indigo-700 text-xs border border-indigo-100">
-                                        <span className="truncate max-w-[150px]" title={alias}>{alias}</span>
-                                        <button onClick={() => handleRemoveAlias(alias)} className="hover:text-red-600"><X size={12} /></button>
-                                    </span>
-                                ))
-                            ) : (
-                                <span className="text-xs text-slate-400 italic">No Shopify products linked.</span>
-                            )}
+                            {(() => {
+                                const activeAliases = selectedProduct ? selectedProduct.aliases : (selectedGroup?.items[0]?.aliases || []);
+                                return activeAliases && activeAliases.length > 0 ? (
+                                    activeAliases.map(alias => (
+                                        <span key={alias} className="inline-flex items-center gap-1 px-2 py-1 rounded bg-indigo-50 text-indigo-700 text-xs border border-indigo-100">
+                                            <span className="truncate max-w-[150px]" title={alias}>{alias}</span>
+                                            <button onClick={() => handleRemoveAlias(alias)} className="hover:text-red-600"><X size={12} /></button>
+                                        </span>
+                                    ))
+                                ) : (
+                                    <span className="text-xs text-slate-400 italic">No Shopify products linked.</span>
+                                );
+                            })()}
                         </div>
 
-                        {/* Add New */}
                         <div className="flex gap-2">
                             <select 
                                 className="flex-1 px-2 py-1.5 border rounded text-xs outline-none focus:border-indigo-500 text-slate-700 bg-white"
@@ -768,7 +779,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                             </button>
                         </div>
                         <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
-                            Sales with these titles will be attributed to this inventory item.
+                            Sales with these titles will be attributed to this {selectedGroup ? 'group' : 'item'}.
                         </p>
                     </div>
                 </div>
@@ -776,7 +787,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
         )}
       </div>
 
-      {/* Group Modal */}
       {isGroupModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
               <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
@@ -785,7 +795,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                       Assign {selectedIds.size} selected items to a group.
                   </p>
                   
-                  {/* Action Toggle */}
                   <div className="flex bg-slate-100 p-1 rounded-lg mb-4">
                       <button 
                           onClick={() => setGroupAction('existing')}
@@ -863,7 +872,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
   );
 };
 
-// --- Helper Functions ---
 function getCommonPrefix(s1: string, s2: string): string {
     let i = 0;
     while(i < s1.length && i < s2.length && s1[i].toLowerCase() === s2[i].toLowerCase()) {
@@ -872,25 +880,16 @@ function getCommonPrefix(s1: string, s2: string): string {
     return s1.substring(0, i);
 }
 
-// Helper to clean title for grouping suggestions
 function cleanTitleForGrouping(title: string): string {
     return title
         .toLowerCase()
-        // Remove content in brackets/parentheses
         .replace(/\s*[\(\[\{].*?[\)\]\}]/g, '') 
-        // Remove "Pack of X"
         .replace(/\bpack of \d+\b/g, '')
-        // Remove "2x", "3x" (Start of line or preceded by space)
         .replace(/(^|\s)\d+\s*[xX](?=\s|$)/g, '')
-        // Remove "x2", "x3"
         .replace(/(^|\s)[xX]\s*\d+(?=\s|$)/g, '')
-        // Remove "2pcs", "2 pcs"
         .replace(/(^|\s)\d+\s*pcs?(?=\s|$)/g, '')
-        // Remove leading numbers (e.g. "1. Product", "01 Product")
         .replace(/^\s*\d+[\.\-\s]+/, '')
-        // Remove separators
         .replace(/[-:_]/g, ' ')
-        // Normalize spaces
         .replace(/\s+/g, ' ')
         .trim();
 }
