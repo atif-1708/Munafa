@@ -47,7 +47,28 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
     };
   });
 
-  // 1. Build Product Statistics (With Grouping)
+  // 1. Build Inventory Options for Dropdown (Groups vs Singles)
+  const inventoryOptions = useMemo(() => {
+      const groups = new Map<string, Product>(); // groupId -> first product as representative
+      const singles: Product[] = [];
+
+      products.forEach(p => {
+          if (p.group_id && p.group_name) {
+              if (!groups.has(p.group_id)) {
+                  groups.set(p.group_id, p);
+              }
+          } else {
+              singles.push(p);
+          }
+      });
+
+      return {
+          groups: Array.from(groups.values()),
+          singles
+      };
+  }, [products]);
+
+  // 2. Build Product Statistics (With Grouping)
   const productStats = useMemo(() => {
     const stats = new Map<string, ProductStat>();
     
@@ -386,15 +407,32 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                           onChange={(e) => setSelectedSystemProduct(e.target.value)}
                       >
                           <option value="">-- Select Master Product --</option>
-                          {products.map(p => (
-                              <option key={p.id} value={p.id}>
-                                  {p.title} {p.sku ? `(${p.sku})` : ''}
-                              </option>
-                          ))}
+                          
+                          {/* Group Options */}
+                          {inventoryOptions.groups.length > 0 && (
+                              <optgroup label="Collections (Groups)">
+                                  {inventoryOptions.groups.map(p => (
+                                      <option key={p.group_id} value={p.id}>
+                                          {p.group_name} (Collection)
+                                      </option>
+                                  ))}
+                              </optgroup>
+                          )}
+
+                          {/* Individual Options */}
+                          {inventoryOptions.singles.length > 0 && (
+                              <optgroup label="Individual Items">
+                                  {inventoryOptions.singles.map(p => (
+                                      <option key={p.id} value={p.id}>
+                                          {p.title} {p.sku ? `(${p.sku})` : ''}
+                                      </option>
+                                  ))}
+                              </optgroup>
+                          )}
                       </select>
                       <p className="text-xs text-slate-400 mt-2 flex items-start gap-2">
                           <AlertCircle size={14} className="shrink-0 mt-0.5" />
-                          If you link this to a product inside a Group, it will be aggregated into that group's stats automatically.
+                          Mapping to a "Collection" will automatically aggregate stats for all variants in that group.
                       </p>
                   </div>
 
