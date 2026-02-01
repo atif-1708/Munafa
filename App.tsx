@@ -585,7 +585,17 @@ const App: React.FC = () => {
                 {currentPage === 'marketing' && <Marketing adSpend={adSpend} products={products} orders={orders} onAddAdSpend={handleUpdateAdSpend} onDeleteAdSpend={handleDeleteAdSpend} onSyncAdSpend={handleSyncAdSpend} onNavigate={setCurrentPage} />}
                 {currentPage === 'integrations' && <Integrations onConfigUpdate={() => setRefreshTrigger(prev => prev + 1)} />}
                 {currentPage === 'settings' && <Settings onUpdateStoreName={setStoreName} />}
-                {currentPage === 'reconciliation' && <Reconciliation shopifyOrders={shopifyOrders} courierOrders={orders} products={products} storeName={storeName} onMapProduct={handleMapProduct} />}
+                {currentPage === 'reconciliation' && (
+                    <Reconciliation 
+                        shopifyOrders={shopifyOrders} 
+                        courierOrders={orders} 
+                        products={products} 
+                        storeName={storeName} 
+                        onMapProduct={handleMapProduct} 
+                        adSpend={adSpend}
+                        adsTaxRate={settings.adsTaxRate}
+                    />
+                )}
             </>
         )}
       </div>
