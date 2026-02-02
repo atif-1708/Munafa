@@ -609,14 +609,15 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                                     
                                                     {/* RESTORED: Account Number Field for Fallback */}
                                                     <div className="mt-2">
-                                                        <label className="text-xs font-bold text-slate-500 ml-1">Account Number (Optional)</label>
+                                                        <label className="text-xs font-bold text-slate-500 ml-1">Account Number / Cost Center</label>
                                                         <input 
                                                             type="text"
                                                             className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
-                                                            placeholder="Enter manually if auto-detect fails" 
+                                                            placeholder="e.g. LGEC18790" 
                                                             value={config.merchant_id} 
                                                             onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], merchant_id: e.target.value } }))} 
                                                         />
+                                                        <p className="text-[9px] text-slate-400 ml-1">Required if your token does not contain your ID.</p>
                                                     </div>
                                                 </div>
                                             ) : (
