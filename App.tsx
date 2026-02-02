@@ -372,7 +372,10 @@ const App: React.FC = () => {
               aliases: p.aliases
           }));
           const { error } = await supabase.from('products').upsert(payload);
-          if (error) console.error("Failed to save product updates:", error);
+          if (error) {
+              console.error("Failed to save product updates:", error);
+              setError(`Database Save Failed: ${error.message}`);
+          }
       }
   };
 

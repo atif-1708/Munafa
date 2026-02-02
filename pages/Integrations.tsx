@@ -253,10 +253,14 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
 
   const saveCourierConfig = async (courierId: string, isActive: boolean) => {
     setErrorMessage(null);
+    
+    // 1. Update Local State Immediately
     const config = courierConfigs[courierId];
     setCourierConfigs(prev => ({ ...prev, [courierId]: { ...config, is_active: isActive } }));
+
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.user) {
+        // 2. Prepare Payload
         const payload = { 
             user_id: session.user.id, 
             provider_id: courierId, 
@@ -266,10 +270,46 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
             merchant_id: config.merchant_id,
             is_active: isActive 
         };
-        const { data: existing } = await supabase.from('integration_configs').select('id').eq('user_id', session.user.id).eq('provider_id', courierId).limit(1);
-        if (existing && existing.length > 0) await supabase.from('integration_configs').update(payload).eq('id', existing[0].id);
-        else await supabase.from('integration_configs').insert(payload);
-        if (onConfigUpdate) onConfigUpdate();
+
+        try {
+            // 3. Attempt Upsert Logic manually with Error Checking
+            const { data: existing, error: fetchError } = await supabase
+                .from('integration_configs')
+                .select('id')
+                .eq('user_id', session.user.id)
+                .eq('provider_id', courierId)
+                .limit(1);
+
+            if (fetchError) throw fetchError;
+
+            let error = null;
+
+            if (existing && existing.length > 0) {
+                 const res = await supabase
+                    .from('integration_configs')
+                    .update(payload)
+                    .eq('id', existing[0].id);
+                 error = res.error;
+            } else {
+                 const res = await supabase
+                    .from('integration_configs')
+                    .insert(payload);
+                 error = res.error;
+            }
+
+            if (error) {
+                console.error("Supabase Save Error:", error);
+                throw new Error(error.message);
+            }
+
+            // 4. Trigger Refresh
+            if (onConfigUpdate) onConfigUpdate();
+
+        } catch (e: any) {
+            console.error("Save failed:", e);
+            // 5. Show Error to User
+            setErrorMessage(`Save Failed: ${e.message}. (If error says column does not exist, please run the migration script in Supabase SQL Editor.)`);
+        }
     }
   };
 
@@ -321,7 +361,9 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
       {errorMessage && (
            <div className="bg-red-50 border border-red-200 p-4 rounded-xl flex gap-3 text-sm text-red-800 animate-in fade-in slide-in-from-top-2">
                <AlertTriangle className="shrink-0 text-red-600" size={20} />
-               <div>{errorMessage}</div>
+               <div>
+                    <strong>Action Required:</strong> {errorMessage}
+               </div>
            </div>
       )}
 
