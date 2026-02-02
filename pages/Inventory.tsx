@@ -194,9 +194,13 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
 
     const uniqueTitles = new Set<string>();
     shopifyOrders.forEach(o => {
-        o.line_items.forEach(item => {
-            uniqueTitles.add(item.title);
-        });
+        if (o.line_items && Array.isArray(o.line_items)) {
+            o.line_items.forEach(item => {
+                if (item.title) {
+                    uniqueTitles.add(item.title);
+                }
+            });
+        }
     });
 
     return Array.from(uniqueTitles).filter(t => !usedAliases.has(t)).sort();
