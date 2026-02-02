@@ -181,7 +181,7 @@ export class TcsAdapter implements CourierAdapter {
 
       const end = new Date();
       const start = new Date();
-      start.setDate(start.getDate() - 30); // 30 Days window
+      start.setDate(start.getDate() - 60); // INCREASED TO 60 DAYS to match UI message
 
       const dateFormats = [
           { start: start.toISOString().split('T')[0], end: end.toISOString().split('T')[0] }, // YYYY-MM-DD
@@ -196,18 +196,28 @@ export class TcsAdapter implements CourierAdapter {
           for (const baseUrl of this.BASE_URLS) {
               const endpoint = `${baseUrl}/ecom/api/Payment/detail`;
               
-              // Strategy A: GET with Query Params (PDF Page 22 Table)
+              // Strategy A: Standard 'customerno' (GET)
               try {
                   const query = `?accesstoken=${encodeURIComponent(token)}&customerno=${accountNo}&fromdate=${dates.start}&todate=${dates.end}`;
                   const res = await this.fetchUniversal(endpoint + query, { method: 'GET' });
-                  
-                  if (res?.detail && Array.isArray(res.detail)) {
-                      rawData = res.detail;
-                      break outerLoop;
-                  }
+                  if (res?.detail && Array.isArray(res.detail)) { rawData = res.detail; break outerLoop; }
               } catch (e) {}
 
-              // Strategy B: POST with JSON Body (PDF Page 22 JSON Payload)
+              // Strategy B: 'costCenterCode' (GET) - Common for Cost Center Accounts like LGEC...
+              try {
+                  const query = `?accesstoken=${encodeURIComponent(token)}&costCenterCode=${accountNo}&fromdate=${dates.start}&todate=${dates.end}`;
+                  const res = await this.fetchUniversal(endpoint + query, { method: 'GET' });
+                  if (res?.detail && Array.isArray(res.detail)) { rawData = res.detail; break outerLoop; }
+              } catch (e) {}
+              
+               // Strategy C: 'costCenter' (GET) - Another variation
+              try {
+                  const query = `?accesstoken=${encodeURIComponent(token)}&costCenter=${accountNo}&fromdate=${dates.start}&todate=${dates.end}`;
+                  const res = await this.fetchUniversal(endpoint + query, { method: 'GET' });
+                  if (res?.detail && Array.isArray(res.detail)) { rawData = res.detail; break outerLoop; }
+              } catch (e) {}
+
+              // Strategy D: Standard 'customerno' (POST)
               try {
                   const res = await this.fetchUniversal(endpoint, {
                       method: 'POST',
@@ -219,11 +229,7 @@ export class TcsAdapter implements CourierAdapter {
                           todate: dates.end
                       })
                   });
-
-                  if (res?.detail && Array.isArray(res.detail)) {
-                      rawData = res.detail;
-                      break outerLoop;
-                  }
+                  if (res?.detail && Array.isArray(res.detail)) { rawData = res.detail; break outerLoop; }
               } catch (e) {}
           }
       }

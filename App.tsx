@@ -259,7 +259,9 @@ const App: React.FC = () => {
                 const tcsAdapter = new TcsAdapter();
                 const tcsOrders = await tcsAdapter.fetchRecentOrders(tcsConfig);
                 fetchedOrders = [...fetchedOrders, ...tcsOrders];
-                if (tcsOrders.length === 0) infoMsgs.push("TCS connected but returned 0 orders in last 60 days.");
+                if (tcsOrders.length === 0) {
+                     infoMsgs.push("TCS connected but returned 0 orders in last 60 days. (Check if Account Number is correct)");
+                }
             } catch (e: any) {
                 console.error("TCS Sync Error:", e);
                 setError((prev) => (prev ? prev + " | " : "") + "TCS Failed: " + e.message);
