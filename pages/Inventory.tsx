@@ -250,27 +250,53 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
   };
 
   const handleSaveCost = async (newCost: number) => {
-    if (!selectedProduct) return;
-    const updated = { ...selectedProduct, current_cogs: newCost };
-    await handleUpdateAndSave([updated]);
+    if (selectedProduct) {
+        // Update single product
+        const updated = { ...selectedProduct, current_cogs: newCost };
+        await handleUpdateAndSave([updated]);
+    } else if (selectedGroup) {
+        // Update entire group (Batch)
+        const updatedItems = selectedGroup.items.map(item => ({
+            ...item,
+            current_cogs: newCost
+        }));
+        await handleUpdateAndSave(updatedItems);
+    }
   };
 
   const handleAddHistory = async (date: string, cost: number) => {
-    if (!selectedProduct) return;
-    const newHistory = [...selectedProduct.cost_history, { date, cogs: cost }];
-    newHistory.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    const updated = { ...selectedProduct, cost_history: newHistory };
-    setSelectedProduct(updated); // Immediate local update
-    await handleUpdateAndSave([updated]);
+    const target = selectedProduct || (selectedGroup ? selectedGroup.items[0] : null);
+    if (!target) return;
+
+    // For groups, we only update the 'lead' item for history to avoid complexity,
+    // OR we could update all. For simplicity, let's update all in group to keep them in sync.
+    const targets = selectedGroup ? selectedGroup.items : [target];
+    
+    const updates = targets.map(p => {
+        const newHistory = [...(p.cost_history || []), { date, cogs: cost }];
+        newHistory.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        return { ...p, cost_history: newHistory };
+    });
+
+    if (selectedProduct) setSelectedProduct(updates[0]); // Optimistic update for single view
+    await handleUpdateAndSave(updates);
   };
 
   const handleDeleteHistory = async (index: number) => {
-    if (!selectedProduct) return;
-    const newHistory = [...selectedProduct.cost_history];
-    newHistory.splice(index, 1);
-    const updated = { ...selectedProduct, cost_history: newHistory };
-    setSelectedProduct(updated);
-    await handleUpdateAndSave([updated]);
+    const target = selectedProduct || (selectedGroup ? selectedGroup.items[0] : null);
+    if (!target) return;
+
+    // Similar logic: apply to all if group
+    const targets = selectedGroup ? selectedGroup.items : [target];
+    
+    const updates = targets.map(p => {
+        const newHistory = [...p.cost_history];
+        newHistory.splice(index, 1);
+        return { ...p, cost_history: newHistory };
+    });
+
+    if (selectedProduct) setSelectedProduct(updates[0]);
+    await handleUpdateAndSave(updates);
   };
 
   const handleAddAlias = async (alias: string) => {
@@ -285,7 +311,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
         }
     });
 
-    // 2. Add to Target
+    // 2. Add to Target (If group, add to first item only as the group 'key')
     const currentAliases = targetProduct.aliases || [];
     if (!currentAliases.includes(alias)) {
         const updatedTarget = { ...targetProduct, aliases: [...currentAliases, alias] };
@@ -348,6 +374,10 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
     setIsGroupModalOpen(false);
     setNewGroupName('');
   };
+
+  // Determine what is currently being edited
+  const editTarget = selectedProduct || (selectedGroup ? selectedGroup.items[0] : null);
+  const isGroupEdit = !!selectedGroup;
 
   return (
     <div className="space-y-6 pb-20">
@@ -498,7 +528,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                   <td className="px-4 py-3 text-right">
                                       <button 
                                         onClick={(e) => { e.stopPropagation(); setSelectedGroup(group); }}
-                                        className="text-indigo-600 hover:text-indigo-800 text-xs font-medium"
+                                        className="text-indigo-600 hover:text-indigo-800 text-xs font-medium px-2 py-1 bg-indigo-50 rounded border border-indigo-100"
                                       >
                                           Edit Group
                                       </button>
@@ -569,16 +599,23 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
           </table>
       </div>
 
-      {/* Product Detail / Edit Modal */}
-      {selectedProduct && (
+      {/* Shared Detail / Edit Modal (For Product or Group) */}
+      {(selectedProduct || selectedGroup) && editTarget && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto flex flex-col">
-                  <div className="p-6 border-b border-slate-200 flex justify-between items-start">
+                  <div className={`p-6 border-b border-slate-200 flex justify-between items-start ${isGroupEdit ? 'bg-indigo-50' : 'bg-white'}`}>
                       <div>
-                          <h3 className="text-xl font-bold text-slate-900">{selectedProduct.title}</h3>
-                          <p className="text-sm text-slate-500 font-mono mt-1">{selectedProduct.sku}</p>
+                          <div className="flex items-center gap-2 mb-1">
+                              {isGroupEdit ? <Folder size={20} className="text-indigo-600"/> : <Package size={20} className="text-slate-600"/>}
+                              <h3 className="text-xl font-bold text-slate-900">
+                                  {isGroupEdit ? selectedGroup?.name : selectedProduct?.title}
+                              </h3>
+                          </div>
+                          <p className="text-sm text-slate-500 font-mono">
+                              {isGroupEdit ? `${selectedGroup?.items.length} Variants in Group` : selectedProduct?.sku}
+                          </p>
                       </div>
-                      <button onClick={() => setSelectedProduct(null)} className="text-slate-400 hover:text-slate-600"><X size={24} /></button>
+                      <button onClick={() => { setSelectedProduct(null); setSelectedGroup(null); }} className="text-slate-400 hover:text-slate-600"><X size={24} /></button>
                   </div>
                   
                   <div className="p-6 space-y-8">
@@ -589,11 +626,13 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                           </h4>
                           <div className="flex items-end gap-4 mb-4">
                               <div className="flex-1">
-                                  <label className="block text-xs font-medium text-slate-600 mb-1">Current Unit Cost (PKR)</label>
+                                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                                      {isGroupEdit ? 'Batch Set Cost (All Variants)' : 'Current Unit Cost (PKR)'}
+                                  </label>
                                   <input 
                                     type="number" 
                                     className="w-full px-4 py-2 border rounded-lg text-lg font-bold text-slate-900 focus:ring-2 focus:ring-brand-500 outline-none"
-                                    value={selectedProduct.current_cogs || ''}
+                                    value={editTarget.current_cogs || ''}
                                     onChange={(e) => handleSaveCost(parseFloat(e.target.value) || 0)}
                                   />
                               </div>
@@ -608,7 +647,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                   <span className="text-[10px] text-slate-400">For older orders</span>
                               </div>
                               <div className="space-y-2 mb-3">
-                                  {selectedProduct.cost_history?.map((h, idx) => (
+                                  {editTarget.cost_history?.map((h, idx) => (
                                       <div key={idx} className="flex justify-between items-center bg-white p-2 rounded border border-slate-100 text-sm">
                                           <span className="text-slate-600">Effective from <strong>{h.date}</strong></span>
                                           <div className="flex items-center gap-3">
@@ -617,7 +656,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                           </div>
                                       </div>
                                   ))}
-                                  {(!selectedProduct.cost_history || selectedProduct.cost_history.length === 0) && (
+                                  {(!editTarget.cost_history || editTarget.cost_history.length === 0) && (
                                       <p className="text-xs text-slate-400 italic">No history. Current cost applies to all past dates.</p>
                                   )}
                               </div>
@@ -648,11 +687,13 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                               <LinkIcon size={16} /> Shopify Mapping (Aliases)
                           </h4>
                           <p className="text-xs text-slate-500 mb-3">
-                              Link this product to different titles used in Shopify orders (e.g. bundles or renamed items).
+                              {isGroupEdit 
+                                ? 'Link Shopify titles to this GROUP. All matching orders will be grouped under this name.' 
+                                : 'Link this product to different titles used in Shopify orders (e.g. bundles or renamed items).'}
                           </p>
                           
                           <div className="flex flex-wrap gap-2 mb-4">
-                              {selectedProduct.aliases?.map(alias => (
+                              {editTarget.aliases?.map(alias => (
                                   <span key={alias} className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-xs font-medium flex items-center gap-2 border border-blue-100">
                                       {alias}
                                       <button onClick={() => handleRemoveAlias(alias)} className="hover:text-blue-900"><X size={12} /></button>
@@ -688,13 +729,13 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                   </div>
                   
                   <div className="p-6 border-t border-slate-200 bg-slate-50 rounded-b-xl flex justify-end">
-                      <button onClick={() => setSelectedProduct(null)} className="px-6 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg font-medium hover:bg-slate-100">Done</button>
+                      <button onClick={() => { setSelectedProduct(null); setSelectedGroup(null); }} className="px-6 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg font-medium hover:bg-slate-100">Done</button>
                   </div>
               </div>
           </div>
       )}
 
-      {/* Group Modal */}
+      {/* Group Creation Modal */}
       {isGroupModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
                <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">

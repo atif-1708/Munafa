@@ -4,7 +4,7 @@ import { SalesChannel, ShopifyOrder } from '../types';
 export class ShopifyAdapter {
   
   /**
-   * Fetches orders from the last 60 days.
+   * Fetches orders from the last 120 days.
    * Handles pagination automatically to retrieve all records (beyond the 250 limit).
    */
   async fetchOrders(config: SalesChannel): Promise<ShopifyOrder[]> {
@@ -15,12 +15,12 @@ export class ShopifyAdapter {
 
     const domain = this.cleanShopUrl(config.store_url);
     
-    // We fetch the last 60 days of orders
-    const twoMonthsAgo = new Date();
-    twoMonthsAgo.setDate(twoMonthsAgo.getDate() - 60);
+    // We fetch the last 120 days of orders to cover a wider range of unmapped items
+    const historyWindow = new Date();
+    historyWindow.setDate(historyWindow.getDate() - 120);
     
     const fields = "id,name,created_at,financial_status,fulfillment_status,cancel_reason,total_price,line_items,customer";
-    let nextUrl = `https://${domain}/admin/api/2023-10/orders.json?status=any&limit=250&created_at_min=${twoMonthsAgo.toISOString()}&fields=${fields}`;
+    let nextUrl = `https://${domain}/admin/api/2023-10/orders.json?status=any&limit=250&created_at_min=${historyWindow.toISOString()}&fields=${fields}`;
 
     let allOrders: ShopifyOrder[] = [];
     let hasNext = true;
