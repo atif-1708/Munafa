@@ -4,7 +4,7 @@ import { Order, Product, AdSpend, ShopifyOrder } from '../types';
 import { calculateProductPerformance, formatCurrency, ProductPerformance } from '../services/calculator';
 import { Package, Eye, X, Layers, ChevronDown, ChevronRight, CornerDownRight, Calendar, Download, Loader2, TrendingUp, TrendingDown, DollarSign, Truck, ShoppingBag, AlertCircle, BarChart3, ShoppingCart, CheckSquare, XCircle, Tag, Scale } from 'lucide-react';
 import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+import autoTable from 'jspdf-autotable';
 
 interface ProfitabilityProps {
   orders: Order[];
@@ -310,30 +310,141 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
     setTimeout(() => { setIsExporting(false); alert("Use the Detail View to export specific product reports."); }, 1000);
   };
 
-  const handleExportProductPDF = async () => {
-    const element = document.getElementById('product-detail-report');
-    if (!element) return;
-    
+  const handleExportProductPDF = () => {
+    if (!selectedProduct) return;
     setIsGeneratingPdf(true);
+
     try {
-        // Wait for rendering
-        await new Promise(r => setTimeout(r, 200));
+        const doc = new jsPDF();
+        const startD = new Date(dateRange.start).toLocaleDateString();
+        const endD = new Date(dateRange.end).toLocaleDateString();
+
+        // 1. Header
+        doc.setFillColor(15, 23, 42); // Slate 900
+        doc.rect(0, 0, 210, 40, 'F');
         
-        const canvas = await html2canvas(element, { 
-            scale: 2,
-            backgroundColor: '#ffffff',
-            useCORS: true
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(22);
+        doc.text("Product Profitability Report", 14, 20);
+        
+        doc.setFontSize(10);
+        doc.setTextColor(148, 163, 184); // Slate 400
+        doc.text(`Generated on ${new Date().toLocaleDateString()}`, 14, 28);
+        doc.text(`${storeName}`, 196, 20, { align: 'right' });
+
+        // 2. Product Info
+        doc.setTextColor(15, 23, 42);
+        doc.setFontSize(14);
+        doc.text(selectedProduct.title, 14, 55);
+        
+        doc.setFontSize(10);
+        doc.setTextColor(100);
+        doc.text(`Period: ${startD} - ${endD}`, 14, 61);
+        
+        // 3. KPI Row
+        const yKPI = 70;
+        const revenue = selectedProduct.gross_revenue;
+        const netProfit = selectedProduct.net_profit;
+        const margin = revenue > 0 ? (netProfit / revenue) * 100 : 0;
+        
+        // Helper for KPI Box
+        const drawKpi = (x: number, label: string, value: string, sub: string) => {
+            doc.setFillColor(248, 250, 252);
+            doc.setDrawColor(226, 232, 240);
+            doc.roundedRect(x, yKPI, 40, 25, 2, 2, 'FD');
+            
+            doc.setFontSize(8);
+            doc.setTextColor(100);
+            doc.text(label.toUpperCase(), x + 3, yKPI + 6);
+            
+            doc.setFontSize(12);
+            doc.setTextColor(0);
+            doc.setFont("helvetica", "bold");
+            doc.text(value, x + 3, yKPI + 14);
+            
+            doc.setFontSize(8);
+            doc.setFont("helvetica", "normal");
+            doc.setTextColor(100);
+            doc.text(sub, x + 3, yKPI + 21);
+        };
+
+        drawKpi(14, "Total Revenue", formatCurrency(revenue), "Realized");
+        drawKpi(60, "Net Profit", formatCurrency(netProfit), `${margin.toFixed(1)}% Margin`);
+        drawKpi(106, "Units Sold", selectedProduct.units_sold.toString(), "Delivered");
+        drawKpi(152, "Units Returned", selectedProduct.units_returned.toString(), "RTO / Loss");
+
+        // 4. Financial Table
+        const cogs = selectedProduct.cogs_total;
+        const shipping = selectedProduct.shipping_cost_allocation;
+        const ads = selectedProduct.ad_spend_allocation;
+        const overhead = selectedProduct.overhead_allocation;
+        const tax = selectedProduct.tax_allocation;
+        // Gross Profit (using operational definition as requested: Profit - Ads)
+        const grossProfit = revenue - cogs - shipping - overhead - tax - ads; 
+
+        const tableData = [
+            ["Gross Revenue", formatCurrency(revenue), "100%"],
+            ["Cost of Goods (COGS)", `(${formatCurrency(cogs)})`, revenue > 0 ? `${((cogs/revenue)*100).toFixed(1)}%` : '0%'],
+            ["Shipping & Packaging", `(${formatCurrency(shipping)})`, revenue > 0 ? `${((shipping/revenue)*100).toFixed(1)}%` : '0%'],
+            ["Ad Spend (Marketing)", `(${formatCurrency(ads)})`, revenue > 0 ? `${((ads/revenue)*100).toFixed(1)}%` : '0%'],
+            ["Overhead & Tax", `(${formatCurrency(overhead + tax)})`, revenue > 0 ? `${(((overhead+tax)/revenue)*100).toFixed(1)}%` : '0%'],
+            ["Gross Profit", formatCurrency(grossProfit), revenue > 0 ? `${((grossProfit/revenue)*100).toFixed(1)}%` : '0%'], // Custom Label
+            ["Cash Stuck (RTO)", `(${formatCurrency(selectedProduct.cash_in_stock)})`, ""],
+            ["Final Net Cash Profit", formatCurrency(netProfit), `${margin.toFixed(1)}%`]
+        ];
+
+        autoTable(doc, {
+            startY: 110,
+            head: [['Metric', 'Amount', '% of Rev']],
+            body: tableData,
+            theme: 'grid',
+            headStyles: { fillColor: [15, 23, 42] },
+            columnStyles: {
+                0: { cellWidth: 80 },
+                1: { halign: 'right' },
+                2: { halign: 'right' }
+            },
+            didParseCell: (data) => {
+                if (data.row.index === 5 || data.row.index === 7) { // Gross Profit & Net Profit rows
+                    data.cell.styles.fontStyle = 'bold';
+                }
+                if (data.row.index === 7) {
+                    data.cell.styles.textColor = netProfit >= 0 ? [22, 163, 74] : [220, 38, 38];
+                }
+            }
         });
+
+        // 5. Operations Table
+        const currentY = (doc as any).lastAutoTable.finalY + 15;
         
-        const imgData = canvas.toDataURL('image/png');
-        const pdf = new jsPDF('p', 'mm', 'a4');
-        const pdfWidth = pdf.internal.pageSize.getWidth();
-        const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+        doc.setFontSize(12);
+        doc.setTextColor(0);
+        doc.text("Operational Metrics", 14, currentY);
+
+        const shopifyTotal = selectedProduct.shopify_total_orders;
+        const confirmed = selectedProduct.shopify_confirmed_orders;
         
-        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-        pdf.save(`${selectedProduct?.title || 'Report'}_Profitability.pdf`);
-    } catch (e) {
-        console.error("PDF Gen Error", e);
+        const opsData = [
+            ["Shopify Orders (Demand)", shopifyTotal.toString()],
+            ["Confirmed Orders", confirmed.toString()],
+            ["Avg Selling Price", formatCurrency(selectedProduct.units_sold > 0 ? revenue/selectedProduct.units_sold : 0)],
+            ["Marketing CPA (CPR)", formatCurrency(confirmed > 0 ? ads/confirmed : 0)],
+            ["Break Even CPA", formatCurrency(selectedProduct.units_sold > 0 ? (revenue - cogs - shipping - overhead - tax)/selectedProduct.units_sold : 0)]
+        ];
+
+        autoTable(doc, {
+            startY: currentY + 5,
+            head: [['Operational KPI', 'Value']],
+            body: opsData,
+            theme: 'striped',
+            headStyles: { fillColor: [71, 85, 105] },
+            columnStyles: { 0: { cellWidth: 80 } }
+        });
+
+        doc.save(`${selectedProduct.title.replace(/[^a-zA-Z0-9]/g, '_')}_Profit_Report.pdf`);
+
+    } catch(e) {
+        console.error(e);
     } finally {
         setIsGeneratingPdf(false);
     }
@@ -451,9 +562,9 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
             // Break Even CPR = ASP - COGS - Ship - Overhead - Tax (Per Unit Profit before Ads)
             const breakEvenCpr = Math.max(0, avgSellingPrice - avgCostPrice - avgShipping - avgOverhead - avgTax);
 
-            // Updated Gross Profit (Profit After Marketing) as requested
+            // Calculated "Gross Profit" (per user request, usually Operational Profit)
             // Revenue - COGS - Shipping - Overhead - Tax - Marketing
-            const profitAfterMarketing = revenue - cogs - shipping - overhead - tax - marketing;
+            const grossProfitCalculated = revenue - cogs - shipping - overhead - tax - marketing;
 
             return (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm overflow-y-auto">
@@ -544,10 +655,10 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
 
                                 {/* Profit Cards */}
                                 <div className="space-y-4">
-                                    {/* Profit After Marketing (Formerly Gross Profit Pre-Ad) */}
+                                    {/* Gross Profit (Requested Rename) */}
                                     <div className="p-5 rounded-xl border bg-indigo-50 border-indigo-100">
-                                        <p className="text-xs font-bold uppercase tracking-wider text-indigo-600 mb-1">Profit After Marketing</p>
-                                        <h3 className="text-2xl font-extrabold text-indigo-800">{formatCurrency(profitAfterMarketing)}</h3>
+                                        <p className="text-xs font-bold uppercase tracking-wider text-indigo-600 mb-1">Gross Profit</p>
+                                        <h3 className="text-2xl font-extrabold text-indigo-800">{formatCurrency(grossProfitCalculated)}</h3>
                                         <p className="text-xs text-indigo-500 mt-1">Operational Profit (Ads Deducted)</p>
                                     </div>
 
