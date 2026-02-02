@@ -440,16 +440,20 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
             
             // Avg Stats
             const avgSellingPrice = delivered > 0 ? revenue / delivered : 0;
-            const avgCostPrice = totalDispatched > 0 ? cogs / totalDispatched : 0;
+            
+            // Corrected Avg Cost Price: COGS Total (which accumulates on delivery) / Delivered Units
+            const avgCostPrice = delivered > 0 ? cogs / delivered : 0;
+            
             const avgShipping = totalDispatched > 0 ? shipping / totalDispatched : 0;
             const avgOverhead = totalDispatched > 0 ? overhead / totalDispatched : 0;
-            const avgTax = delivered > 0 ? tax / delivered : 0; // Tax is usually only on delivered
+            const avgTax = delivered > 0 ? tax / delivered : 0; 
 
             // Break Even CPR = ASP - COGS - Ship - Overhead - Tax (Per Unit Profit before Ads)
             const breakEvenCpr = Math.max(0, avgSellingPrice - avgCostPrice - avgShipping - avgOverhead - avgTax);
 
-            // Gross Profit (Operational) = Revenue - All Ops Costs (Before Ads)
-            const grossProfitPreAd = revenue - cogs - shipping - overhead - tax;
+            // Updated Gross Profit (Profit After Marketing) as requested
+            // Revenue - COGS - Shipping - Overhead - Tax - Marketing
+            const profitAfterMarketing = revenue - cogs - shipping - overhead - tax - marketing;
 
             return (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm overflow-y-auto">
@@ -540,11 +544,11 @@ const Profitability: React.FC<ProfitabilityProps> = ({ orders, shopifyOrders = [
 
                                 {/* Profit Cards */}
                                 <div className="space-y-4">
-                                    {/* Gross Profit (Pre-Ad) */}
+                                    {/* Profit After Marketing (Formerly Gross Profit Pre-Ad) */}
                                     <div className="p-5 rounded-xl border bg-indigo-50 border-indigo-100">
-                                        <p className="text-xs font-bold uppercase tracking-wider text-indigo-600 mb-1">Gross Profit</p>
-                                        <h3 className="text-2xl font-extrabold text-indigo-800">{formatCurrency(grossProfitPreAd)}</h3>
-                                        <p className="text-xs text-indigo-500 mt-1">Operational Profit before Marketing</p>
+                                        <p className="text-xs font-bold uppercase tracking-wider text-indigo-600 mb-1">Profit After Marketing</p>
+                                        <h3 className="text-2xl font-extrabold text-indigo-800">{formatCurrency(profitAfterMarketing)}</h3>
+                                        <p className="text-xs text-indigo-500 mt-1">Operational Profit (Ads Deducted)</p>
                                     </div>
 
                                     {/* Net Profit */}

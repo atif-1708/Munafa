@@ -148,25 +148,23 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
       }
   };
 
-  // Logic: Show Groups ON TOP (no emoji), then Singles. Hide items that are in groups.
+  // Logic: Split Groups and Singles for structured dropdowns
   const productOptions = useMemo(() => {
-      const groups = new Map<string, { id: string, title: string, isGroup: boolean }>();
-      const singles: { id: string, title: string, isGroup: boolean }[] = [];
+      const groups = new Map<string, { id: string, title: string }>();
+      const singles: { id: string, title: string }[] = [];
 
       products.forEach(p => {
           if (p.group_id && p.group_name) {
               if (!groups.has(p.group_id)) {
                   groups.set(p.group_id, { 
                       id: p.group_id, 
-                      title: p.group_name, // Exact name, no emoji
-                      isGroup: true
+                      title: p.group_name
                   });
               }
           } else {
               singles.push({ 
                   id: p.id, 
-                  title: p.title,
-                  isGroup: false
+                  title: p.title
               });
           }
       });
@@ -174,7 +172,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
       const groupList = Array.from(groups.values()).sort((a,b) => a.title.localeCompare(b.title));
       const singleList = singles.sort((a,b) => a.title.localeCompare(b.title));
 
-      return [...groupList, ...singleList];
+      return { groups: groupList, singles: singleList };
   }, [products]);
 
   const generateUUID = () => {
@@ -296,6 +294,26 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
      const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
      return days > 1 ? (parseFloat(newAd.amount) / days) : null;
   }, [newAd]);
+
+  const renderProductSelectOptions = () => (
+      <>
+          <option value="">-- General Store Spend --</option>
+          <optgroup label="Groups">
+              {productOptions.groups.map(p => (
+                  <option key={p.id} value={p.id}>
+                      {p.title}
+                  </option>
+              ))}
+          </optgroup>
+          <optgroup label="Individual Products">
+              {productOptions.singles.map(p => (
+                  <option key={p.id} value={p.id}>
+                      {p.title}
+                  </option>
+              ))}
+          </optgroup>
+      </>
+  );
 
   return (
     <div className="space-y-6">
@@ -425,12 +443,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                             value={newAd.product_id}
                             onChange={e => setNewAd({...newAd, product_id: e.target.value})}
                         >
-                            <option value="">-- General Store Spend --</option>
-                            {productOptions.map(p => (
-                                <option key={p.id} value={p.id}>
-                                    {p.isGroup ? `[GROUP] ${p.title}` : p.title}
-                                </option>
-                            ))}
+                            {renderProductSelectOptions()}
                         </select>
                     </div>
                     <button type="submit" className="w-full bg-slate-900 text-white py-2 rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors">
@@ -522,7 +535,6 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
 
       {activeTab === 'facebook' && (
           <div className="animate-in fade-in slide-in-from-right-2 duration-300 space-y-6">
-              {/* ... (Previous code remains same, just update dropdown mapping) ... */}
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                       <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
                           <h3 className="font-bold text-slate-700 text-sm flex items-center gap-2">
@@ -572,12 +584,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                                               value={camp.productId || ''}
                                               onChange={(e) => saveMapping(camp.id, camp.name, e.target.value, 'Facebook')}
                                           >
-                                              <option value="">-- General Store Spend --</option>
-                                              {productOptions.map(p => (
-                                                  <option key={p.id} value={p.id}>
-                                                      {p.isGroup ? `[GROUP] ${p.title}` : p.title}
-                                                  </option>
-                                              ))}
+                                             {renderProductSelectOptions()}
                                           </select>
                                       </td>
                                   </tr>
@@ -588,10 +595,8 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
           </div>
       )}
 
-      {/* ... (TikTok Tab Logic mirrors Facebook above, just using productOptions) ... */}
       {activeTab === 'tiktok' && (
           <div className="animate-in fade-in slide-in-from-right-2 duration-300 space-y-6">
-              {/* ... Previous container logic ... */}
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                       <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
                           <h3 className="font-bold text-slate-700 text-sm flex items-center gap-2">
@@ -641,12 +646,7 @@ const Marketing: React.FC<MarketingProps> = ({ adSpend, products, orders, onAddA
                                               value={camp.productId || ''}
                                               onChange={(e) => saveMapping(camp.id, camp.name, e.target.value, 'TikTok')}
                                           >
-                                              <option value="">-- General Store Spend --</option>
-                                              {productOptions.map(p => (
-                                                  <option key={p.id} value={p.id}>
-                                                      {p.isGroup ? `[GROUP] ${p.title}` : p.title}
-                                                  </option>
-                                              ))}
+                                              {renderProductSelectOptions()}
                                           </select>
                                       </td>
                                   </tr>
