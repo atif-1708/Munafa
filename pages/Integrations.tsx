@@ -597,15 +597,22 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                             </div>
 
                                             {useTcsManualToken ? (
-                                                <div className="space-y-1">
-                                                    <input 
-                                                        type="password"
-                                                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-yellow-50 focus:bg-white transition-colors" 
-                                                        placeholder="Paste Access Token (Bearer)" 
-                                                        value={config.api_token} 
-                                                        onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], api_token: e.target.value } }))} 
-                                                    />
-                                                    <p className="text-[9px] text-orange-600 text-center">Warning: Tokens expire every 24h. Update daily.</p>
+                                                <div className="space-y-2">
+                                                    <div className="space-y-1">
+                                                        <input 
+                                                            type="password"
+                                                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-yellow-50 focus:bg-white transition-colors" 
+                                                            placeholder="Paste Access Token (Bearer)" 
+                                                            value={config.api_token} 
+                                                            onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], api_token: e.target.value } }))} 
+                                                        />
+                                                        <p className="text-[9px] text-orange-600 text-center">Warning: Tokens expire every 24h. Update daily.</p>
+                                                    </div>
+                                                    
+                                                    {/* Account Number Hidden/Removed for Manual Token as requested - It will be auto-extracted */}
+                                                    <p className="text-[10px] text-green-600 text-center font-medium bg-green-50 p-1 rounded">
+                                                        Account Number will be auto-detected from token.
+                                                    </p>
                                                 </div>
                                             ) : (
                                                 <>
@@ -627,22 +634,18 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                                             onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], password: e.target.value } }))} 
                                                         />
                                                     </div>
+                                                    <div className="space-y-1">
+                                                        <label className="text-xs font-bold text-slate-500 ml-1">Account Number (Optional)</label>
+                                                        <input 
+                                                            type="text"
+                                                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
+                                                            placeholder="Cost Center Code (if different from Client ID)" 
+                                                            value={config.merchant_id} 
+                                                            onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], merchant_id: e.target.value } }))} 
+                                                        />
+                                                    </div>
                                                 </>
                                             )}
-                                            
-                                            <div className="space-y-1">
-                                                <label className="text-xs font-bold text-slate-500 ml-1">Account Number (Optional)</label>
-                                                <input 
-                                                    type="text"
-                                                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
-                                                    placeholder="Cost Center Code (if different from Client ID)" 
-                                                    value={config.merchant_id} 
-                                                    onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], merchant_id: e.target.value } }))} 
-                                                />
-                                            </div>
-                                            <p className="text-[10px] text-slate-400 leading-tight">
-                                                If empty, Client ID will be used as Customer No.
-                                            </p>
                                         </>
                                     ) : (
                                         <input 

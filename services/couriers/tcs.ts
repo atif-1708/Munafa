@@ -49,6 +49,34 @@ export class TcsAdapter implements CourierAdapter {
   }
 
   /**
+   * Helper: Decode JWT to find ClientID/Account Number
+   * The TCS Token contains the clientid in the payload.
+   */
+  private extractAccountFromToken(token: string): string | null {
+      if (!token) return null;
+      try {
+          // JWT structure: Header.Payload.Signature
+          const parts = token.split('.');
+          if (parts.length !== 3) return null;
+
+          const base64Url = parts[1];
+          const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+          const jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function(c) {
+              return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+          }).join(''));
+
+          const payload = JSON.parse(jsonPayload);
+          
+          // PDF V1.0 implies 'clientid' is in the token payload
+          // We check common variations just in case
+          return payload.clientid || payload.ClientId || payload.unique_name || payload.sub || payload.nameid || null;
+      } catch (e) {
+          console.error("Error decoding TCS Token:", e);
+          return null;
+      }
+  }
+
+  /**
    * Get Token - Strictly follows PDF GET method
    */
   private async getToken(config: IntegrationConfig): Promise<string> {
@@ -102,13 +130,21 @@ export class TcsAdapter implements CourierAdapter {
 
   /**
    * Deep Connection Test
-   * UPDATED: Now returns TRUE if Token is generated, even if data fetch fails.
    */
   async testConnection(config: IntegrationConfig): Promise<boolean> {
       try {
           const token = await this.getToken(config);
-          if (token) return true; // Successfully authenticated
-          return false;
+          
+          // Verify we can find an account number (either explicit or extracted)
+          const accountNo = config.merchant_id?.trim() || this.extractAccountFromToken(token);
+          
+          if (!token) return false;
+          if (!accountNo) {
+              console.warn("Token is valid but could not extract Account Number. Data fetch might fail.");
+              // We return true for connection, but data fetch will likely throw specific error
+          }
+          
+          return true;
       } catch (e: any) {
           console.error("TCS Test Failed:", e);
           throw new Error(e.message);
@@ -121,10 +157,19 @@ export class TcsAdapter implements CourierAdapter {
   async fetchRecentOrders(config: IntegrationConfig): Promise<Order[]> {
       const token = await this.getToken(config);
       
-      // FALLBACK: If merchant_id (Account No) is empty, use username (Client ID)
-      const accountNo = config.merchant_id?.trim() || config.username?.trim();
+      // PRIORITY 1: Use Explicit Merchant ID (if provided in Settings)
+      // PRIORITY 2: Use Client ID (Username)
+      // PRIORITY 3: Extract from Token (Manual Token Mode)
+      let accountNo = config.merchant_id?.trim() || config.username?.trim();
       
-      if (!accountNo) throw new Error("Missing Account Number/Client ID");
+      if (!accountNo) {
+          accountNo = this.extractAccountFromToken(token) || '';
+      }
+      
+      if (!accountNo) {
+          // Last ditch effort: Try without account number (API might error, but we try)
+          console.warn("No Account Number found. Attempting fetch without it (likely to fail).");
+      }
 
       const end = new Date();
       const start = new Date();
