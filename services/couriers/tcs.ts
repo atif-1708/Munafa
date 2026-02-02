@@ -5,10 +5,9 @@ import { IntegrationConfig, TrackingUpdate, OrderStatus, Order, CourierName, Pay
 export class TcsAdapter implements CourierAdapter {
   name = CourierName.TCS;
   
-  // TCS has multiple endpoints depending on the account type (Corporate vs SME vs OCI)
-  // We prioritize OCI (ociconnect) as it is the modern standard.
+  // TCS has multiple endpoints. We prioritize the ones listed in the v1.0 PDF.
   private readonly BASE_URLS = [
-      'https://ociconnect.tcscourier.com',
+      'https://ociconnect.tcscourier.com', // Production (PDF)
       'https://api.tcscourier.com',
       'https://apis.tcscourier.com'
   ];
@@ -72,7 +71,7 @@ export class TcsAdapter implements CourierAdapter {
     throw lastError || new Error("Network Error: Could not connect to TCS via any proxy path.");
   }
 
-  // Method 1: Authorization API (Client ID / Secret) - POST (Standard for OCI)
+  // Method 1: Authorization API (Client ID / Secret) - POST (OCI v2)
   private async getTokenByClientIdPost(baseUrl: string, clientId: string, clientSecret: string): Promise<string> {
       const url = `${baseUrl}/auth/v2/token`;
       const response = await this.fetchWithFallback(url, { 
@@ -91,7 +90,7 @@ export class TcsAdapter implements CourierAdapter {
       throw new Error(`Invalid POST Response: ${errorMsg}`);
   }
 
-  // Method 2: Authorization API (Client ID / Secret) - GET
+  // Method 2: Authorization API (Client ID / Secret) - GET (PDF v1.0 Standard)
   private async getTokenByClientId(baseUrl: string, clientId: string, clientSecret: string): Promise<string> {
       const url = `${baseUrl}/auth/api/auth?clientid=${clientId}&clientsecret=${clientSecret}`;
       const response = await this.fetchWithFallback(url, { method: 'GET' });
@@ -119,16 +118,18 @@ export class TcsAdapter implements CourierAdapter {
       let detailedErrors = "";
 
       for (const baseUrl of this.BASE_URLS) {
-          try {
-              return await this.getTokenByClientIdPost(baseUrl, u, p);
-          } catch (e: any) {
-              detailedErrors += `[${baseUrl} POST]: ${e.message}\n`;
-          }
-
+          // 1. Try GET (PDF Standard) FIRST
           try {
               return await this.getTokenByClientId(baseUrl, u, p);
           } catch (e: any) {
               detailedErrors += `[${baseUrl} GET]: ${e.message}\n`;
+          }
+
+          // 2. Try POST (Fallback for newer accounts)
+          try {
+              return await this.getTokenByClientIdPost(baseUrl, u, p);
+          } catch (e: any) {
+              detailedErrors += `[${baseUrl} POST]: ${e.message}\n`;
           }
       }
 
@@ -158,6 +159,7 @@ export class TcsAdapter implements CourierAdapter {
         const direct = new Date(dateStr);
         if (!isNaN(direct.getTime())) return direct.toISOString();
 
+        // Handle DD/MM/YYYY or DD-MM-YYYY (Pakistan Standard)
         const cleanDate = dateStr.split(' ')[0];
         const parts = cleanDate.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
         if (parts) {
@@ -208,47 +210,54 @@ export class TcsAdapter implements CourierAdapter {
 
   async fetchRecentOrders(config: IntegrationConfig): Promise<Order[]> {
       const token = await this.getToken(config);
+      
+      // Clean account number (remove spaces, etc)
       let costCenter = config.merchant_id?.trim();
-
-      if (!costCenter) throw new Error("Missing Cost Center Code (Account Number)");
+      if (!costCenter) throw new Error("Missing Account Number / Cost Center Code");
 
       const endDate = new Date();
       const startDate = new Date();
       startDate.setDate(startDate.getDate() - 60); 
       
-      // Strategy: Try ISO format first, then strict padded format.
-      // Some TCS endpoints fail if dates aren't exactly YYYY-MM-DD
+      // Strategy: Try ISO format, then strict YYYYMMDD (some legacy APIs require this)
       const dateFormats = [
           {
               start: startDate.toISOString().split('T')[0],
               end: endDate.toISOString().split('T')[0]
           },
           {
-             start: `${startDate.getFullYear()}-${(startDate.getMonth()+1).toString().padStart(2, '0')}-${startDate.getDate().toString().padStart(2, '0')}`,
-             end: `${endDate.getFullYear()}-${(endDate.getMonth()+1).toString().padStart(2, '0')}-${endDate.getDate().toString().padStart(2, '0')}`
+             start: startDate.toISOString().split('T')[0].replace(/-/g, ''),
+             end: endDate.toISOString().split('T')[0].replace(/-/g, '')
           }
       ];
 
       let response: any = null;
 
       // "Shotgun" Approach: Try every combination of Date Format x Base URL x Endpoint
-      // to find where the data is hiding.
       outerLoop:
       for (const dates of dateFormats) {
           for (const baseUrl of this.BASE_URLS) {
               const endpoints = [
-                  // 1. Modern OCI - Financials
-                  `${baseUrl}/cod/api/v2/cod-details?accesstoken=${encodeURIComponent(token)}&costCenterCode=${costCenter}&startDate=${dates.start}&endDate=${dates.end}`,
-                  // 2. Legacy Ecom - Financials
+                  // 1. Payment Detail (PDF Page 22) - Uses 'customerno'
+                  // Note: PDF example shows 'accesstoken' in body params, effectively query params for GET.
+                  // We also pass Token in Header just in case.
                   `${baseUrl}/ecom/api/Payment/detail?accesstoken=${encodeURIComponent(token)}&customerno=${costCenter}&fromdate=${dates.start}&todate=${dates.end}`,
+                  
+                  // 2. Modern OCI (Backup) - Uses 'costCenterCode'
+                  `${baseUrl}/cod/api/v2/cod-details?accesstoken=${encodeURIComponent(token)}&costCenterCode=${costCenter}&startDate=${dates.start}&endDate=${dates.end}`,
+                  
                    // 3. Alternative COD Status
                   `${baseUrl}/cod/api/GetCODStatus?accesstoken=${encodeURIComponent(token)}&costCenterCode=${costCenter}&startDate=${dates.start}&endDate=${dates.end}`
               ];
 
               for (const url of endpoints) {
                   try {
-                      const res = await this.fetchWithFallback(url, { method: 'GET' });
-                      // Check if response contains array data in any common property
+                      const res = await this.fetchWithFallback(url, { 
+                          method: 'GET',
+                          headers: { 'Authorization': `Bearer ${token}` } // Try header auth too
+                      });
+                      
+                      // Check if response contains array data in common properties
                       if (res && (res.detail || (res.data && Array.isArray(res.data)) || (Array.isArray(res) && res.length > 0) || res.orders)) {
                           response = res;
                           break outerLoop; // Found data, stop searching
@@ -271,6 +280,7 @@ export class TcsAdapter implements CourierAdapter {
       }
 
       return ordersList.map((tcsOrder: any) => {
+          // Normalize Keys (Handle spaces in PDF response)
           const rawStatus = tcsOrder.status || tcsOrder['cn status'] || tcsOrder.Status || 'Unknown';
           const status = this.mapStatus(rawStatus);
           
@@ -281,11 +291,20 @@ export class TcsAdapter implements CourierAdapter {
           if (amount === 0 && tcsOrder.Amount) {
               amount = parseFloat(tcsOrder.Amount);
           }
+          if (amount === 0 && tcsOrder['codamount']) { // Handle space-less key too
+              amount = parseFloat(tcsOrder['codamount']);
+          }
           
           const deliveryCharges = parseFloat(tcsOrder['delivery charges'] || tcsOrder.DeliveryCharges || 0);
           const orderDate = tcsOrder['booking date'] || tcsOrder['bookingDate'] || tcsOrder.BookingDate;
           const trackingNo = tcsOrder['cn by courier'] || tcsOrder['consignmentNo'] || tcsOrder.ConsignmentNo || '';
           const refNo = tcsOrder['order no'] || tcsOrder['orderRefNo'] || tcsOrder.OrderRefNo || 'N/A';
+
+          // Use the 'payment status' flag from PDF (Y/N)
+          let paymentStatus = PaymentStatus.UNPAID;
+          if (tcsOrder['payment status'] === 'Y' || tcsOrder.paymentStatus === 'Y' || tcsOrder.paymentStatus === 'Paid') {
+              paymentStatus = PaymentStatus.REMITTED;
+          }
 
           return {
               id: trackingNo || Math.random().toString(),
@@ -295,13 +314,13 @@ export class TcsAdapter implements CourierAdapter {
               courier: CourierName.TCS,
               tracking_number: trackingNo,
               status: status,
-              payment_status: tcsOrder['payment status'] === 'Y' || tcsOrder['paymentStatus'] === 'Paid' ? PaymentStatus.REMITTED : PaymentStatus.UNPAID,
+              payment_status: paymentStatus,
               
               cod_amount: amount, 
               shipping_fee_paid_by_customer: 0,
               
               courier_fee: deliveryCharges > 0 ? deliveryCharges : 250, 
-              rto_penalty: status === OrderStatus.RETURNED ? 0 : 0, 
+              rto_penalty: status === OrderStatus.RETURNED ? 0 : 0, // TCS RTO is usually 0 unless charged
               packaging_cost: 45,
               overhead_cost: 0,
               tax_amount: 0,

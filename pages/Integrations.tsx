@@ -631,7 +631,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                             )}
                                             
                                             <div className="space-y-1">
-                                                <label className="text-xs font-bold text-slate-500 ml-1">Account Number / Cost Center</label>
+                                                <label className="text-xs font-bold text-slate-500 ml-1">Account Number (e.g. 101010)</label>
                                                 <input 
                                                     type="text"
                                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
@@ -642,7 +642,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                             </div>
                                             <p className="text-[10px] text-slate-400 leading-tight">
                                                 {useTcsManualToken 
-                                                    ? "Ensure the token matches the Cost Center." 
+                                                    ? "Ensure the token matches the Account Number." 
                                                     : "Credentials differ from Portal login. Contact AM for API credentials."}
                                             </p>
                                         </>
