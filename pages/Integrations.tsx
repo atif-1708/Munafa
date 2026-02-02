@@ -631,19 +631,17 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                             )}
                                             
                                             <div className="space-y-1">
-                                                <label className="text-xs font-bold text-slate-500 ml-1">Account Number (e.g. 101010)</label>
+                                                <label className="text-xs font-bold text-slate-500 ml-1">Account Number (Optional)</label>
                                                 <input 
                                                     type="text"
                                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
-                                                    placeholder="e.g. 101010" 
+                                                    placeholder="Cost Center Code (if different from Client ID)" 
                                                     value={config.merchant_id} 
                                                     onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], merchant_id: e.target.value } }))} 
                                                 />
                                             </div>
                                             <p className="text-[10px] text-slate-400 leading-tight">
-                                                {useTcsManualToken 
-                                                    ? "Ensure the token matches the Account Number." 
-                                                    : "Credentials differ from Portal login. Contact AM for API credentials."}
+                                                If empty, Client ID will be used as Customer No.
                                             </p>
                                         </>
                                     ) : (

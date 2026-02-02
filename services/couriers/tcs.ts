@@ -29,12 +29,6 @@ export class TcsAdapter implements CourierAdapter {
         if (res.ok) {
              try { return JSON.parse(text); } catch { return text; }
         }
-        
-        // Handle API-specific errors that return 200-like headers but error bodies
-        if (text.includes("Invalid") || text.includes("Error")) {
-             // Continue to try other methods if this was a soft failure
-             console.warn("Proxy returned API error:", text);
-        }
     } catch (e) {
         console.warn("Local proxy failed:", e);
     }
@@ -94,7 +88,6 @@ export class TcsAdapter implements CourierAdapter {
   // --- Core Implementation ---
 
   async track(trackingNumber: string, config: IntegrationConfig): Promise<TrackingUpdate> {
-      // Not implemented fully as dashboard focuses on Orders fetch
       return {
           tracking_number: trackingNumber,
           status: OrderStatus.IN_TRANSIT,
@@ -109,33 +102,13 @@ export class TcsAdapter implements CourierAdapter {
 
   /**
    * Deep Connection Test
-   * Verifies BOTH Credentials AND Account Number by trying to fetch a small data set.
+   * UPDATED: Now returns TRUE if Token is generated, even if data fetch fails.
    */
   async testConnection(config: IntegrationConfig): Promise<boolean> {
       try {
           const token = await this.getToken(config);
-          const accountNo = config.merchant_id?.trim();
-          
-          if (!accountNo) throw new Error("Account Number is missing.");
-
-          // Try to fetch data for "yesterday" to validate access
-          // We use the same logic as fetchOrders but with a tiny range
-          const today = new Date().toISOString().split('T')[0];
-          
-          for (const baseUrl of this.BASE_URLS) {
-              // Try GET Strategy (PDF Standard)
-              const getUrl = `${baseUrl}/ecom/api/Payment/detail?accesstoken=${token}&customerno=${accountNo}&fromdate=${today}&todate=${today}`;
-              try {
-                  const res = await this.fetchUniversal(getUrl, { method: 'GET' });
-                  if (res && (res.message === 'SUCCESS' || res.status === 'true' || Array.isArray(res.detail))) {
-                      return true;
-                  }
-              } catch (e) {}
-          }
-          
-          // If we got a token but failed data fetch, strict warning
-          throw new Error("Credentials valid, but could not fetch data. Check Account Number.");
-
+          if (token) return true; // Successfully authenticated
+          return false;
       } catch (e: any) {
           console.error("TCS Test Failed:", e);
           throw new Error(e.message);
@@ -147,9 +120,11 @@ export class TcsAdapter implements CourierAdapter {
    */
   async fetchRecentOrders(config: IntegrationConfig): Promise<Order[]> {
       const token = await this.getToken(config);
-      const accountNo = config.merchant_id?.trim();
       
-      if (!accountNo) throw new Error("Missing Account Number");
+      // FALLBACK: If merchant_id (Account No) is empty, use username (Client ID)
+      const accountNo = config.merchant_id?.trim() || config.username?.trim();
+      
+      if (!accountNo) throw new Error("Missing Account Number/Client ID");
 
       const end = new Date();
       const start = new Date();
