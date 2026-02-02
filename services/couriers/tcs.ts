@@ -16,7 +16,7 @@ export class TcsAdapter implements CourierAdapter {
   private async fetchWithFallback(url: string, options: RequestInit): Promise<any> {
     let lastError: Error | null = null;
 
-    // 1. Try Local Proxy first (Highest Priority)
+    // 1. Try Local Proxy first (Highest Priority - Solves CORS)
     try {
         const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
         // Pass headers specifically for the proxy to forward
@@ -27,7 +27,6 @@ export class TcsAdapter implements CourierAdapter {
             headers: headers 
         });
         
-        const contentType = res.headers.get('content-type');
         const text = await res.text();
 
         // If success
@@ -37,11 +36,9 @@ export class TcsAdapter implements CourierAdapter {
         
         // Return explicit API errors
         if (res.status === 400 || res.status === 401 || res.status === 403 || res.status === 500 || res.status === 402) {
-             // 402 Payment Required is often used by TCS for "Invalid API Key" or "Account Suspended"
              throw new Error(`${res.status} TCS Error: ${text.substring(0, 200)}`);
         }
     } catch (e: any) {
-        // If it's a specific API error, stop.
         if (e.message.includes('TCS Error')) throw e;
         console.warn("Local proxy failed, trying public fallbacks...", e);
     }
@@ -61,7 +58,6 @@ export class TcsAdapter implements CourierAdapter {
             
             if (!response.ok) {
                  if (text.includes("Free usage is limited") || text.includes("Access Denied")) continue;
-                 
                  throw new Error(`${response.status} TCS Error: ${text.substring(0, 100)}`);
             }
             
@@ -76,30 +72,9 @@ export class TcsAdapter implements CourierAdapter {
     throw lastError || new Error("Network Error: Could not connect to TCS via any proxy path.");
   }
 
-  // Method 1: Authorization API (Client ID / Secret) - GET
-  private async getTokenByClientId(baseUrl: string, clientId: string, clientSecret: string): Promise<string> {
-      const url = `${baseUrl}/auth/api/auth?clientid=${clientId}&clientsecret=${clientSecret}`;
-      const response = await this.fetchWithFallback(url, { method: 'GET' });
-      
-      if (response?.result?.accessToken) return response.result.accessToken;
-      if (response?.result?.accesstoken) return response.result.accesstoken;
-      if (response?.accessToken) return response.accessToken;
-      if (response?.access_token) return response.access_token;
-      
-      if (typeof response === 'string' && response.length > 20 && !response.includes('{')) {
-          return response;
-      }
-
-      // If we get here, the response format wasn't what we expected for a success
-      throw new Error(`Invalid GET Response format`);
-  }
-
-  // Method 2: Authorization API (Client ID / Secret) - POST (Standard for OCI)
+  // Method 1: Authorization API (Client ID / Secret) - POST (Standard for OCI)
   private async getTokenByClientIdPost(baseUrl: string, clientId: string, clientSecret: string): Promise<string> {
-      // Try /auth/v2/token (Standard OCI)
       const url = `${baseUrl}/auth/v2/token`;
-      
-      // Note: OCI often requires application/json body
       const response = await this.fetchWithFallback(url, { 
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -112,21 +87,22 @@ export class TcsAdapter implements CourierAdapter {
       if (response?.access_token) return response.access_token;
       if (response?.data?.access_token) return response.data.access_token;
       
-      // NEW: Return exact error from TCS if available
       const errorMsg = typeof response === 'object' ? JSON.stringify(response) : String(response).substring(0, 200);
       throw new Error(`Invalid POST Response: ${errorMsg}`);
   }
 
-  // Method 3: Authentication API (Username / Password)
-  private async getTokenByCredentials(baseUrl: string, username: string, password: string): Promise<string> {
-      const url = `${baseUrl}/ecom/api/authentication/token?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+  // Method 2: Authorization API (Client ID / Secret) - GET
+  private async getTokenByClientId(baseUrl: string, clientId: string, clientSecret: string): Promise<string> {
+      const url = `${baseUrl}/auth/api/auth?clientid=${clientId}&clientsecret=${clientSecret}`;
       const response = await this.fetchWithFallback(url, { method: 'GET' });
       
-      if (response?.accesstoken) return response.accesstoken;
+      if (response?.result?.accessToken) return response.result.accessToken;
       if (response?.access_token) return response.access_token;
-      if (response?.result?.accesstoken) return response.result.accesstoken;
-
-      throw new Error(`Invalid User/Pass Response format`);
+      
+      if (typeof response === 'string' && response.length > 20 && !response.includes('{')) {
+          return response;
+      }
+      throw new Error(`Invalid GET Response format`);
   }
 
   // Main Token Handler
@@ -143,25 +119,16 @@ export class TcsAdapter implements CourierAdapter {
       let detailedErrors = "";
 
       for (const baseUrl of this.BASE_URLS) {
-          // 1. Try POST (Most robust for modern TCS)
           try {
               return await this.getTokenByClientIdPost(baseUrl, u, p);
           } catch (e: any) {
               detailedErrors += `[${baseUrl} POST]: ${e.message}\n`;
           }
 
-          // 2. Try GET (Legacy)
           try {
               return await this.getTokenByClientId(baseUrl, u, p);
           } catch (e: any) {
               detailedErrors += `[${baseUrl} GET]: ${e.message}\n`;
-          }
-
-          // 3. Try User/Pass (Very Old)
-          try {
-              return await this.getTokenByCredentials(baseUrl, u, p);
-          } catch (e: any) {
-              detailedErrors += `[${baseUrl} UserPass]: ${e.message}\n`;
           }
       }
 
@@ -179,7 +146,6 @@ export class TcsAdapter implements CourierAdapter {
     if (s.includes('arrival') || s.includes('departed') || s.includes('transit') || s.includes('process') || s.includes('manifest')) {
         return OrderStatus.IN_TRANSIT;
     }
-    
     if (s === 'ok') return OrderStatus.DELIVERED; 
     if (s === 'ro') return OrderStatus.RETURNED;
 
@@ -188,31 +154,20 @@ export class TcsAdapter implements CourierAdapter {
 
   private parseTcsDate(dateStr: string): string {
     if (!dateStr) return new Date().toISOString();
-    
-    // TCS dates can vary wildly. E.g. "2024-05-15T10:00:00", "15-05-2024", "15/05/2024"
     try {
-        // 1. Try standard parser
         const direct = new Date(dateStr);
         if (!isNaN(direct.getTime())) return direct.toISOString();
 
-        // 2. Parse Pakistan format DD-MM-YYYY or DD/MM/YYYY
-        // Remove time part if exists to focus on date
         const cleanDate = dateStr.split(' ')[0];
-        
-        // Match DD-MM-YYYY or DD/MM/YYYY
         const parts = cleanDate.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
-        
         if (parts) {
             const day = parseInt(parts[1]);
-            const month = parseInt(parts[2]) - 1; // JS months are 0-11
+            const month = parseInt(parts[2]) - 1;
             const year = parseInt(parts[3]);
             return new Date(year, month, day).toISOString();
         }
-    } catch(e) {
-        console.warn("Date Parse Error for TCS:", dateStr);
-    }
-    
-    return new Date().toISOString(); // Fallback to now
+    } catch(e) {}
+    return new Date().toISOString();
   }
 
   async track(trackingNumber: string, config: IntegrationConfig): Promise<TrackingUpdate> {
@@ -239,8 +194,7 @@ export class TcsAdapter implements CourierAdapter {
               continue;
           }
       }
-
-      throw new Error("Tracking not found on any TCS server");
+      throw new Error("Tracking not found");
   }
 
   async createBooking(order: Order, config: IntegrationConfig): Promise<string> {
@@ -254,7 +208,7 @@ export class TcsAdapter implements CourierAdapter {
 
   async fetchRecentOrders(config: IntegrationConfig): Promise<Order[]> {
       const token = await this.getToken(config);
-      const costCenter = config.merchant_id;
+      let costCenter = config.merchant_id?.trim();
 
       if (!costCenter) throw new Error("Missing Cost Center Code (Account Number)");
 
@@ -262,55 +216,84 @@ export class TcsAdapter implements CourierAdapter {
       const startDate = new Date();
       startDate.setDate(startDate.getDate() - 60); 
       
-      const fromParams = startDate.toISOString().split('T')[0];
-      const toParams = endDate.toISOString().split('T')[0];
+      // Strategy: Try ISO format first, then strict padded format.
+      // Some TCS endpoints fail if dates aren't exactly YYYY-MM-DD
+      const dateFormats = [
+          {
+              start: startDate.toISOString().split('T')[0],
+              end: endDate.toISOString().split('T')[0]
+          },
+          {
+             start: `${startDate.getFullYear()}-${(startDate.getMonth()+1).toString().padStart(2, '0')}-${startDate.getDate().toString().padStart(2, '0')}`,
+             end: `${endDate.getFullYear()}-${(endDate.getMonth()+1).toString().padStart(2, '0')}-${endDate.getDate().toString().padStart(2, '0')}`
+          }
+      ];
 
       let response: any = null;
 
-      for (const baseUrl of this.BASE_URLS) {
-          try {
-              // Try Standard Ecom API
-              let url = `${baseUrl}/ecom/api/Payment/detail?accesstoken=${encodeURIComponent(token)}&customerno=${costCenter}&fromdate=${fromParams}&todate=${toParams}`;
-              response = await this.fetchWithFallback(url, { method: 'GET' });
-              
-              if (!response || (!response.detail && !response.data)) {
-                   // Try V2 API (OCI)
-                   url = `${baseUrl}/cod/api/v2/cod-details?accesstoken=${encodeURIComponent(token)}&costCenterCode=${costCenter}&startDate=${fromParams}&endDate=${toParams}`;
-                   response = await this.fetchWithFallback(url, { method: 'GET' });
-              }
+      // "Shotgun" Approach: Try every combination of Date Format x Base URL x Endpoint
+      // to find where the data is hiding.
+      outerLoop:
+      for (const dates of dateFormats) {
+          for (const baseUrl of this.BASE_URLS) {
+              const endpoints = [
+                  // 1. Modern OCI - Financials
+                  `${baseUrl}/cod/api/v2/cod-details?accesstoken=${encodeURIComponent(token)}&costCenterCode=${costCenter}&startDate=${dates.start}&endDate=${dates.end}`,
+                  // 2. Legacy Ecom - Financials
+                  `${baseUrl}/ecom/api/Payment/detail?accesstoken=${encodeURIComponent(token)}&customerno=${costCenter}&fromdate=${dates.start}&todate=${dates.end}`,
+                   // 3. Alternative COD Status
+                  `${baseUrl}/cod/api/GetCODStatus?accesstoken=${encodeURIComponent(token)}&costCenterCode=${costCenter}&startDate=${dates.start}&endDate=${dates.end}`
+              ];
 
-              if (response && (response.detail || Array.isArray(response.data))) break;
-          } catch(e) {}
+              for (const url of endpoints) {
+                  try {
+                      const res = await this.fetchWithFallback(url, { method: 'GET' });
+                      // Check if response contains array data in any common property
+                      if (res && (res.detail || (res.data && Array.isArray(res.data)) || (Array.isArray(res) && res.length > 0) || res.orders)) {
+                          response = res;
+                          break outerLoop; // Found data, stop searching
+                      }
+                  } catch (e) {
+                      // Silently fail and try next endpoint
+                  }
+              }
+          }
       }
 
       let ordersList = [];
       if (response?.detail) ordersList = response.detail;
-      else if (response?.data) ordersList = response.data;
-      else if (Array.isArray(response)) ordersList = response; // Sometimes root array
+      else if (response?.data && Array.isArray(response.data)) ordersList = response.data;
+      else if (response?.orders) ordersList = response.orders;
+      else if (Array.isArray(response)) ordersList = response;
       
       if (!ordersList || !Array.isArray(ordersList)) {
           return [];
       }
 
       return ordersList.map((tcsOrder: any) => {
-          const rawStatus = tcsOrder.status || tcsOrder['cn status'] || 'Unknown';
+          const rawStatus = tcsOrder.status || tcsOrder['cn status'] || tcsOrder.Status || 'Unknown';
           const status = this.mapStatus(rawStatus);
           
           let amount = parseFloat(tcsOrder['amount paid'] || 0);
           if (amount === 0 && tcsOrder['cod amount']) {
               amount = parseFloat(tcsOrder['cod amount']);
           }
+          if (amount === 0 && tcsOrder.Amount) {
+              amount = parseFloat(tcsOrder.Amount);
+          }
           
-          const deliveryCharges = parseFloat(tcsOrder['delivery charges'] || 0);
-          const orderDate = tcsOrder['booking date'] || tcsOrder['bookingDate'];
+          const deliveryCharges = parseFloat(tcsOrder['delivery charges'] || tcsOrder.DeliveryCharges || 0);
+          const orderDate = tcsOrder['booking date'] || tcsOrder['bookingDate'] || tcsOrder.BookingDate;
+          const trackingNo = tcsOrder['cn by courier'] || tcsOrder['consignmentNo'] || tcsOrder.ConsignmentNo || '';
+          const refNo = tcsOrder['order no'] || tcsOrder['orderRefNo'] || tcsOrder.OrderRefNo || 'N/A';
 
           return {
-              id: tcsOrder['cn by courier'] || tcsOrder['consignmentNo'] || Math.random().toString(),
-              shopify_order_number: tcsOrder['order no'] || tcsOrder['orderRefNo'] || 'N/A',
+              id: trackingNo || Math.random().toString(),
+              shopify_order_number: refNo,
               created_at: this.parseTcsDate(orderDate),
               customer_city: tcsOrder.city || tcsOrder['consigneeCity'] || 'Unknown',
               courier: CourierName.TCS,
-              tracking_number: tcsOrder['cn by courier'] || tcsOrder['consignmentNo'] || '',
+              tracking_number: trackingNo,
               status: status,
               payment_status: tcsOrder['payment status'] === 'Y' || tcsOrder['paymentStatus'] === 'Paid' ? PaymentStatus.REMITTED : PaymentStatus.UNPAID,
               
