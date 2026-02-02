@@ -381,7 +381,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
           <div className="relative w-full sm:w-96">
               <input 
                 type="text" 
-                placeholder="Search products by title or SKU..." 
+                placeholder="Search products by title..." 
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-brand-500 outline-none"
@@ -468,7 +468,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                          {/* Header Checkbox logic could be complex, omitting for simplicity or adding Select All Visible */}
                       </th>
                       <th className="px-4 py-3 font-semibold text-slate-700">Product / Group</th>
-                      <th className="px-4 py-3 font-semibold text-slate-700">SKU</th>
                       <th className="px-4 py-3 font-semibold text-slate-700">Current Cost (COGS)</th>
                       <th className="px-4 py-3 text-right font-semibold text-slate-700">Actions</th>
                   </tr>
@@ -495,7 +494,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                           <span className="bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">{group.items.length}</span>
                                       </div>
                                   </td>
-                                  <td className="px-4 py-3 text-slate-400 italic">GROUP</td>
                                   <td className="px-4 py-3 text-slate-400">-</td>
                                   <td className="px-4 py-3 text-right">
                                       <button 
@@ -518,7 +516,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                               <span className="truncate max-w-[300px]" title={item.title}>{item.title}</span>
                                           </div>
                                       </td>
-                                      <td className="px-4 py-3 font-mono text-xs text-slate-500">{item.sku}</td>
                                       <td className="px-4 py-3">
                                           {item.current_cogs === 0 ? (
                                               <span className="text-red-500 font-bold flex items-center gap-1"><AlertCircle size={12}/> Set Cost</span>
@@ -550,7 +547,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                   <span className="truncate max-w-[300px] font-medium text-slate-700" title={item.title}>{item.title}</span>
                               </div>
                           </td>
-                          <td className="px-4 py-3 font-mono text-xs text-slate-500">{item.sku}</td>
                           <td className="px-4 py-3">
                               {item.current_cogs === 0 ? (
                                   <span className="text-red-500 font-bold flex items-center gap-1 text-xs px-2 py-1 bg-red-50 rounded-full w-fit"><AlertCircle size={12}/> Missing Cost</span>
