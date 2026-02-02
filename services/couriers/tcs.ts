@@ -112,7 +112,9 @@ export class TcsAdapter implements CourierAdapter {
       if (response?.access_token) return response.access_token;
       if (response?.data?.access_token) return response.data.access_token;
       
-      throw new Error(`Invalid POST Response format`);
+      // NEW: Return exact error from TCS if available
+      const errorMsg = typeof response === 'object' ? JSON.stringify(response) : String(response).substring(0, 200);
+      throw new Error(`Invalid POST Response: ${errorMsg}`);
   }
 
   // Method 3: Authentication API (Username / Password)
