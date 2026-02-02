@@ -176,11 +176,43 @@ export class TcsAdapter implements CourierAdapter {
     if (s.includes('return') || s.includes('rto')) return OrderStatus.RETURNED;
     if (s.includes('cancel')) return OrderStatus.CANCELLED;
     if (s.includes('booked')) return OrderStatus.BOOKED;
+    if (s.includes('arrival') || s.includes('departed') || s.includes('transit') || s.includes('process') || s.includes('manifest')) {
+        return OrderStatus.IN_TRANSIT;
+    }
     
     if (s === 'ok') return OrderStatus.DELIVERED; 
     if (s === 'ro') return OrderStatus.RETURNED;
 
     return OrderStatus.IN_TRANSIT;
+  }
+
+  private parseTcsDate(dateStr: string): string {
+    if (!dateStr) return new Date().toISOString();
+    
+    // TCS dates can vary wildly. E.g. "2024-05-15T10:00:00", "15-05-2024", "15/05/2024"
+    try {
+        // 1. Try standard parser
+        const direct = new Date(dateStr);
+        if (!isNaN(direct.getTime())) return direct.toISOString();
+
+        // 2. Parse Pakistan format DD-MM-YYYY or DD/MM/YYYY
+        // Remove time part if exists to focus on date
+        const cleanDate = dateStr.split(' ')[0];
+        
+        // Match DD-MM-YYYY or DD/MM/YYYY
+        const parts = cleanDate.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+        
+        if (parts) {
+            const day = parseInt(parts[1]);
+            const month = parseInt(parts[2]) - 1; // JS months are 0-11
+            const year = parseInt(parts[3]);
+            return new Date(year, month, day).toISOString();
+        }
+    } catch(e) {
+        console.warn("Date Parse Error for TCS:", dateStr);
+    }
+    
+    return new Date().toISOString(); // Fallback to now
   }
 
   async track(trackingNumber: string, config: IntegrationConfig): Promise<TrackingUpdate> {
@@ -241,7 +273,7 @@ export class TcsAdapter implements CourierAdapter {
               let url = `${baseUrl}/ecom/api/Payment/detail?accesstoken=${encodeURIComponent(token)}&customerno=${costCenter}&fromdate=${fromParams}&todate=${toParams}`;
               response = await this.fetchWithFallback(url, { method: 'GET' });
               
-              if (!response || !response.detail) {
+              if (!response || (!response.detail && !response.data)) {
                    // Try V2 API (OCI)
                    url = `${baseUrl}/cod/api/v2/cod-details?accesstoken=${encodeURIComponent(token)}&costCenterCode=${costCenter}&startDate=${fromParams}&endDate=${toParams}`;
                    response = await this.fetchWithFallback(url, { method: 'GET' });
@@ -254,6 +286,7 @@ export class TcsAdapter implements CourierAdapter {
       let ordersList = [];
       if (response?.detail) ordersList = response.detail;
       else if (response?.data) ordersList = response.data;
+      else if (Array.isArray(response)) ordersList = response; // Sometimes root array
       
       if (!ordersList || !Array.isArray(ordersList)) {
           return [];
@@ -269,16 +302,17 @@ export class TcsAdapter implements CourierAdapter {
           }
           
           const deliveryCharges = parseFloat(tcsOrder['delivery charges'] || 0);
-          
+          const orderDate = tcsOrder['booking date'] || tcsOrder['bookingDate'];
+
           return {
-              id: tcsOrder['cn by courier'] || Math.random().toString(),
-              shopify_order_number: tcsOrder['order no'] || 'N/A',
-              created_at: tcsOrder['booking date'] ? new Date(tcsOrder['booking date']).toISOString() : new Date().toISOString(),
-              customer_city: tcsOrder.city || 'Unknown',
+              id: tcsOrder['cn by courier'] || tcsOrder['consignmentNo'] || Math.random().toString(),
+              shopify_order_number: tcsOrder['order no'] || tcsOrder['orderRefNo'] || 'N/A',
+              created_at: this.parseTcsDate(orderDate),
+              customer_city: tcsOrder.city || tcsOrder['consigneeCity'] || 'Unknown',
               courier: CourierName.TCS,
-              tracking_number: tcsOrder['cn by courier'],
+              tracking_number: tcsOrder['cn by courier'] || tcsOrder['consignmentNo'] || '',
               status: status,
-              payment_status: tcsOrder['payment status'] === 'Y' ? PaymentStatus.REMITTED : PaymentStatus.UNPAID,
+              payment_status: tcsOrder['payment status'] === 'Y' || tcsOrder['paymentStatus'] === 'Paid' ? PaymentStatus.REMITTED : PaymentStatus.UNPAID,
               
               cod_amount: amount, 
               shipping_fee_paid_by_customer: 0,

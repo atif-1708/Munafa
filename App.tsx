@@ -14,7 +14,7 @@ import { PostExAdapter } from './services/couriers/postex';
 import { TcsAdapter } from './services/couriers/tcs';
 import { ShopifyAdapter } from './services/shopify'; 
 import { Order, Product, AdSpend, CourierName, SalesChannel, CourierConfig, OrderStatus, ShopifyOrder, IntegrationConfig } from './types';
-import { Loader2, AlertTriangle, X } from 'lucide-react';
+import { Loader2, AlertTriangle, X, Info } from 'lucide-react';
 import { supabase } from './services/supabase';
 import { getCostAtDate } from './services/calculator';
 import { COURIER_RATES, PACKAGING_COST_AVG } from './constants';
@@ -33,6 +33,7 @@ const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
   
   // App Data State
   const [orders, setOrders] = useState<Order[]>([]);
@@ -106,6 +107,7 @@ const App: React.FC = () => {
     const fetchAppData = async () => {
       setLoading(true);
       setError(null);
+      setInfoMessage(null);
 
       try {
         const user = session?.user || { id: 'demo-user' };
@@ -236,6 +238,7 @@ const App: React.FC = () => {
 
         // F. Fetch Live Orders from Couriers
         let fetchedOrders: Order[] = [];
+        let infoMsgs: string[] = [];
 
         // 1. PostEx
         if (postExConfig) {
@@ -243,6 +246,7 @@ const App: React.FC = () => {
                 const postExAdapter = new PostExAdapter();
                 const pxOrders = await postExAdapter.fetchRecentOrders(postExConfig);
                 fetchedOrders = [...fetchedOrders, ...pxOrders];
+                if (pxOrders.length === 0) infoMsgs.push("PostEx connected but returned 0 orders in last 60 days.");
             } catch (e: any) {
                 console.error("PostEx Sync Error:", e);
                 setError((prev) => (prev ? prev + " | " : "") + "PostEx Failed: " + e.message);
@@ -255,10 +259,15 @@ const App: React.FC = () => {
                 const tcsAdapter = new TcsAdapter();
                 const tcsOrders = await tcsAdapter.fetchRecentOrders(tcsConfig);
                 fetchedOrders = [...fetchedOrders, ...tcsOrders];
+                if (tcsOrders.length === 0) infoMsgs.push("TCS connected but returned 0 orders in last 60 days.");
             } catch (e: any) {
                 console.error("TCS Sync Error:", e);
                 setError((prev) => (prev ? prev + " | " : "") + "TCS Failed: " + e.message);
             }
+        }
+
+        if(infoMsgs.length > 0) {
+            setInfoMessage(infoMsgs.join(' '));
         }
 
         // Process discovered items from Courier Orders
@@ -575,6 +584,16 @@ const App: React.FC = () => {
                     <h4 className="font-bold">Sync Error</h4>
                     <p className="text-sm">{error}</p>
                     <button onClick={() => setRefreshTrigger(prev => prev + 1)} className="mt-2 text-xs font-bold underline">Retry Sync</button>
+                </div>
+            </div>
+        )}
+
+        {infoMessage && (
+            <div className="mb-6 bg-blue-50 border border-blue-200 p-4 rounded-xl flex gap-3 text-blue-800">
+                <Info className="shrink-0" />
+                <div>
+                    <h4 className="font-bold">Sync Info</h4>
+                    <p className="text-sm">{infoMessage}</p>
                 </div>
             </div>
         )}
