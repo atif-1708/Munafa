@@ -20,7 +20,7 @@ interface ProductStat {
   fulfilled: number;
   cancelled: number;
   dispatched: number;
-  in_transit: number; // Added
+  in_transit: number; 
   delivered: number;
   rto: number;
 }
@@ -138,6 +138,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
 
   const handleExport = () => {
     const doc = new jsPDF();
+    const todayStr = new Date().toISOString().split('T')[0];
     
     // --- 1. Header & Title ---
     doc.setTextColor(20, 83, 45); // Brand Green
@@ -152,7 +153,8 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
     
     doc.setTextColor(0);
     doc.setFontSize(14);
-    doc.text(`${storeName} - Reconciliation Report`, 14, 40);
+    // Renamed from "Reconciliation Report" to "Sales Report"
+    doc.text(`${storeName} - Sales Report`, 14, 40);
     doc.setFontSize(10);
     doc.setTextColor(100);
     doc.text(`Period: ${dateRange.start} to ${dateRange.end}`, 14, 46);
@@ -211,7 +213,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
             `${r.pending_fulfillment} ${p(r.pending_fulfillment, total)}`,
             `${r.fulfilled} ${p(r.fulfilled, total)}`,
             `${r.dispatched} ${p(r.dispatched, total)}`,
-            `${r.in_transit} ${p(r.in_transit, disp)}`, // Added Column
+            `${r.in_transit} ${p(r.in_transit, disp)}`, 
             `${r.delivered} ${p(r.delivered, disp)}`, 
             `${r.rto} ${p(r.rto, disp)}` 
         ];
@@ -231,7 +233,8 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
         }
     });
     
-    doc.save(`${storeName.replace(/\s+/g, '_')}_Reconciliation_Report.pdf`);
+    // Save with Simple Name + Date
+    doc.save(`${storeName.replace(/\s+/g, '_')}_Sales_Report_${todayStr}.pdf`);
   };
 
   return (

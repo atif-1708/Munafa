@@ -9,7 +9,7 @@ import { TikTokService } from '../services/tiktok';
 import { supabase } from '../services/supabase';
 import { 
     CheckCircle2, AlertTriangle, Key, Globe, Loader2, Store, ArrowRight, 
-    RefreshCw, ShieldCheck, Link, Truck, Info, Settings, Facebook, ExternalLink, Zap, Lock, Grid, CreditCard, User
+    RefreshCw, ShieldCheck, Link, Truck, Info, Settings, Facebook, ExternalLink, Zap, Lock, Grid, CreditCard, User, CheckSquare, Square
 } from 'lucide-react';
 
 const COURIER_META: Record<string, { color: string, bg: string, border: string, icon: string, label: string, desc: string }> = {
@@ -168,15 +168,28 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
           
           if(accounts.length === 0) throw new Error("No Ad Accounts found for this token.");
           
-          // Auto-select first if none selected
-          if (fbConfig.ad_account_ids.length === 0) {
-              setFbConfig(prev => ({ ...prev, ad_account_ids: [accounts[0].id] }));
+          // Default to current selections or empty if none
+          const currentSelection = fbConfig.ad_account_ids || [];
+          if (currentSelection.length === 0 && accounts.length > 0) {
+             // Optional: Select first by default? No, let user select.
+             // setFbConfig(prev => ({ ...prev, ad_account_ids: [accounts[0].id] }));
           }
       } catch (e: any) {
           setErrorMessage("Facebook Error: " + e.message);
       } finally {
           setIsVerifyingFb(false);
       }
+  };
+
+  const toggleFbAccount = (accountId: string) => {
+    setFbConfig(prev => {
+        const current = prev.ad_account_ids || [];
+        if (current.includes(accountId)) {
+            return { ...prev, ad_account_ids: current.filter(id => id !== accountId) };
+        } else {
+            return { ...prev, ad_account_ids: [...current, accountId] };
+        }
+    });
   };
 
   const handleSaveFacebook = async () => {
@@ -393,19 +406,37 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                    </div>
                                    {availableAdAccounts.length > 0 ? (
                                        <div className="space-y-2">
-                                           <label className="block text-xs font-bold text-slate-700">Select Ad Account</label>
-                                           <select 
-                                               className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
-                                               onChange={(e) => setFbConfig({...fbConfig, ad_account_ids: [e.target.value]})}
-                                               value={fbConfig.ad_account_ids[0] || ''}
-                                           >
-                                               {availableAdAccounts.map(acc => (
-                                                   <option key={acc.id} value={acc.id}>{acc.name} ({acc.id})</option>
-                                               ))}
-                                           </select>
-                                           <button onClick={handleSaveFacebook} className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-bold mt-2">
-                                               Save Configuration
-                                           </button>
+                                           <label className="block text-xs font-bold text-slate-700">Select Ad Accounts</label>
+                                           <div className="max-h-48 overflow-y-auto border border-slate-300 rounded-lg bg-white p-2 space-y-1">
+                                               {availableAdAccounts.map(acc => {
+                                                   const isSelected = fbConfig.ad_account_ids.includes(acc.id);
+                                                   return (
+                                                       <div 
+                                                            key={acc.id} 
+                                                            onClick={() => toggleFbAccount(acc.id)}
+                                                            className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${isSelected ? 'bg-blue-50 border border-blue-100' : 'hover:bg-slate-50 border border-transparent'}`}
+                                                       >
+                                                           {isSelected ? (
+                                                               <CheckSquare size={18} className="text-blue-600 shrink-0" />
+                                                           ) : (
+                                                               <Square size={18} className="text-slate-300 shrink-0" />
+                                                           )}
+                                                           <div className="min-w-0">
+                                                               <p className={`text-sm truncate ${isSelected ? 'font-bold text-blue-900' : 'text-slate-700'}`}>{acc.name}</p>
+                                                               <p className="text-[10px] text-slate-400 font-mono">ID: {acc.id}</p>
+                                                           </div>
+                                                       </div>
+                                                   );
+                                               })}
+                                           </div>
+                                           <div className="flex justify-between items-center mt-2">
+                                                <span className="text-xs text-slate-500 font-medium">
+                                                    {fbConfig.ad_account_ids.length} selected
+                                                </span>
+                                                <button onClick={handleSaveFacebook} disabled={fbConfig.ad_account_ids.length === 0} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold disabled:opacity-50">
+                                                    Save Config
+                                                </button>
+                                           </div>
                                        </div>
                                    ) : (
                                        <button 
