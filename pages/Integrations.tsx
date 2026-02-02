@@ -597,22 +597,27 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                             </div>
 
                                             {useTcsManualToken ? (
-                                                <div className="space-y-2">
-                                                    <div className="space-y-1">
-                                                        <input 
-                                                            type="password"
-                                                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-yellow-50 focus:bg-white transition-colors" 
-                                                            placeholder="Paste Access Token (Bearer)" 
-                                                            value={config.api_token} 
-                                                            onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], api_token: e.target.value } }))} 
-                                                        />
-                                                        <p className="text-[9px] text-orange-600 text-center">Warning: Tokens expire every 24h. Update daily.</p>
-                                                    </div>
+                                                <div className="space-y-1">
+                                                    <input 
+                                                        type="password"
+                                                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-yellow-50 focus:bg-white transition-colors" 
+                                                        placeholder="Paste Access Token (Bearer)" 
+                                                        value={config.api_token} 
+                                                        onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], api_token: e.target.value } }))} 
+                                                    />
+                                                    <p className="text-[9px] text-orange-600 text-center">Warning: Tokens expire every 24h. Update daily.</p>
                                                     
-                                                    {/* Account Number Hidden/Removed for Manual Token as requested - It will be auto-extracted */}
-                                                    <p className="text-[10px] text-green-600 text-center font-medium bg-green-50 p-1 rounded">
-                                                        Account Number will be auto-detected from token.
-                                                    </p>
+                                                    {/* RESTORED: Account Number Field for Fallback */}
+                                                    <div className="mt-2">
+                                                        <label className="text-xs font-bold text-slate-500 ml-1">Account Number (Optional)</label>
+                                                        <input 
+                                                            type="text"
+                                                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
+                                                            placeholder="Enter manually if auto-detect fails" 
+                                                            value={config.merchant_id} 
+                                                            onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], merchant_id: e.target.value } }))} 
+                                                        />
+                                                    </div>
                                                 </div>
                                             ) : (
                                                 <>

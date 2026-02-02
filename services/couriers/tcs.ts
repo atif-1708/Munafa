@@ -50,7 +50,6 @@ export class TcsAdapter implements CourierAdapter {
 
   /**
    * Helper: Decode JWT to find ClientID/Account Number
-   * The TCS Token contains the clientid in the payload.
    */
   private extractAccountFromToken(token: string): string | null {
       if (!token) return null;
@@ -67,9 +66,20 @@ export class TcsAdapter implements CourierAdapter {
 
           const payload = JSON.parse(jsonPayload);
           
-          // PDF V1.0 implies 'clientid' is in the token payload
-          // We check common variations just in case
-          return payload.clientid || payload.ClientId || payload.unique_name || payload.sub || payload.nameid || null;
+          // Enhanced extraction logic
+          const candidate = 
+            payload.clientid || 
+            payload.ClientId || 
+            payload.customerno || 
+            payload.customerNo || 
+            payload.unique_name || 
+            payload.sub || 
+            payload.nameid;
+
+          // If it looks like a TCS account number (numeric or alphanumeric code), return it
+          if (candidate) return String(candidate);
+          
+          return null;
       } catch (e) {
           console.error("Error decoding TCS Token:", e);
           return null;
@@ -134,14 +144,14 @@ export class TcsAdapter implements CourierAdapter {
   async testConnection(config: IntegrationConfig): Promise<boolean> {
       try {
           const token = await this.getToken(config);
-          
-          // Verify we can find an account number (either explicit or extracted)
-          const accountNo = config.merchant_id?.trim() || this.extractAccountFromToken(token);
-          
           if (!token) return false;
-          if (!accountNo) {
-              console.warn("Token is valid but could not extract Account Number. Data fetch might fail.");
-              // We return true for connection, but data fetch will likely throw specific error
+
+          // CRITICAL FIX: Ensure we have an Account Number before saying "Success"
+          const explicitAccount = config.merchant_id?.trim();
+          const extractedAccount = this.extractAccountFromToken(token);
+          
+          if (!explicitAccount && !extractedAccount) {
+              throw new Error("Token Valid, but Account Number not found inside it. Please enter Account Number manually in the optional field.");
           }
           
           return true;
@@ -157,18 +167,16 @@ export class TcsAdapter implements CourierAdapter {
   async fetchRecentOrders(config: IntegrationConfig): Promise<Order[]> {
       const token = await this.getToken(config);
       
-      // PRIORITY 1: Use Explicit Merchant ID (if provided in Settings)
-      // PRIORITY 2: Use Client ID (Username)
-      // PRIORITY 3: Extract from Token (Manual Token Mode)
-      let accountNo = config.merchant_id?.trim() || config.username?.trim();
+      // Logic: Prefer Manual Entry -> Then Extracted -> Then Username
+      let accountNo = config.merchant_id?.trim();
       
       if (!accountNo) {
-          accountNo = this.extractAccountFromToken(token) || '';
+          accountNo = this.extractAccountFromToken(token) || config.username?.trim();
       }
       
       if (!accountNo) {
-          // Last ditch effort: Try without account number (API might error, but we try)
-          console.warn("No Account Number found. Attempting fetch without it (likely to fail).");
+          console.error("Critical: No TCS Account Number available.");
+          return [];
       }
 
       const end = new Date();
