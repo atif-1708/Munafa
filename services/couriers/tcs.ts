@@ -126,10 +126,21 @@ export class TcsAdapter implements CourierAdapter {
           
           let rawList: any[] = [];
           
+          // Fallback Strategy: Find the array in the response
           if (data.detail && Array.isArray(data.detail)) {
               rawList = data.detail;
           } else if (Array.isArray(data)) {
               rawList = data;
+          } else {
+             // Fallback: Check if there is ANY array property in the object
+             // Some accounts return { "paymentDetail": [...] } instead of "detail"
+             const keys = Object.keys(data);
+             for(const k of keys) {
+                 if(Array.isArray(data[k]) && data[k].length > 0) {
+                     rawList = data[k];
+                     break;
+                 }
+             }
           }
 
           return rawList.map((item: any) => {
