@@ -26,9 +26,8 @@ export class TcsAdapter implements CourierAdapter {
         const res = await fetch(proxyUrl, { ...options, headers });
         const text = await res.text();
 
-        if (res.ok) {
-             try { return JSON.parse(text); } catch { return text; }
-        }
+        // Try parsing JSON, fallback to text
+        try { return JSON.parse(text); } catch { return text; }
     } catch (e) {
         console.warn("Local proxy failed:", e);
     }
@@ -38,11 +37,18 @@ export class TcsAdapter implements CourierAdapter {
         const corsUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
         const res = await fetch(corsUrl, { ...options, credentials: 'omit' });
         const text = await res.text();
-        if (res.ok) {
-            try { return JSON.parse(text); } catch { return text; }
-        }
+        try { return JSON.parse(text); } catch { return text; }
     } catch (e) {
         console.warn("CORS proxy failed:", e);
+    }
+
+    // 3. Last Resort: Direct Fetch (Will likely fail CORS in browser, but works if backend or extension is used)
+    try {
+        const res = await fetch(targetUrl, options);
+        const text = await res.text();
+        try { return JSON.parse(text); } catch { return text; }
+    } catch (e) {
+        // Fall through
     }
 
     throw new Error("Unable to connect to TCS API via any route.");
@@ -85,35 +91,50 @@ export class TcsAdapter implements CourierAdapter {
   async testConnection(config: IntegrationConfig): Promise<boolean> {
       try {
           const token = config.api_token;
-
           if (!token) throw new Error("API Token is required.");
 
-          const today = new Date().toISOString().split('T')[0];
+          // Widen the check to last 7 days to increase likelihood of finding ANY data
+          // However, even if no data, we check if the server REJECTS the token.
+          const end = new Date();
+          const start = new Date();
+          start.setDate(start.getDate() - 7); 
+          
+          const fromDate = start.toISOString().split('T')[0];
+          const toDate = end.toISOString().split('T')[0];
           
           for (const baseUrl of this.BASE_URLS) {
               const endpoint = `${baseUrl}/ecom/api/Payment/detail`;
-              // NOTE: Removed customerno as it's not for account auth
-              const query = `?accesstoken=${encodeURIComponent(token)}&fromdate=${today}&todate=${today}`;
+              // NOTE: Removed customerno as requested
+              const query = `?accesstoken=${encodeURIComponent(token)}&fromdate=${fromDate}&todate=${toDate}`;
               
               const url = endpoint + query;
 
               try {
                   const res = await this.fetchUniversal(url, { method: 'GET' });
-                  // If we get a response object with 'detail' or 'message', the credentials worked.
-                  if (res && (res.detail || res.message || res.status === 'true' || res.status === true)) {
+                  
+                  // LOGIC: If we get an explicit Auth Error, fail.
+                  // If we get "No Record", Empty Array, or Data, assume Success.
+                  
+                  if (res) {
+                      // Known TCS Auth Failure responses
+                      const strRes = typeof res === 'string' ? res.toLowerCase() : JSON.stringify(res).toLowerCase();
+                      
+                      if (strRes.includes('unauthorized') || strRes.includes('invalid token')) {
+                          throw new Error("Invalid Token.");
+                      }
+
+                      // If we are here, the API responded without an Auth error.
+                      // It might be { "message": "No Record Found" } or [ ...data... ]
                       return true;
                   }
-                  // If unauthorized, it usually returns status: false or code: 401
-                  if (res && (res.code === 401 || res.status === 'UnAuthorized')) {
-                      throw new Error("Invalid Token.");
-                  }
-              } catch (e) {
-                  // Continue to next base URL
+              } catch (e: any) {
+                  if (e.message === "Invalid Token.") throw e;
+                  // Otherwise ignore network errors on specific Base URLs and try next
               }
           }
           
-          // If we reach here, no endpoint worked
-          throw new Error("Could not validate credentials with TCS.");
+          // If we reach here, no endpoint responded
+          throw new Error("Could not validate credentials with TCS (Network/CORS Error).");
 
       } catch (e: any) {
           console.error("TCS Test Failed:", e);
@@ -155,6 +176,10 @@ export class TcsAdapter implements CourierAdapter {
               if (res?.detail && Array.isArray(res.detail)) {
                   rawData = res.detail;
                   break; // Success
+              } else if (Array.isArray(res)) {
+                  // Sometimes root array
+                  rawData = res;
+                  break;
               } else if (res?.message === "Invalid CN" || res?.message?.includes("No Record")) {
                   // Valid connection but no data
                   break; 
@@ -164,7 +189,7 @@ export class TcsAdapter implements CourierAdapter {
           }
       }
 
-      if (rawData.length === 0) return [];
+      if (!rawData || rawData.length === 0) return [];
 
       return rawData.map((item: any) => {
           // Map Fields based on PDF Response (Page 22/23)
