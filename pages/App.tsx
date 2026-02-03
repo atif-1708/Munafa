@@ -772,7 +772,7 @@ const App: React.FC = () => {
         ) : (
             <>
                 {currentPage === 'dashboard' && <Dashboard orders={orders} shopifyOrders={shopifyOrders} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} storeName={storeName} />}
-                {currentPage === 'orders' && <Orders orders={orders} />}
+                {currentPage === 'orders' && <Orders orders={orders} onTrackOrder={handleManualTrack} />}
                 {currentPage === 'couriers' && <Couriers orders={orders} />}
                 {/* Updated to pass tcsConfig for manual tracking */}
                 {currentPage === 'tcs-debug' && <TcsDebug orders={orders} shopifyOrders={shopifyOrders} onTrackOrder={handleManualTrack} tcsConfig={configs.tcs} />}

@@ -1,53 +1,113 @@
-import React, { useState } from 'react';
-import { Order, OrderStatus, PaymentStatus } from '../types';
+
+import React, { useState, useMemo } from 'react';
+import { Order, OrderStatus, PaymentStatus, CourierName } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { Filter, Search, Calendar } from 'lucide-react';
+import { Filter, Search, Calendar, RefreshCw, Loader2, CheckCircle } from 'lucide-react';
 
 interface OrdersProps {
   orders: Order[];
+  onTrackOrder?: (order: Order) => Promise<OrderStatus>;
 }
 
-const Orders: React.FC<OrdersProps> = ({ orders }) => {
+const Orders: React.FC<OrdersProps> = ({ orders, onTrackOrder }) => {
   const [filter, setFilter] = useState('ALL');
   const [search, setSearch] = useState('');
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncCount, setSyncCount] = useState({ current: 0, total: 0 });
 
-  const filteredOrders = orders.filter(o => {
-    // 1. Search Filter
-    const matchesSearch = o.shopify_order_number.toLowerCase().includes(search.toLowerCase()) || 
-                          o.customer_city.toLowerCase().includes(search.toLowerCase()) ||
-                          o.items.some(i => i.product_name.toLowerCase().includes(search.toLowerCase()));
-    if (!matchesSearch) return false;
+  const filteredOrders = useMemo(() => {
+      return orders.filter(o => {
+        // 1. Search Filter
+        const matchesSearch = o.shopify_order_number.toLowerCase().includes(search.toLowerCase()) || 
+                              o.customer_city.toLowerCase().includes(search.toLowerCase()) ||
+                              o.items.some(i => i.product_name.toLowerCase().includes(search.toLowerCase()));
+        if (!matchesSearch) return false;
 
-    // 2. Date Range Filter
-    if (dateRange.start) {
-        const start = new Date(dateRange.start);
-        start.setHours(0, 0, 0, 0);
-        if (new Date(o.created_at) < start) return false;
-    }
-    if (dateRange.end) {
-        const end = new Date(dateRange.end);
-        end.setHours(23, 59, 59, 999);
-        if (new Date(o.created_at) > end) return false;
-    }
+        // 2. Date Range Filter
+        if (dateRange.start) {
+            const start = new Date(dateRange.start);
+            start.setHours(0, 0, 0, 0);
+            if (new Date(o.created_at) < start) return false;
+        }
+        if (dateRange.end) {
+            const end = new Date(dateRange.end);
+            end.setHours(23, 59, 59, 999);
+            if (new Date(o.created_at) > end) return false;
+        }
 
-    // 3. Status Category Filter
-    if (filter === 'ALL') return true;
-    if (filter === 'UNBOOKED') return o.status === OrderStatus.PENDING;
-    if (filter === 'BOOKED') return o.status === OrderStatus.BOOKED;
-    if (filter === 'IN_TRANSIT') return o.status === OrderStatus.IN_TRANSIT;
-    if (filter === 'DELIVERED') return o.status === OrderStatus.DELIVERED;
-    if (filter === 'RETURNED') return o.status === OrderStatus.RETURNED || o.status === OrderStatus.RTO_INITIATED;
-    
-    return true;
-  });
+        // 3. Status Category Filter
+        if (filter === 'ALL') return true;
+        if (filter === 'UNBOOKED') return o.status === OrderStatus.PENDING;
+        if (filter === 'BOOKED') return o.status === OrderStatus.BOOKED;
+        if (filter === 'IN_TRANSIT') return o.status === OrderStatus.IN_TRANSIT;
+        if (filter === 'DELIVERED') return o.status === OrderStatus.DELIVERED;
+        if (filter === 'RETURNED') return o.status === OrderStatus.RETURNED || o.status === OrderStatus.RTO_INITIATED;
+        
+        return true;
+      });
+  }, [orders, search, dateRange, filter]);
+
+  // Identify orders that are eligible for live tracking updates
+  const trackableTcsOrders = useMemo(() => {
+      return orders.filter(o => 
+          o.courier === CourierName.TCS && 
+          o.tracking_number && 
+          o.tracking_number.length > 6 &&
+          o.tracking_number !== 'Pending' &&
+          (o.status === OrderStatus.IN_TRANSIT || o.status === OrderStatus.PENDING)
+      );
+  }, [orders]);
+
+  const handleSyncTcs = async () => {
+      if (!onTrackOrder || trackableTcsOrders.length === 0) return;
+      
+      setIsSyncing(true);
+      setSyncCount({ current: 0, total: trackableTcsOrders.length });
+
+      for (let i = 0; i < trackableTcsOrders.length; i++) {
+          try {
+              await onTrackOrder(trackableTcsOrders[i]);
+          } catch (e) {
+              console.error("Sync failed for", trackableTcsOrders[i].id);
+          }
+          setSyncCount(prev => ({ ...prev, current: i + 1 }));
+          // Add small delay to prevent rate limiting
+          await new Promise(r => setTimeout(r, 800));
+      }
+
+      setIsSyncing(false);
+  };
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
         <h2 className="text-2xl font-bold text-slate-900">Order Management</h2>
         
-        <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
+        <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto items-center">
+          {/* Sync Button */}
+          {trackableTcsOrders.length > 0 && onTrackOrder && (
+              <button 
+                onClick={handleSyncTcs}
+                disabled={isSyncing}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold transition-all shadow-sm ${
+                    isSyncing ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                  {isSyncing ? (
+                      <>
+                          <Loader2 size={16} className="animate-spin" />
+                          Syncing {syncCount.current}/{syncCount.total}
+                      </>
+                  ) : (
+                      <>
+                          <RefreshCw size={16} className="text-indigo-600" />
+                          Sync {trackableTcsOrders.length} TCS Statuses
+                      </>
+                  )}
+              </button>
+          )}
+
           {/* Date Filters */}
           <div className="flex items-center gap-2 bg-white px-3 py-2 border rounded-lg text-sm">
             <Calendar size={16} className="text-slate-400" />
@@ -134,7 +194,7 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
                     {order.customer_city}
                   </td>
                   <td className="px-6 py-4">
-                    <StatusBadge status={order.status} />
+                    <StatusBadge status={order.status} raw={order.courier_raw_status} />
                   </td>
                   <td className="px-6 py-4">
                     <div className="font-medium">{formatCurrency(order.cod_amount)}</div>
@@ -155,7 +215,7 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
                     <span className="inline-flex items-center px-2 py-1 rounded bg-slate-100 text-xs font-medium text-slate-700">
                       {order.courier}
                     </span>
-                    <div className="text-xs text-slate-400 mt-1">{order.tracking_number}</div>
+                    <div className="text-xs text-slate-400 mt-1 font-mono">{order.tracking_number}</div>
                   </td>
                 </tr>
               )}) : (
@@ -173,7 +233,7 @@ const Orders: React.FC<OrdersProps> = ({ orders }) => {
   );
 };
 
-const StatusBadge = ({ status }: { status: OrderStatus }) => {
+const StatusBadge = ({ status, raw }: { status: OrderStatus, raw?: string }) => {
     const styles = {
         [OrderStatus.DELIVERED]: 'bg-green-100 text-green-700',
         [OrderStatus.PENDING]: 'bg-yellow-100 text-yellow-700',
@@ -187,9 +247,16 @@ const StatusBadge = ({ status }: { status: OrderStatus }) => {
     const label = status === OrderStatus.PENDING ? 'UNBOOKED' : status.replace('_', ' ');
 
     return (
-        <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${styles[status]}`}>
-            {label}
-        </span>
+        <div className="flex flex-col items-start gap-1">
+            <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${styles[status]}`}>
+                {label}
+            </span>
+            {raw && raw !== label && (
+                <span className="text-[10px] text-slate-400 max-w-[120px] leading-tight truncate" title={raw}>
+                    {raw}
+                </span>
+            )}
+        </div>
     );
 };
 
