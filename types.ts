@@ -92,6 +92,16 @@ export interface ShopifyLineItem {
   product_id: number;
 }
 
+export interface ShopifyFulfillment {
+    id: number;
+    created_at: string;
+    service: string;
+    tracking_company: string;
+    tracking_number: string;
+    tracking_url: string;
+    status: string;
+}
+
 export interface ShopifyOrder {
   id: number;
   name: string; // e.g. #1024
@@ -101,6 +111,7 @@ export interface ShopifyOrder {
   cancel_reason: string | null; // customer, inventory, fraud
   total_price: string;
   line_items: ShopifyLineItem[];
+  fulfillments?: ShopifyFulfillment[]; // Added for Tracking Sync
   customer?: {
       first_name: string;
       city: string;

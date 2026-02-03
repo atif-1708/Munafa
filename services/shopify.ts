@@ -19,7 +19,8 @@ export class ShopifyAdapter {
     const historyWindow = new Date();
     historyWindow.setDate(historyWindow.getDate() - 120);
     
-    const fields = "id,name,created_at,financial_status,fulfillment_status,cancel_reason,total_price,line_items,customer";
+    // Added 'fulfillments' to fields
+    const fields = "id,name,created_at,financial_status,fulfillment_status,cancel_reason,total_price,line_items,customer,fulfillments";
     let nextUrl = `https://${domain}/admin/api/2023-10/orders.json?status=any&limit=250&created_at_min=${historyWindow.toISOString()}&fields=${fields}`;
 
     let allOrders: ShopifyOrder[] = [];
@@ -170,7 +171,8 @@ export class ShopifyAdapter {
               total_price: '2500.00',
               line_items: [{
                   id: 999000 + i, title: 'Demo Product', quantity: 1, sku: 'DEMO-001', price: '2500.00', variant_id: 1, product_id: 101
-              }]
+              }],
+              fulfillments: []
           });
       }
       return orders;
