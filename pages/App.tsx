@@ -261,75 +261,79 @@ const App: React.FC = () => {
         if (tcsConfig && rawShopifyOrders.length > 0) {
              const tcsAdapter = new TcsAdapter();
              const existingRefNos = new Set(fetchedOrders.map(o => o.shopify_order_number.replace('#','')));
-             const backfillOrders: Order[] = [];
              
-             // Process recent 50 to avoid hammering the tracking API
+             // IMPROVED STRATEGY:
+             // 1. Filter ALL Shopify orders to find TCS candidates first (ignore unfulfilled or non-TCS).
+             // 2. Slice the CANDIDATES list, not the raw list, to ensure we find older orders.
              const candidates = rawShopifyOrders
-                .slice(0, 50)
                 .filter(s => {
                     const isUnmapped = !existingRefNos.has(s.name.replace('#',''));
+                    // Is fulfilled/partial?
+                    const isFulfilled = s.fulfillment_status === 'fulfilled' || s.fulfillment_status === 'partial';
+                    if (!isUnmapped || !isFulfilled) return false;
+
                     // Is fulfilled by TCS?
-                    const isTCS = s.fulfillments?.some(f => 
+                    return s.fulfillments?.some(f => 
                         (f.tracking_company && f.tracking_company.toLowerCase().includes('tcs')) || 
                         (f.tracking_number && /^\d{9,15}$/.test(f.tracking_number)) // Guess TCS format
                     );
-                    return isUnmapped && isTCS;
-                });
+                })
+                .slice(0, 30); // Limit concurrent requests to 30 to avoid timeout/rate-limit
 
-             // Parallel Fetch with rate limiting logic implicitly by chunk size
-             const promises = candidates.map(async (sOrder) => {
-                 const ff = sOrder.fulfillments?.find(f => f.tracking_number);
-                 if (!ff) return null;
+             if (candidates.length > 0) {
+                 console.log(`[TCS Backfill] Found ${candidates.length} candidates to track...`);
+                 
+                 const promises = candidates.map(async (sOrder) => {
+                     const ff = sOrder.fulfillments?.find(f => f.tracking_number);
+                     if (!ff) return null;
 
-                 try {
-                     const update = await tcsAdapter.track(ff.tracking_number, tcsConfig);
-                     const cod = parseFloat(sOrder.total_price);
-                     
-                     // Construct Order Object from Shopify Data + TCS Status
-                     const newOrder: Order = {
-                         id: ff.tracking_number,
-                         shopify_order_number: sOrder.name,
-                         created_at: sOrder.created_at,
-                         customer_city: sOrder.customer?.city || 'Unknown',
-                         courier: CourierName.TCS,
-                         tracking_number: ff.tracking_number,
-                         status: update.status,
-                         payment_status: PaymentStatus.UNPAID, // Tracking API doesn't confirm payment
-                         cod_amount: cod,
-                         shipping_fee_paid_by_customer: 0,
-                         // Estimate Fee based on settings since tracking doesn't provide it
-                         courier_fee: fetchedSettings.rates[CourierName.TCS].forward,
-                         rto_penalty: 0, 
-                         packaging_cost: fetchedSettings.packagingCost,
-                         overhead_cost: 0,
-                         tax_amount: 0,
-                         data_source: 'tracking', // Mark as tracked individually
-                         items: sOrder.line_items.map(li => ({
-                             product_id: 'unknown',
-                             quantity: li.quantity,
-                             sale_price: parseFloat(li.price),
-                             product_name: li.title,
-                             sku: li.sku,
-                             variant_fingerprint: li.sku || 'unknown',
-                             cogs_at_time_of_order: 0
-                         }))
-                     };
-                     return newOrder;
-                 } catch (e) {
-                     return null;
+                     try {
+                         const update = await tcsAdapter.track(ff.tracking_number, tcsConfig!);
+                         const cod = parseFloat(sOrder.total_price);
+                         
+                         const newOrder: Order = {
+                             id: ff.tracking_number,
+                             shopify_order_number: sOrder.name,
+                             created_at: sOrder.created_at,
+                             customer_city: sOrder.customer?.city || 'Unknown',
+                             courier: CourierName.TCS,
+                             tracking_number: ff.tracking_number,
+                             status: update.status,
+                             payment_status: PaymentStatus.UNPAID,
+                             cod_amount: cod,
+                             shipping_fee_paid_by_customer: 0,
+                             courier_fee: fetchedSettings.rates[CourierName.TCS].forward,
+                             rto_penalty: 0, 
+                             packaging_cost: fetchedSettings.packagingCost,
+                             overhead_cost: 0,
+                             tax_amount: 0,
+                             data_source: 'tracking', 
+                             items: sOrder.line_items.map(li => ({
+                                 product_id: 'unknown',
+                                 quantity: li.quantity,
+                                 sale_price: parseFloat(li.price),
+                                 product_name: li.title,
+                                 sku: li.sku,
+                                 variant_fingerprint: li.sku || 'unknown',
+                                 cogs_at_time_of_order: 0
+                             }))
+                         };
+                         return newOrder;
+                     } catch (e: any) {
+                         console.warn(`[TCS Backfill] Failed to track ${ff.tracking_number}:`, e.message);
+                         return null;
+                     }
+                 });
+
+                 const results = await Promise.all(promises);
+                 const validResults = results.filter((o): o is Order => o !== null);
+                 
+                 if (validResults.length > 0) {
+                     fetchedOrders = [...fetchedOrders, ...validResults];
+                     if (!tcsFoundOrders) {
+                         infoMsgs.push(`Fetched ${validResults.length} active orders via TCS Live Tracking.`);
+                     }
                  }
-             });
-
-             const results = await Promise.all(promises);
-             const validResults = results.filter((o): o is Order => o !== null);
-             
-             if (validResults.length > 0) {
-                 fetchedOrders = [...fetchedOrders, ...validResults];
-                 if (!tcsFoundOrders) {
-                     infoMsgs.push(`TCS Payment API returned 0 records, but we successfully tracked ${validResults.length} active orders from Shopify data.`);
-                 }
-             } else if (!tcsFoundOrders && candidates.length > 0) {
-                 infoMsgs.push("TCS connected but no orders could be tracked via Payment API or Shopify numbers.");
              }
         }
 
