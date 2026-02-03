@@ -10,6 +10,7 @@ import Settings from './pages/Settings';
 import Inventory from './pages/Inventory';
 import Marketing from './pages/Marketing';
 import Reconciliation from './pages/Reconciliation'; 
+import TcsDebug from './pages/TcsDebug'; // New Import
 import Auth from './pages/Auth'; 
 import { PostExAdapter } from './services/couriers/postex';
 import { TcsAdapter } from './services/couriers/tcs';
@@ -302,6 +303,7 @@ const App: React.FC = () => {
                          packaging_cost: fetchedSettings.packagingCost,
                          overhead_cost: 0,
                          tax_amount: 0,
+                         data_source: 'tracking', // Mark as tracked individually
                          items: sOrder.line_items.map(li => ({
                              product_id: 'unknown',
                              quantity: li.quantity,
@@ -650,6 +652,7 @@ const App: React.FC = () => {
                 {currentPage === 'dashboard' && <Dashboard orders={orders} shopifyOrders={shopifyOrders} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} storeName={storeName} />}
                 {currentPage === 'orders' && <Orders orders={orders} />}
                 {currentPage === 'couriers' && <Couriers orders={orders} />}
+                {currentPage === 'tcs-debug' && <TcsDebug orders={orders} />}
                 {currentPage === 'profitability' && <Profitability orders={orders} shopifyOrders={shopifyOrders} products={products} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} storeName={storeName} />}
                 {currentPage === 'inventory' && <Inventory products={products} orders={orders} shopifyOrders={shopifyOrders} onUpdateProducts={handleUpdateProducts} />}
                 {currentPage === 'marketing' && <Marketing adSpend={adSpend} products={products} orders={orders} onAddAdSpend={handleUpdateAdSpend} onDeleteAdSpend={handleDeleteAdSpend} onSyncAdSpend={handleSyncAdSpend} onNavigate={setCurrentPage} />}

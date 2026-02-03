@@ -168,6 +168,7 @@ export class TcsAdapter implements CourierAdapter {
                   packaging_cost: 45,
                   overhead_cost: 0,
                   tax_amount: 0,
+                  data_source: 'settlement',
                   items: [{
                       product_id: 'unknown',
                       quantity: 1,

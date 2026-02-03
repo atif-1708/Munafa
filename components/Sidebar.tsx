@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { LayoutDashboard, ShoppingBag, Truck, BarChart3, Settings, TrendingUp, Plug, PackageSearch, GitCompare, LogOut } from 'lucide-react';
+import { LayoutDashboard, ShoppingBag, Truck, BarChart3, Settings, TrendingUp, Plug, PackageSearch, GitCompare, LogOut, Radio } from 'lucide-react';
 import { supabase } from '../services/supabase';
 
 interface SidebarProps {
@@ -24,6 +24,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     { id: 'inventory', label: 'Inventory & Costs', icon: PackageSearch },
     { id: 'orders', label: 'Orders & RTO', icon: ShoppingBag },
     { id: 'couriers', label: 'Courier Performance', icon: Truck },
+    { id: 'tcs-debug', label: 'TCS Live Tracking', icon: Radio }, // New Item
     { id: 'profitability', label: 'Product Profitability', icon: TrendingUp },
     { id: 'marketing', label: 'Ad Spend', icon: BarChart3 },
     { id: 'integrations', label: 'Integrations', icon: Plug },

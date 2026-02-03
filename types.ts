@@ -79,6 +79,9 @@ export interface Order {
   rto_penalty: number; // Fee charged if returned
   
   items: OrderItem[];
+
+  // NEW: Data Source Tracking
+  data_source?: 'settlement' | 'tracking';
 }
 
 // --- NEW: Shopify Order Interfaces ---
