@@ -1,8 +1,8 @@
 
 import React, { useState, useMemo } from 'react';
-import { Order, OrderStatus, ShopifyOrder } from '../types';
+import { Order, ShopifyOrder } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { Radio, Database, CheckCircle2, Search, FileQuestion, AlertTriangle, Filter, Package } from 'lucide-react';
+import { Radio, Database, CheckCircle2, Search, FileQuestion, AlertTriangle, Filter, Package, ChevronRight } from 'lucide-react';
 
 interface TcsDebugProps {
   orders: Order[];
@@ -14,25 +14,34 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) 
   const [searchTerm, setSearchTerm] = useState('');
   const [showOnlyTcsCandidates, setShowOnlyTcsCandidates] = useState(true);
 
-  // SAFEGUARD: Ensure arrays exist
-  const safeOrders = Array.isArray(orders) ? orders : [];
-  const safeShopifyOrders = Array.isArray(shopifyOrders) ? shopifyOrders : [];
+  // SAFEGUARD: Ensure inputs are arrays to prevent crashes
+  const safeOrders = useMemo(() => Array.isArray(orders) ? orders : [], [orders]);
+  const safeShopifyOrders = useMemo(() => Array.isArray(shopifyOrders) ? shopifyOrders : [], [shopifyOrders]);
 
-  // 1. Orders successfully tracked by App.tsx logic
+  // 1. Orders successfully tracked by App.tsx logic (Matched TCS Orders)
   const trackingOrders = useMemo(() => 
     safeOrders.filter(o => o.data_source === 'tracking'), 
   [safeOrders]);
 
-  // Helper to determine if an order looks like TCS
+  // Helper to safely determine if an order looks like TCS
   const isTcsCandidate = (o: ShopifyOrder) => {
+      if (!o) return false;
       const hasTcsTag = (o.tags || '').toLowerCase().includes('tcs');
-      const fulfillment = o.fulfillments && o.fulfillments.length > 0 ? o.fulfillments[0] : null;
+      
+      const fulfillments = Array.isArray(o.fulfillments) ? o.fulfillments : [];
+      const fulfillment = fulfillments.length > 0 ? fulfillments[0] : null;
+      
       const company = fulfillment?.tracking_company?.toLowerCase() || '';
       const trackNo = fulfillment?.tracking_number || '';
-      const isFormatMatch = trackNo && /^\d{9,16}$/.test(trackNo.replace(/[^0-9]/g,''));
       
-      // Candidate if Tagged TCS OR Company is TCS OR Format looks like TCS (and not explicitly another courier)
-      return hasTcsTag || company.includes('tcs') || (isFormatMatch && !company.includes('trax') && !company.includes('leopard'));
+      // Check for TCS format (9-16 digits)
+      const cleanTrackNo = trackNo.replace(/[^0-9]/g,'');
+      const isFormatMatch = cleanTrackNo.length >= 9 && cleanTrackNo.length <= 16;
+      
+      // Exclude known competitors if verifying by format
+      const isOtherCourier = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('mnp') || company.includes('callcourier');
+
+      return hasTcsTag || company.includes('tcs') || (isFormatMatch && !isOtherCourier);
   };
 
   // 2. Filter Raw Orders for search and TCS toggle
@@ -47,11 +56,15 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) 
       // Filter by Search
       if (searchTerm) {
           const lowerTerm = searchTerm.toLowerCase();
-          data = data.filter(o => 
-              (o.name || '').toLowerCase().includes(lowerTerm) ||
-              (o.tags && o.tags.toLowerCase().includes(lowerTerm)) ||
-              o.line_items.some(i => i.title.toLowerCase().includes(lowerTerm))
-          );
+          data = data.filter(o => {
+              const name = (o.name || '').toLowerCase();
+              const tags = (o.tags || '').toLowerCase();
+              // Safe access to line items
+              const items = Array.isArray(o.line_items) ? o.line_items : [];
+              const hasItemMatch = items.some(i => (i.title || '').toLowerCase().includes(lowerTerm));
+              
+              return name.includes(lowerTerm) || tags.includes(lowerTerm) || hasItemMatch;
+          });
       }
       return data;
   }, [safeShopifyOrders, searchTerm, showOnlyTcsCandidates]);
@@ -134,7 +147,7 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) 
                           {showOnlyTcsCandidates ? 'Filter: Just TCS' : 'Show All Orders'}
                       </button>
                       <span className="text-xs text-slate-500">
-                          Showing {filteredRawOrders.length} orders
+                          {filteredRawOrders.length} orders
                       </span>
                   </div>
                   
@@ -155,7 +168,7 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) 
                           <tr>
                               <th className="px-4 py-3">Order</th>
                               <th className="px-4 py-3">Date</th>
-                              <th className="px-4 py-3 w-1/3">Items</th>
+                              <th className="px-4 py-3 w-[35%]">Items</th>
                               <th className="px-4 py-3">Tracking</th>
                               <th className="px-4 py-3">Tags</th>
                               <th className="px-4 py-3">Analysis</th>
@@ -163,16 +176,20 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) 
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                           {filteredRawOrders.slice(0, 100).map(o => {
-                              // SAFE GUARDED ACCESSORS
+                              // SAFE ACCESSORS
                               const name = o.name || 'Unknown';
                               const date = o.created_at ? new Date(o.created_at).toLocaleDateString() : 'No Date';
                               const hasTcsTag = (o.tags || '').toLowerCase().includes('tcs');
-                              const fulfillment = o.fulfillments && o.fulfillments.length > 0 ? o.fulfillments[0] : null;
+                              
+                              const fulfillments = Array.isArray(o.fulfillments) ? o.fulfillments : [];
+                              const fulfillment = fulfillments.length > 0 ? fulfillments[0] : null;
+                              
                               const company = fulfillment?.tracking_company || 'None';
                               const trackNo = fulfillment?.tracking_number || 'None';
                               
-                              // Item Summary
-                              const itemsSummary = o.line_items.map(i => `${i.quantity}x ${i.title}`).join(', ');
+                              // Safe Item Summary
+                              const items = Array.isArray(o.line_items) ? o.line_items : [];
+                              const itemsSummary = items.map(i => `${i.quantity}x ${i.title}`).join(', ');
 
                               let analysis = "Ignored";
                               let color = "text-slate-400";
@@ -197,9 +214,9 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) 
                                       <td className="px-4 py-3 font-bold text-slate-800 align-top">{name}</td>
                                       <td className="px-4 py-3 text-slate-500 align-top">{date}</td>
                                       <td className="px-4 py-3 text-slate-600 align-top">
-                                          <div className="flex items-start gap-2 max-h-16 overflow-y-auto">
+                                          <div className="flex items-start gap-2 max-h-20 overflow-y-auto">
                                               <Package size={14} className="mt-0.5 shrink-0 text-slate-400" />
-                                              <span className="leading-tight">{itemsSummary}</span>
+                                              <span className="leading-tight text-[11px]">{itemsSummary || 'No Items'}</span>
                                           </div>
                                       </td>
                                       <td className="px-4 py-3 align-top">
@@ -222,7 +239,8 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) 
                           {filteredRawOrders.length === 0 && (
                               <tr>
                                   <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
-                                      No orders found matching the filter.
+                                      No orders found matching the filter. <br/>
+                                      Try disabling "Filter: Just TCS" to see all Shopify orders.
                                   </td>
                               </tr>
                           )}
@@ -239,7 +257,7 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) 
                   <thead className="bg-slate-50 border-b border-slate-200 uppercase text-xs font-bold text-slate-500">
                       <tr>
                           <th className="px-6 py-4">Shopify Ref</th>
-                          <th className="px-6 py-4 w-1/3">Items</th>
+                          <th className="px-6 py-4 w-[35%]">Items</th>
                           <th className="px-6 py-4">Tracking Number</th>
                           <th className="px-6 py-4">Status</th>
                           <th className="px-6 py-4">Est. COD</th>
@@ -252,7 +270,7 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) 
                                   {o.shopify_order_number}
                               </td>
                               <td className="px-6 py-4 text-slate-600 text-xs align-top">
-                                  {o.items.map(i => `${i.quantity}x ${i.product_name}`).join(', ')}
+                                  {(o.items || []).map(i => `${i.quantity}x ${i.product_name}`).join(', ') || 'No Items'}
                               </td>
                               <td className="px-6 py-4 text-slate-600 font-mono align-top">
                                   {o.tracking_number}
