@@ -21,12 +21,14 @@ export class TcsAdapter implements CourierAdapter {
       const targetUrl = `${fullUrl}?${query}`;
       
       // 2. Send via Proxy
+      // PDF Page 32: "Bearer Token Provided in Authorization API"
+      // We must send 'Authorization: Bearer <token>'
       const res = await fetch(`/api/proxy?url=${encodeURIComponent(targetUrl)}`, {
           method: 'GET',
           headers: {
               'Accept': 'application/json',
               'Cache-Control': 'no-cache',
-              'X-IBM-Client-Id': token 
+              'Authorization': `Bearer ${token}` 
           }
       });
 
@@ -34,11 +36,17 @@ export class TcsAdapter implements CourierAdapter {
 
       // 3. Parse Response
       try {
-          return JSON.parse(text);
-      } catch {
-          if (text.includes('Invalid Token') || text.includes('Unauthorized')) {
+          const json = JSON.parse(text);
+          // Check for API-level errors even if HTTP is 200
+          if (json.message && (json.message === 'Invalid access token' || json.code === '401')) {
               throw new Error("TCS Error: Invalid Token");
           }
+          return json;
+      } catch (e: any) {
+          if (text.includes('Invalid Token') || text.includes('Unauthorized') || text.includes('401')) {
+              throw new Error("TCS Error: Invalid Token");
+          }
+          // If valid JSON but business error, let caller handle it or return null
           return null; 
       }
   }
@@ -60,6 +68,7 @@ export class TcsAdapter implements CourierAdapter {
           
           if (data) {
               if (data.checkpoints && Array.isArray(data.checkpoints) && data.checkpoints.length > 0) {
+                  // Checkpoints usually sorted newest first (index 0)
                   const latest = data.checkpoints[0];
                   rawStatus = latest.status || "Unknown";
                   statusDate = latest.datetime || statusDate;
@@ -73,7 +82,7 @@ export class TcsAdapter implements CourierAdapter {
           console.warn(`TCS Live Track failed for ${trackingNumber}, attempting fallback.`);
       }
 
-      // 2. Fallback to Shipment Info if Live Tracking failed
+      // 2. Fallback to Shipment Info (Booking Data) if Live Tracking failed
       if (!foundData || rawStatus === "Unknown") {
            try {
                const data = await this.request(`${this.ECOM_URL}/shipmentinfo`, config.api_token, { consignmentNo: trackingNumber });
@@ -95,12 +104,12 @@ export class TcsAdapter implements CourierAdapter {
            }
       }
 
-      // 3. Map status
+      // 3. Map status or default
       const status = this.mapStatus(rawStatus);
 
-      // Clean up raw status for display
+      // Clean up raw status for display if it's messy
       let displayStatus = rawStatus;
-      if (rawStatus.includes('\n')) displayStatus = rawStatus.split('\n')[0];
+      if (rawStatus.includes('\n')) displayStatus = rawStatus.split('\n')[0]; // Take first line if summary
 
       return {
           tracking_number: trackingNumber,
@@ -121,14 +130,13 @@ export class TcsAdapter implements CourierAdapter {
       // Use a known date range to validte connection
       const end = new Date();
       const start = new Date();
-      start.setDate(start.getDate() - 5); 
+      start.setDate(start.getDate() - 7); 
       
-      // We need customer number for Payment/detail. 
-      // Assuming user saves Account Number in 'merchant_id' or 'username' field in settings
+      // PDF Page 22: Payment Detail - requires customerno
       const customerNo = config.merchant_id || config.username || "";
 
       if (!customerNo) {
-          // If no customer number, we can't test Payment/detail correctly, fallback to tracking dummy
+          // Fallback to Tracking API if customer number is missing (Just checks if token works)
           try {
                await this.request(`${this.TRACKING_URL}/GetDynamicTrackDetail`, token, { consignee: '123456' });
                return true; 
@@ -138,7 +146,6 @@ export class TcsAdapter implements CourierAdapter {
       }
       
       try {
-          // PDF Page 22: Payment Detail
           const data = await this.request(`${this.ECOM_URL}/Payment/detail`, token, {
               fromdate: start.toISOString().split('T')[0],
               todate: end.toISOString().split('T')[0],
@@ -146,7 +153,6 @@ export class TcsAdapter implements CourierAdapter {
           });
 
           if (data && (data.status === false || data.status === "false")) {
-              // If API explicitly returns false status
               throw new Error(data.message || "TCS Rejected Credentials");
           }
           return true;
@@ -158,26 +164,20 @@ export class TcsAdapter implements CourierAdapter {
       }
   }
 
-  /**
-   * Bulk Fetch using 'Payment - Detail' API (PDF Page 22)
-   */
   async fetchRecentOrders(config: IntegrationConfig): Promise<Order[]> {
       const token = config.api_token;
-      // Per PDF Page 22, 'customerno' is mandatory.
-      // We map 'merchant_id' (from our DB) to 'customerno'.
       const customerNo = config.merchant_id || config.username; 
 
       if (!token || !customerNo) {
-          console.warn("TCS: Missing Token or Customer Number (Merchant ID) for bulk fetch.");
+          // If credentials missing, we can't do bulk fetch
           return [];
       }
 
       const end = new Date();
       const start = new Date();
-      start.setDate(start.getDate() - 30); // Fetch last 30 days
+      start.setDate(start.getDate() - 30); 
       
       try {
-          // PDF Page 22 Implementation
           const data = await this.request(`${this.ECOM_URL}/Payment/detail`, token, {
               fromdate: start.toISOString().split('T')[0],
               todate: end.toISOString().split('T')[0],
@@ -186,12 +186,10 @@ export class TcsAdapter implements CourierAdapter {
 
           if (!data) return [];
 
-          // Handle response structure (PDF Page 23)
           let rawList: any[] = [];
           if (Array.isArray(data)) rawList = data;
-          else if (data.detail && Array.isArray(data.detail)) rawList = data.detail; // Expected format: { detail: [...] }
+          else if (data.detail && Array.isArray(data.detail)) rawList = data.detail;
           else {
-             // Fallback search
              const keys = Object.keys(data);
              for(const k of keys) {
                  if(Array.isArray(data[k]) && data[k].length > 0) {
@@ -202,24 +200,17 @@ export class TcsAdapter implements CourierAdapter {
           }
 
           return rawList.map((item: any) => {
-              // PDF Page 23 Field Mapping
               const trackNo = item['cn by courier'] || item['consignmentNo'] || '';
               const refNo = item['order no'] || item['refNo'] || 'N/A';
               const cod = parseFloat(item['codamount'] || item['amount paid'] || 0);
               const fee = parseFloat(item['delivery charges'] || 0);
-              
-              // Status Mapping based on Page 23 Sample
-              // "cn status": "OK" -> Delivered
-              // "cn status": "RO" -> Return
               const rawStatus = item['cn status'] || item['status'] || 'Unknown';
-              
-              // "payment status": "N" (Not Paid) or "Y" (Paid)
               const isPaid = item['payment status'] === 'Y' || item['payment status'] === 'Paid';
 
               return {
                   id: trackNo || Math.random().toString(),
                   shopify_order_number: refNo,
-                  created_at: this.parseDate(item['booking date']), // "09/09/2024"
+                  created_at: this.parseDate(item['booking date']),
                   customer_city: item.city || 'Unknown',
                   courier: CourierName.TCS,
                   tracking_number: trackNo,
@@ -232,13 +223,13 @@ export class TcsAdapter implements CourierAdapter {
                   packaging_cost: 45,
                   overhead_cost: 0,
                   tax_amount: 0,
-                  data_source: 'settlement', // Indicates this came from the Ledger/Payment API
+                  data_source: 'settlement',
                   courier_raw_status: rawStatus,
                   items: [{
                       product_id: 'unknown',
                       quantity: 1,
                       sale_price: cod,
-                      product_name: 'TCS Order', // Payment API doesn't give item names
+                      product_name: 'TCS Order',
                       sku: 'TCS-GENERIC',
                       variant_fingerprint: 'tcs-generic',
                       cogs_at_time_of_order: 0
@@ -247,38 +238,38 @@ export class TcsAdapter implements CourierAdapter {
           });
 
       } catch (e) {
-          console.warn("TCS Payment List fetch failed:", e);
+          console.warn("TCS Payment List fetch failed, defaulting to empty list.", e);
           return [];
       }
   }
 
   private mapStatus(raw: string): OrderStatus {
-      const s = String(raw).toUpperCase().trim(); // PDF implies uppercase codes like "OK", "RO"
+      const s = String(raw).toLowerCase();
       
-      // PDF Page 23: "OK" = Delivered
-      if (s === 'OK' || s === 'DELIVERED' || s.includes('DELIVERED')) {
+      // 1. DELIVERED
+      if (s === 'ok' || s.includes('delivered') || s === 'shipment delivered') {
           return OrderStatus.DELIVERED;
       }
       
-      // PDF Page 23: "RO" = Return
+      // 2. RETURNED
       if (
-          s === 'RO' || 
-          s.includes('RETURN') || 
-          s.includes('RTO') || 
-          s.includes('CANCELLED') || 
-          s.includes('REFUSED')
+          s === 'ro' || 
+          s.includes('return') || 
+          s.includes('rto') || 
+          s.includes('cancelled') || 
+          s.includes('refused') ||
+          s.includes('returned')
       ) {
           return OrderStatus.RETURNED;
       }
       
-      // Default fallback
+      // 3. IN TRANSIT
       return OrderStatus.IN_TRANSIT;
   }
 
   private parseDate(str: string): string {
       try {
           if (!str) return new Date().toISOString();
-          // PDF Page 23 Format: "09/09/2024" (DD/MM/YYYY)
           if (str.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
               const [d, m, y] = str.split('/');
               return new Date(`${y}-${m}-${d}`).toISOString();
