@@ -58,6 +58,9 @@ const App: React.FC = () => {
   // Trigger to force re-fetch
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
+  // Integration Configs Cache (for manual tracking)
+  const [configs, setConfigs] = useState<{ tcs?: IntegrationConfig, postex?: IntegrationConfig }>({});
+
   // Inventory Alert Count (Items with 0 COGS)
   const inventoryAlertCount = useMemo(() => {
       return products.filter(p => p.current_cogs === 0).length;
@@ -195,6 +198,7 @@ const App: React.FC = () => {
              if (courierData) {
                 postExConfig = courierData.find((c: any) => c.provider_id === CourierName.POSTEX);
                 tcsConfig = courierData.find((c: any) => c.provider_id === CourierName.TCS);
+                setConfigs({ tcs: tcsConfig, postex: postExConfig });
             }
         }
 
@@ -258,83 +262,61 @@ const App: React.FC = () => {
             }
         }
 
-        // G. Backfill TCS Orders from Shopify (ROBUST: Works without TCS Token & Checks Tags)
+        // G. Backfill TCS Orders from Shopify
         if (rawShopifyOrders.length > 0) {
-             // 1. Define window (Last 120 Days to match fetch)
              const cutoffDate = new Date();
              cutoffDate.setDate(cutoffDate.getDate() - 120);
 
              const existingRefNos = new Set(fetchedOrders.map(o => o.shopify_order_number.replace('#','')));
              
-             // 2. Filter Candidates from Shopify
+             // Filter Candidates from Shopify
              const candidates = rawShopifyOrders.filter(s => {
-                 // Date Check
                  const d = new Date(s.created_at);
                  if (d < cutoffDate) return false;
 
-                 // Duplication Check
                  const isUnmapped = !existingRefNos.has(s.name.replace('#',''));
                  const isFulfilled = s.fulfillment_status === 'fulfilled' || s.fulfillment_status === 'partial';
                  
                  if (!isUnmapped || !isFulfilled) return false;
 
-                 // --- Robust TCS Detection Logic ---
-                 // A. Check Tags
                  const tags = (s.tags || '').toLowerCase();
                  if (tags.includes('tcs')) return true;
 
-                 // B. Check Fulfillments
                  return s.fulfillments?.some(f => {
                      const company = f.tracking_company?.toLowerCase() || '';
                      const num = (f.tracking_number || '').replace(/[^a-zA-Z0-9]/g, '');
-                     
-                     // Negative check: Not other common couriers
                      const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('callcourier') || company.includes('mnp');
-                     
                      if (isOther) return false;
-
-                     // Positive check: Name includes TCS OR Number format is 9-16 digits (TCS standard)
                      return company.includes('tcs') || /^\d{9,16}$/.test(num);
                  });
              });
 
              if (candidates.length > 0) {
-                 console.log(`[TCS Backfill] Found ${candidates.length} candidates from last 120 days.`);
-                 
-                 // 3. Process Candidates
                  const results = await Promise.all(candidates.map(async (sOrder) => {
-                     // Check if Tag implies TCS
                      const hasTcsTag = (sOrder.tags || '').toLowerCase().includes('tcs');
-
-                     // Find the most likely TCS fulfillment
                      let ff = sOrder.fulfillments?.find(f => {
                          const company = f.tracking_company?.toLowerCase() || '';
                          const num = (f.tracking_number || '').replace(/[^a-zA-Z0-9]/g, '');
                          const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('callcourier') || company.includes('mnp');
-                         
-                         // If tagged as TCS, accept any non-other fulfillment that has a tracking number
                          if (hasTcsTag && !isOther && f.tracking_number) return true;
-
                          return !isOther && (company.includes('tcs') || /^\d{9,16}$/.test(num));
                      });
 
-                     // FALLBACK: If explicitly tagged 'TCS', take ANY fulfillment with a tracking number (last resort)
                      if (!ff && hasTcsTag && sOrder.fulfillments) {
                          ff = sOrder.fulfillments.find(f => f.tracking_number && f.tracking_number.length > 5);
                      }
 
                      if (!ff || !ff.tracking_number) return null;
 
-                     let status = OrderStatus.IN_TRANSIT; // Default assumption for fulfilled order
+                     let status = OrderStatus.IN_TRANSIT;
                      
-                     // Try Live Tracking only if Config exists
                      if (tcsConfig && tcsConfig.api_token) {
                          try {
                              const tcsAdapter = new TcsAdapter();
                              const update = await tcsAdapter.track(ff.tracking_number, tcsConfig);
                              status = update.status;
                          } catch (e) {
-                             // Silently fail back to IN_TRANSIT
+                             // Silently fail
                          }
                      }
 
@@ -371,13 +353,7 @@ const App: React.FC = () => {
                  }));
 
                  const validResults = results.filter((o): o is Order => o !== null);
-                 
-                 if (validResults.length > 0) {
-                     fetchedOrders = [...fetchedOrders, ...validResults];
-                     if (!tcsFoundOrders) {
-                         infoMsgs.push(`Found ${validResults.length} TCS orders via Shopify tags/tracking.`);
-                     }
-                 }
+                 if (validResults.length > 0) fetchedOrders = [...fetchedOrders, ...validResults];
              }
         }
 
@@ -389,12 +365,7 @@ const App: React.FC = () => {
         fetchedOrders.forEach(o => {
             o.items.forEach(item => {
                 const fingerprint = item.variant_fingerprint || item.sku || 'unknown';
-
-                const exists = finalProducts.some(p => 
-                    p.sku === item.sku || 
-                    (p.variant_fingerprint && p.variant_fingerprint === fingerprint)
-                );
-
+                const exists = finalProducts.some(p => p.sku === item.sku || (p.variant_fingerprint && p.variant_fingerprint === fingerprint));
                 if (!exists && !seenFingerprints.has(fingerprint)) {
                     seenFingerprints.add(fingerprint);
                     const uniqueId = (item.product_id && item.product_id !== 'unknown') ? item.product_id : fingerprint;
@@ -421,9 +392,7 @@ const App: React.FC = () => {
                 const historicalCogs = productDef ? getCostAtDate(productDef, order.created_at) : 0;
                 return { ...item, cogs_at_time_of_order: historicalCogs };
             });
-            
             const taxAmount = order.status === OrderStatus.DELIVERED ? (order.cod_amount * (fetchedSettings.taxRate / 100)) : 0;
-
             return {
                 ...order,
                 courier_fee: rateCard.forward,
@@ -440,7 +409,6 @@ const App: React.FC = () => {
         // Save new products to DB for persistence
         if (!isDemoMode && finalProducts.length > savedProducts.length) {
              const newItems = finalProducts.filter(p => !savedProducts.find(sp => sp.id === p.id));
-             
              if (newItems.length > 0) {
                  const payload = newItems.map(p => ({
                      user_id: user.id,
@@ -469,18 +437,14 @@ const App: React.FC = () => {
   }, [session, isDemoMode, refreshTrigger]);
 
   const handleUpdateProducts = async (updatedProducts: Product[]) => {
-      // Optimistic UI Update
       setProducts(prev => prev.map(p => {
           const updated = updatedProducts.find(u => u.id === p.id);
           return updated ? updated : p;
       }));
-
-      // Update Orders Calculations based on new COGS
       const mergedProducts = products.map(p => updatedProducts.find(u => u.id === p.id) || p);
       const recalculatedOrders = recalculateOrderCosts(orders, mergedProducts);
       setOrders(recalculatedOrders);
 
-      // Persist to DB
       if (!isDemoMode && session?.user) {
           const payload = updatedProducts.map(p => ({
               user_id: session.user.id,
@@ -504,20 +468,11 @@ const App: React.FC = () => {
   };
 
   const handleMapProduct = async (shopifyTitle: string, systemProductId: string) => {
-      // Find the target system product
       const targetProduct = products.find(p => p.id === systemProductId);
       if(!targetProduct) return;
-
-      // Add alias (ensure unique)
       const currentAliases = targetProduct.aliases || [];
       if(currentAliases.includes(shopifyTitle)) return;
-      
-      const updatedProduct = { 
-          ...targetProduct, 
-          aliases: [...currentAliases, shopifyTitle] 
-      };
-
-      // Ensure no other product claims this alias (Clean up old mappings)
+      const updatedProduct = { ...targetProduct, aliases: [...currentAliases, shopifyTitle] };
       const cleanedProducts = products.map(p => {
           if (p.id === systemProductId) return updatedProduct;
           if (p.aliases && p.aliases.includes(shopifyTitle)) {
@@ -525,8 +480,6 @@ const App: React.FC = () => {
           }
           return p;
       });
-
-      // Update UI & DB
       await handleUpdateProducts(cleanedProducts);
   };
   
@@ -554,8 +507,6 @@ const App: React.FC = () => {
   const handleSyncAdSpend = async (platform: string, start: string, end: string, newAds: AdSpend[]) => {
       const startDate = new Date(start);
       const endDate = new Date(end);
-      
-      // Update Local State: Remove old, add new
       setAdSpend(prev => {
           const others = prev.filter(a => {
               const d = new Date(a.date);
@@ -565,18 +516,8 @@ const App: React.FC = () => {
           });
           return [...others, ...newAds];
       });
-
-      // DB Sync
       if (!isDemoMode && session?.user) {
-          // Delete old
-          await supabase.from('ad_spend')
-            .delete()
-            .eq('user_id', session.user.id)
-            .eq('platform', platform)
-            .gte('date', start)
-            .lte('date', end);
-          
-          // Insert new
+          await supabase.from('ad_spend').delete().eq('user_id', session.user.id).eq('platform', platform).gte('date', start).lte('date', end);
           if (newAds.length > 0) {
               const payload = newAds.map(a => ({
                   user_id: session.user.id,
@@ -590,6 +531,34 @@ const App: React.FC = () => {
               }));
               await supabase.from('ad_spend').insert(payload);
           }
+      }
+  };
+
+  // --- MANUAL LIVE TRACKING ---
+  const handleManualTrack = async (order: Order): Promise<OrderStatus> => {
+      try {
+          let updatedStatus = order.status;
+          let rawStatus = order.courier_raw_status;
+          
+          if (order.courier === CourierName.TCS && configs.tcs) {
+              const adapter = new TcsAdapter();
+              const result = await adapter.track(order.tracking_number, configs.tcs);
+              updatedStatus = result.status;
+              rawStatus = result.raw_status_text;
+          } else if (order.courier === CourierName.POSTEX && configs.postex) {
+              const adapter = new PostExAdapter();
+              const result = await adapter.track(order.tracking_number, configs.postex);
+              updatedStatus = result.status;
+              rawStatus = result.raw_status_text;
+          }
+
+          if (updatedStatus !== order.status || rawStatus !== order.courier_raw_status) {
+              setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: updatedStatus, courier_raw_status: rawStatus } : o));
+          }
+          return updatedStatus;
+      } catch (e) {
+          console.error("Manual Track Error", e);
+          throw e;
       }
   };
 
@@ -700,7 +669,8 @@ const App: React.FC = () => {
                 {currentPage === 'dashboard' && <Dashboard orders={orders} shopifyOrders={shopifyOrders} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} storeName={storeName} />}
                 {currentPage === 'orders' && <Orders orders={orders} />}
                 {currentPage === 'couriers' && <Couriers orders={orders} />}
-                {currentPage === 'tcs-debug' && <TcsDebug orders={orders} shopifyOrders={shopifyOrders} />}
+                {/* Updated to pass tcsConfig for manual tracking */}
+                {currentPage === 'tcs-debug' && <TcsDebug orders={orders} shopifyOrders={shopifyOrders} onTrackOrder={handleManualTrack} tcsConfig={configs.tcs} />}
                 {currentPage === 'profitability' && <Profitability orders={orders} shopifyOrders={shopifyOrders} products={products} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} storeName={storeName} />}
                 {currentPage === 'inventory' && <Inventory products={products} orders={orders} shopifyOrders={shopifyOrders} onUpdateProducts={handleUpdateProducts} />}
                 {currentPage === 'marketing' && <Marketing adSpend={adSpend} products={products} orders={orders} onAddAdSpend={handleUpdateAdSpend} onDeleteAdSpend={handleDeleteAdSpend} onSyncAdSpend={handleSyncAdSpend} onNavigate={setCurrentPage} />}

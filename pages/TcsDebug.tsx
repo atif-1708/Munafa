@@ -1,36 +1,82 @@
 
 import React, { useState, useMemo } from 'react';
-import { Order, ShopifyOrder, OrderStatus } from '../types';
-import { formatCurrency } from '../services/calculator';
-import { Radio, Database, CheckCircle2, Search, AlertTriangle, Filter, Package, RefreshCw, Loader2, PlayCircle, StopCircle } from 'lucide-react';
+import { Order, ShopifyOrder, OrderStatus, IntegrationConfig } from '../types';
+import { TcsAdapter } from '../services/couriers/tcs';
+import { Radio, Database, CheckCircle2, Search, AlertTriangle, Filter, Package, RefreshCw, Loader2, PlayCircle, Terminal, Key } from 'lucide-react';
 
 interface TcsDebugProps {
   orders: Order[];
   shopifyOrders: ShopifyOrder[];
   onTrackOrder?: (order: Order) => Promise<OrderStatus>;
+  tcsConfig?: IntegrationConfig;
 }
 
-const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], onTrackOrder }) => {
+const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], onTrackOrder, tcsConfig }) => {
   const [viewMode, setViewMode] = useState<'matched' | 'raw'>('raw');
   const [searchTerm, setSearchTerm] = useState('');
   const [trackingIds, setTrackingIds] = useState<Set<string>>(new Set());
   
+  // Manual Tracking State
+  const [manualCn, setManualCn] = useState('');
+  const [manualToken, setManualToken] = useState('');
+  const [manualResult, setManualResult] = useState<any>(null);
+  const [isManualTracking, setIsManualTracking] = useState(false);
+
   // Bulk Scan State
   const [isBulkScanning, setIsBulkScanning] = useState(false);
   const [bulkProgress, setBulkProgress] = useState('');
   const [stopSignal, setStopSignal] = useState(false);
   
-  // DEFAULT TO FALSE: Show all orders immediately so the user sees data.
   const [showOnlyTcsCandidates, setShowOnlyTcsCandidates] = useState(false);
 
   // SAFEGUARD: Ensure inputs are arrays to prevent crashes
   const safeOrders = useMemo(() => Array.isArray(orders) ? orders : [], [orders]);
   const safeShopifyOrders = useMemo(() => Array.isArray(shopifyOrders) ? shopifyOrders : [], [shopifyOrders]);
 
-  // 1. Matched Orders (Successfully tracked by App)
   const trackingOrders = useMemo(() => 
     safeOrders.filter(o => o.data_source === 'tracking'), 
   [safeOrders]);
+
+  // --- MANUAL TRACKING LOGIC ---
+  const handleManualTrace = async () => {
+      if (!manualCn.trim()) {
+          alert("Please enter a Tracking Number (CN)");
+          return;
+      }
+
+      setIsManualTracking(true);
+      setManualResult(null);
+
+      try {
+          const adapter = new TcsAdapter();
+          // Use manual token if provided, otherwise fallback to saved config
+          const configToUse = manualToken.trim() 
+              ? { api_token: manualToken.trim(), is_active: true, provider_id: 'TCS', id: 'temp' } as IntegrationConfig
+              : tcsConfig;
+
+          if (!configToUse || !configToUse.api_token) {
+              throw new Error("No API Token found. Please enter one manually or configure it in Settings > Integrations.");
+          }
+
+          const result = await adapter.track(manualCn.trim(), configToUse);
+          setManualResult({
+              status: result.status,
+              raw: result.raw_status_text,
+              timestamp: result.courier_timestamp,
+              full_data: "Success"
+          });
+
+      } catch (e: any) {
+          console.error("Manual Track Error", e);
+          setManualResult({
+              status: "ERROR",
+              raw: e.message || "Unknown Error",
+              full_data: e.toString()
+          });
+      } finally {
+          setIsManualTracking(false);
+      }
+  };
 
   const handleTrackClick = async (order: Order) => {
       if (!onTrackOrder || trackingIds.has(order.id)) return;
@@ -54,7 +100,6 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
       if (!onTrackOrder) return;
       setStopSignal(false);
       
-      // Find active orders (not delivered/returned/cancelled)
       const activeOrders = trackingOrders.filter(o => 
           o.status !== OrderStatus.DELIVERED && 
           o.status !== OrderStatus.RETURNED &&
@@ -66,18 +111,17 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
           return;
       }
 
-      if (!window.confirm(`Start scanning ${activeOrders.length} active orders? This may take a moment.`)) return;
+      if (!window.confirm(`Start scanning ${activeOrders.length} active orders?`)) return;
 
       setIsBulkScanning(true);
       let count = 0;
 
       for (const order of activeOrders) {
-          if (stopSignal) break; // Check for stop signal (note: simplistic implementation due to closure, might need ref refactor for perfect stop)
+          if (stopSignal) break;
           
           count++;
           setBulkProgress(`${count}/${activeOrders.length}`);
           
-          // Visual feedback on row
           const newSet = new Set(trackingIds);
           newSet.add(order.id);
           setTrackingIds(newSet);
@@ -87,23 +131,16 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
           } catch (e) {
               console.error("Bulk track failed for", order.id);
           } finally {
-              // We don't remove from trackingIds immediately to keep spinner for a sec? 
-              // No, remove it so it shows done.
-              // Actually, we can't easily access the *latest* trackingIds in this loop due to closure if we used state directly without functional updates, 
-              // but we are just triggering the parent function.
-              // Let's just rely on the parent updating the order status.
+              // Wait briefly to avoid rate limits
+              await new Promise(r => setTimeout(r, 800)); 
           }
-          
-          // Delay to be nice to API
-          await new Promise(r => setTimeout(r, 800)); 
       }
 
       setIsBulkScanning(false);
       setBulkProgress('');
-      setTrackingIds(new Set()); // Clear all spinners
+      setTrackingIds(new Set()); 
   };
 
-  // Helper to safely determine if an order looks like TCS
   const isTcsCandidate = (o: ShopifyOrder) => {
       if (!o) return false;
       const tags = o.tags ? String(o.tags).toLowerCase() : '';
@@ -115,36 +152,26 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
       const company = fulfillment?.tracking_company ? String(fulfillment.tracking_company).toLowerCase() : '';
       const trackNo = fulfillment?.tracking_number ? String(fulfillment.tracking_number) : '';
       
-      // Check for TCS format (9-16 digits)
       const cleanTrackNo = trackNo.replace(/[^0-9]/g,'');
       const isFormatMatch = cleanTrackNo.length >= 9 && cleanTrackNo.length <= 16;
-      
-      // Exclude known competitors
       const isOtherCourier = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('mnp') || company.includes('callcourier');
 
       return hasTcsTag || company.includes('tcs') || (isFormatMatch && !isOtherCourier);
   };
 
-  // 2. Filter Raw Orders
   const filteredRawOrders = useMemo(() => {
       let data = safeShopifyOrders;
-
-      // Filter by TCS Likelihood
       if (showOnlyTcsCandidates) {
           data = data.filter(isTcsCandidate);
       }
-
-      // Filter by Search
       if (searchTerm) {
           const lowerTerm = searchTerm.toLowerCase();
           data = data.filter(o => {
               if (!o) return false;
               const name = (o.name || '').toLowerCase();
               const tags = (o.tags || '').toLowerCase();
-              
               const items = Array.isArray(o.line_items) ? o.line_items : [];
               const hasItemMatch = items.some(i => i && i.title && i.title.toLowerCase().includes(lowerTerm));
-              
               return name.includes(lowerTerm) || tags.includes(lowerTerm) || hasItemMatch;
           });
       }
@@ -153,7 +180,66 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
 
   return (
     <div className="space-y-6 pb-12">
-      {/* Header & Stats */}
+      {/* MANUAL TRACKING LAB (NEW) */}
+      <div className="bg-slate-900 rounded-xl shadow-lg border border-slate-800 p-6 text-white">
+          <div className="flex items-center gap-3 mb-4">
+              <Terminal size={24} className="text-brand-500" />
+              <div>
+                  <h3 className="font-bold text-lg">Manual Tracking Lab</h3>
+                  <p className="text-xs text-slate-400">Test specific CN numbers and credentials directly.</p>
+              </div>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+              <div className="md:col-span-4">
+                  <label className="block text-xs font-bold text-slate-400 mb-1">Tracking Number (CN)</label>
+                  <input 
+                      type="text" 
+                      placeholder="e.g. 779412326902" 
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white focus:ring-2 focus:ring-brand-500 outline-none font-mono"
+                      value={manualCn}
+                      onChange={(e) => setManualCn(e.target.value)}
+                  />
+              </div>
+              <div className="md:col-span-5">
+                  <label className="block text-xs font-bold text-slate-400 mb-1 flex items-center gap-1">
+                      <Key size={12} /> Override Token (Optional)
+                  </label>
+                  <input 
+                      type="text" 
+                      placeholder={tcsConfig?.api_token ? "Using Saved Token (Default)" : "Enter Token Here"} 
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm placeholder:text-slate-600"
+                      value={manualToken}
+                      onChange={(e) => setManualToken(e.target.value)}
+                  />
+              </div>
+              <div className="md:col-span-3">
+                  <button 
+                      onClick={handleManualTrace}
+                      disabled={isManualTracking}
+                      className="w-full bg-brand-600 hover:bg-brand-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                  >
+                      {isManualTracking ? <Loader2 size={18} className="animate-spin" /> : <Search size={18} />}
+                      Track Shipment
+                  </button>
+              </div>
+          </div>
+
+          {/* RESULT DISPLAY */}
+          {manualResult && (
+              <div className={`mt-4 p-4 rounded-lg border font-mono text-sm ${manualResult.status === 'ERROR' ? 'bg-red-900/20 border-red-900/50 text-red-200' : 'bg-green-900/20 border-green-900/50 text-green-200'}`}>
+                  <div className="flex justify-between items-start">
+                      <div>
+                          <p className="font-bold mb-1">Status: {manualResult.status}</p>
+                          <p>Message: {manualResult.raw}</p>
+                      </div>
+                      {manualResult.timestamp && <span className="text-xs opacity-60">{new Date(manualResult.timestamp).toLocaleString()}</span>}
+                  </div>
+              </div>
+          )}
+      </div>
+
+      {/* Main List Area */}
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
               <div>
@@ -161,11 +247,10 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
                       <Radio className="text-red-600" /> TCS Monitor
                   </h2>
                   <p className="text-slate-500 text-sm mt-1">
-                      Raw Data Inspector & Tracking Status
+                      Inspect imported orders and batch update statuses.
                   </p>
               </div>
               <div className="flex items-center gap-4">
-                  {/* Bulk Scan Button */}
                   {viewMode === 'matched' && (
                       <button
                           onClick={isBulkScanning ? () => setStopSignal(true) : handleBulkScan}
@@ -173,7 +258,7 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
                           className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all shadow-sm ${
                               isBulkScanning 
                                   ? 'bg-red-50 text-red-600 border border-red-200' 
-                                  : 'bg-slate-900 text-white hover:bg-slate-800'
+                                  : 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-50'
                           }`}
                       >
                           {isBulkScanning ? (
@@ -189,22 +274,6 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
                           )}
                       </button>
                   )}
-
-                  <div className="flex items-center gap-4 bg-slate-50 px-4 py-2 rounded-lg border border-slate-100">
-                      <div className="text-center">
-                          <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Total Fetched</p>
-                          <p className={`text-xl font-bold ${safeShopifyOrders.length === 0 ? 'text-red-600' : 'text-slate-900'}`}>
-                              {safeShopifyOrders.length}
-                          </p>
-                      </div>
-                      <div className="w-px h-8 bg-slate-200"></div>
-                      <div className="text-center">
-                          <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Matched TCS</p>
-                          <p className="text-xl font-bold text-blue-600">
-                              {trackingOrders.length}
-                          </p>
-                      </div>
-                  </div>
               </div>
           </div>
 
@@ -228,16 +297,6 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
               </button>
           </div>
       </div>
-
-      {safeShopifyOrders.length === 0 && (
-          <div className="bg-red-50 border border-red-200 p-4 rounded-lg flex items-center gap-3 text-red-800">
-              <AlertTriangle size={24} />
-              <div>
-                  <h3 className="font-bold">No Data Available</h3>
-                  <p className="text-sm">Shopify did not return any orders. Please check Integrations page.</p>
-              </div>
-          </div>
-      )}
 
       {/* --- VIEW: RAW ORDERS --- */}
       {viewMode === 'raw' && safeShopifyOrders.length > 0 && (
@@ -285,91 +344,38 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                           {filteredRawOrders.slice(0, 100).map((o, idx) => {
-                              // ULTRA-SAFE ROW RENDERING
                               if (!o) return null;
-
                               const id = o.id || idx;
                               const name = o.name || 'Unknown';
-                              
                               let date = 'N/A';
-                              try {
-                                date = o.created_at ? new Date(o.created_at).toLocaleDateString() : 'N/A';
-                              } catch (e) { date = 'Inv Date'; }
-
-                              const tags = o.tags || '';
-                              const hasTcsTag = tags.toLowerCase().includes('tcs');
+                              try { date = o.created_at ? new Date(o.created_at).toLocaleDateString() : 'N/A'; } catch (e) { }
                               
+                              const tags = o.tags || '';
                               const fulfillments = Array.isArray(o.fulfillments) ? o.fulfillments : [];
                               const fulfillment = fulfillments.length > 0 ? fulfillments[0] : null;
                               
-                              const company = fulfillment?.tracking_company || 'None';
-                              const trackNo = fulfillment?.tracking_number || 'None';
-                              
-                              // Safe Item Processing
-                              const lineItems = Array.isArray(o.line_items) ? o.line_items : [];
-                              const itemsDisplay = lineItems
-                                .filter(i => i) // Filter out nulls
-                                .map(i => {
-                                  const q = i.quantity || 0;
-                                  const t = i.title || 'Unknown Item';
-                                  return `${q}x ${t}`;
-                                }).join(', ');
-
-                              let analysis = "Ignored";
-                              let color = "text-slate-400";
-                              const status = o.fulfillment_status || 'unfulfilled';
-
-                              if (status !== 'fulfilled' && status !== 'partial') {
-                                  analysis = "Unfulfilled";
-                              } else if (hasTcsTag) {
-                                  analysis = "Match: Tag";
-                                  color = "text-green-600 font-bold";
-                              } else if (String(company).toLowerCase().includes('tcs')) {
-                                  analysis = "Match: Company";
-                                  color = "text-green-600 font-bold";
-                              } else if (trackNo && /^\d{9,16}$/.test(String(trackNo).replace(/[^0-9]/g,''))) {
-                                  analysis = "Match: Format";
-                                  color = "text-blue-600 font-bold";
-                              } else {
-                                  analysis = "No Match";
-                              }
-
                               return (
                                   <tr key={id} className="hover:bg-slate-50">
                                       <td className="px-4 py-3 font-bold text-slate-800 align-top">{name}</td>
                                       <td className="px-4 py-3 text-slate-500 align-top">{date}</td>
-                                      <td className="px-4 py-3 text-slate-600 align-top">
-                                          <div className="flex items-start gap-2 max-h-20 overflow-y-auto">
-                                              <Package size={14} className="mt-0.5 shrink-0 text-slate-400" />
-                                              <span className="leading-tight text-[11px] break-words max-w-[200px] block">
-                                                  {itemsDisplay || 'No Items'}
-                                              </span>
-                                          </div>
+                                      <td className="px-4 py-3 text-slate-600 align-top truncate max-w-[200px]">
+                                          {(o.line_items || []).map(i => i?.title).join(', ')}
                                       </td>
                                       <td className="px-4 py-3 align-top">
                                           {fulfillment ? (
                                               <div className="flex flex-col gap-1">
-                                                  <span className="font-bold truncate max-w-[100px]">{company}</span>
-                                                  <span className="truncate max-w-[100px]">{trackNo}</span>
+                                                  <span className="font-bold truncate max-w-[100px]">{fulfillment.tracking_company || 'None'}</span>
+                                                  <span className="truncate max-w-[100px]">{fulfillment.tracking_number || 'None'}</span>
                                               </div>
                                           ) : <span className="text-red-400">No Fulfillment</span>}
                                       </td>
-                                      <td className="px-4 py-3 max-w-[100px] align-top">
-                                          <div className="truncate" title={tags}>{tags || '-'}</div>
-                                      </td>
-                                      <td className={`px-4 py-3 align-top ${color}`}>
-                                          {analysis}
+                                      <td className="px-4 py-3 max-w-[100px] align-top truncate">{tags || '-'}</td>
+                                      <td className="px-4 py-3 align-top text-slate-500">
+                                          {isTcsCandidate(o) ? <span className="text-green-600 font-bold">Match</span> : 'Ignore'}
                                       </td>
                                   </tr>
                               );
                           })}
-                          {filteredRawOrders.length === 0 && (
-                              <tr>
-                                  <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
-                                      No orders found.
-                                  </td>
-                              </tr>
-                          )}
                       </tbody>
                   </table>
               </div>
@@ -396,9 +402,7 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
                                   {o.shopify_order_number}
                               </td>
                               <td className="px-6 py-4 text-slate-600 text-xs align-top">
-                                  {(o.items || [])
-                                    .map(i => `${i.quantity}x ${i.product_name}`)
-                                    .join(', ') || 'No Items'}
+                                  {(o.items || []).map(i => `${i.quantity}x ${i.product_name}`).join(', ') || 'No Items'}
                               </td>
                               <td className="px-6 py-4 text-slate-600 font-mono align-top">
                                   {o.tracking_number}
