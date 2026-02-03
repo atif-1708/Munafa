@@ -10,7 +10,7 @@ import Settings from './pages/Settings';
 import Inventory from './pages/Inventory';
 import Marketing from './pages/Marketing';
 import Reconciliation from './pages/Reconciliation'; 
-import TcsDebug from './pages/TcsDebug'; // New Import
+import TcsDebug from './pages/TcsDebug'; 
 import Auth from './pages/Auth'; 
 import { PostExAdapter } from './services/couriers/postex';
 import { TcsAdapter } from './services/couriers/tcs';
@@ -257,103 +257,159 @@ const App: React.FC = () => {
                 if (tcsOrders.length > 0) tcsFoundOrders = true;
             } catch (e: any) {
                 console.error("TCS Sync Error:", e);
-                // Non-blocking error for TCS Settlement
                 console.warn("TCS Settlement API Failed: " + e.message);
             }
         }
 
-        // G. Backfill TCS Orders from Shopify
+        // G. Backfill TCS Orders from Shopify (ROBUST: Works without TCS Token & Checks Tags)
         if (rawShopifyOrders.length > 0) {
+             // 1. Define window (Last 120 Days to match fetch)
              const cutoffDate = new Date();
              cutoffDate.setDate(cutoffDate.getDate() - 120);
 
-             const existingRefNos = new Set(fetchedOrders.map(o => o.shopify_order_number.replace('#','')));
+             const existingRefNos = new Set(fetchedOrders.map(o => String(o.shopify_order_number || '').replace('#','')));
              
-             // Filter Candidates from Shopify
+             // 2. Filter Candidates from Shopify
              const candidates = rawShopifyOrders.filter(s => {
+                 if (!s) return false;
+
+                 // Date Check
                  const d = new Date(s.created_at);
                  if (d < cutoffDate) return false;
 
-                 const isUnmapped = !existingRefNos.has(s.name.replace('#',''));
-                 const isFulfilled = s.fulfillment_status === 'fulfilled' || s.fulfillment_status === 'partial';
-                 
-                 if (!isUnmapped || !isFulfilled) return false;
+                 // Duplication Check
+                 const safeName = String(s.name || '').replace('#','');
+                 if (existingRefNos.has(safeName)) return false;
 
+                 // --- Robust TCS Detection Logic ---
+                 // A. Check Tags
                  const tags = (s.tags || '').toLowerCase();
-                 if (tags.includes('tcs')) return true;
+                 const hasTcsTag = tags.includes('tcs');
 
-                 return s.fulfillments?.some(f => {
-                     const company = f.tracking_company?.toLowerCase() || '';
-                     const num = (f.tracking_number || '').replace(/[^a-zA-Z0-9]/g, '');
-                     const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('callcourier') || company.includes('mnp');
+                 // B. Check Fulfillments
+                 const hasTcsFulfillment = s.fulfillments?.some(f => {
+                     const company = f.tracking_company ? String(f.tracking_company).toLowerCase() : '';
+                     const num = (f.tracking_number ? String(f.tracking_number) : '').replace(/[^a-zA-Z0-9]/g, '');
+                     
+                     // Negative check: Not other common couriers
+                     const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('mnp') || company.includes('callcourier');
+                     
                      if (isOther) return false;
+
+                     // Positive check: Name includes TCS OR Number format is 9-16 digits (TCS standard)
                      return company.includes('tcs') || /^\d{9,16}$/.test(num);
                  });
+
+                 // INCLUDE if tagged 'TCS' OR looks like TCS fulfillment
+                 return hasTcsTag || hasTcsFulfillment;
              });
 
              if (candidates.length > 0) {
-                 const results = await Promise.all(candidates.map(async (sOrder) => {
-                     const hasTcsTag = (sOrder.tags || '').toLowerCase().includes('tcs');
-                     let ff = sOrder.fulfillments?.find(f => {
-                         const company = f.tracking_company?.toLowerCase() || '';
-                         const num = (f.tracking_number || '').replace(/[^a-zA-Z0-9]/g, '');
-                         const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('callcourier') || company.includes('mnp');
-                         if (hasTcsTag && !isOther && f.tracking_number) return true;
-                         return !isOther && (company.includes('tcs') || /^\d{9,16}$/.test(num));
-                     });
+                 const tcsBatchCount = candidates.length;
+                 console.log(`[TCS Backfill] Found ${tcsBatchCount} candidates from last 120 days.`);
+                 infoMsgs.push(`Found ${tcsBatchCount} TCS orders via Shopify tags/tracking.`);
 
-                     if (!ff && hasTcsTag && sOrder.fulfillments) {
-                         ff = sOrder.fulfillments.find(f => f.tracking_number && f.tracking_number.length > 5);
-                     }
+                 // --- BATCH PROCESSING ---
+                 const BATCH_SIZE = 5;
+                 const TCS_DELAY_MS = 1000;
+                 const processedTcsOrders: Order[] = [];
 
-                     if (!ff || !ff.tracking_number) return null;
-
-                     let status = OrderStatus.IN_TRANSIT;
+                 // Process in chunks
+                 for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
+                     const batch = candidates.slice(i, i + BATCH_SIZE);
                      
-                     if (tcsConfig && tcsConfig.api_token) {
+                     const batchResults = await Promise.all(batch.map(async (sOrder) => {
                          try {
-                             const tcsAdapter = new TcsAdapter();
-                             const update = await tcsAdapter.track(ff.tracking_number, tcsConfig);
-                             status = update.status;
-                         } catch (e) {
-                             // Silently fail
+                            // Find the most likely TCS fulfillment
+                            const hasTcsTag = (sOrder.tags || '').toLowerCase().includes('tcs');
+                            let ff = sOrder.fulfillments?.find(f => {
+                                const company = f.tracking_company ? String(f.tracking_company).toLowerCase() : '';
+                                const num = (f.tracking_number ? String(f.tracking_number) : '').replace(/[^a-zA-Z0-9]/g, '');
+                                const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('mnp') || company.includes('callcourier');
+                                
+                                if (hasTcsTag && !isOther && f.tracking_number) return true;
+                                return !isOther && (company.includes('tcs') || /^\d{9,16}$/.test(num));
+                            });
+
+                            if (!ff && hasTcsTag && sOrder.fulfillments) {
+                                ff = sOrder.fulfillments.find(f => f.tracking_number && String(f.tracking_number).length > 5);
+                            }
+
+                            // --- KEY LOGIC UPDATE: Handle Unfulfilled TCS Orders ---
+                            let trackingNo = 'Pending';
+                            let status = OrderStatus.PENDING;
+                            let rawStatusText = 'Order Placed';
+                            let orderId = String(sOrder.id);
+
+                            if (ff && ff.tracking_number) {
+                                trackingNo = ff.tracking_number;
+                                orderId = ff.tracking_number; // Prefer Tracking Number as ID if available
+                                status = OrderStatus.IN_TRANSIT; // Default assumption if tracking fails
+                                rawStatusText = 'Shipped / In Transit';
+                                
+                                // *** LIVE TRACKING ***
+                                if (tcsConfig && tcsConfig.api_token) {
+                                    try {
+                                        const tcsAdapter = new TcsAdapter();
+                                        const update = await tcsAdapter.track(trackingNo, tcsConfig);
+                                        status = update.status;
+                                        rawStatusText = update.raw_status_text;
+                                    } catch (e) {
+                                        // Silent fail - will remain IN_TRANSIT
+                                    }
+                                }
+                            } else {
+                                // If unfulfilled but tagged TCS
+                                rawStatusText = 'Waiting for Fulfillment';
+                            }
+
+                            const cod = parseFloat(sOrder.total_price || '0');
+                            const safeItems = Array.isArray(sOrder.line_items) ? sOrder.line_items : [];
+
+                            const newOrder: Order = {
+                                id: orderId,
+                                shopify_order_number: sOrder.name || 'Unknown',
+                                created_at: sOrder.created_at,
+                                customer_city: sOrder.customer?.city || 'Unknown',
+                                courier: CourierName.TCS,
+                                tracking_number: trackingNo,
+                                status: status,
+                                payment_status: PaymentStatus.UNPAID,
+                                cod_amount: cod,
+                                shipping_fee_paid_by_customer: 0,
+                                courier_fee: fetchedSettings.rates[CourierName.TCS].forward,
+                                rto_penalty: 0, 
+                                packaging_cost: fetchedSettings.packagingCost,
+                                overhead_cost: 0,
+                                tax_amount: 0,
+                                data_source: 'tracking', 
+                                courier_raw_status: rawStatusText,
+                                items: safeItems.map(li => ({
+                                    product_id: 'unknown',
+                                    quantity: li.quantity,
+                                    sale_price: parseFloat(li.price || '0'),
+                                    product_name: li.title || 'Unknown Product',
+                                    sku: li.sku || 'unknown',
+                                    variant_fingerprint: li.sku || 'unknown',
+                                    cogs_at_time_of_order: 0
+                                }))
+                            };
+                            return newOrder;
+                         } catch (err) {
+                            return null;
                          }
+                     }));
+
+                     const validBatch = batchResults.filter((o): o is Order => o !== null);
+                     processedTcsOrders.push(...validBatch);
+
+                     // Throttle if we are actually calling the API
+                     if (tcsConfig && tcsConfig.api_token && i + BATCH_SIZE < candidates.length) {
+                         await new Promise(r => setTimeout(r, TCS_DELAY_MS));
                      }
+                 }
 
-                     const cod = parseFloat(sOrder.total_price);
-                     
-                     const newOrder: Order = {
-                         id: ff.tracking_number,
-                         shopify_order_number: sOrder.name,
-                         created_at: sOrder.created_at,
-                         customer_city: sOrder.customer?.city || 'Unknown',
-                         courier: CourierName.TCS,
-                         tracking_number: ff.tracking_number,
-                         status: status,
-                         payment_status: PaymentStatus.UNPAID,
-                         cod_amount: cod,
-                         shipping_fee_paid_by_customer: 0,
-                         courier_fee: fetchedSettings.rates[CourierName.TCS].forward,
-                         rto_penalty: 0, 
-                         packaging_cost: fetchedSettings.packagingCost,
-                         overhead_cost: 0,
-                         tax_amount: 0,
-                         data_source: 'tracking', 
-                         items: sOrder.line_items.map(li => ({
-                             product_id: 'unknown',
-                             quantity: li.quantity,
-                             sale_price: parseFloat(li.price),
-                             product_name: li.title,
-                             sku: li.sku,
-                             variant_fingerprint: li.sku || 'unknown',
-                             cogs_at_time_of_order: 0
-                         }))
-                     };
-                     return newOrder;
-                 }));
-
-                 const validResults = results.filter((o): o is Order => o !== null);
-                 if (validResults.length > 0) fetchedOrders = [...fetchedOrders, ...validResults];
+                 fetchedOrders = [...fetchedOrders, ...processedTcsOrders];
              }
         }
 
@@ -363,9 +419,15 @@ const App: React.FC = () => {
 
         // Process discovered items from Courier Orders
         fetchedOrders.forEach(o => {
+            if (!o.items) return;
             o.items.forEach(item => {
                 const fingerprint = item.variant_fingerprint || item.sku || 'unknown';
-                const exists = finalProducts.some(p => p.sku === item.sku || (p.variant_fingerprint && p.variant_fingerprint === fingerprint));
+
+                const exists = finalProducts.some(p => 
+                    p.sku === item.sku || 
+                    (p.variant_fingerprint && p.variant_fingerprint === fingerprint)
+                );
+
                 if (!exists && !seenFingerprints.has(fingerprint)) {
                     seenFingerprints.add(fingerprint);
                     const uniqueId = (item.product_id && item.product_id !== 'unknown') ? item.product_id : fingerprint;
@@ -392,7 +454,9 @@ const App: React.FC = () => {
                 const historicalCogs = productDef ? getCostAtDate(productDef, order.created_at) : 0;
                 return { ...item, cogs_at_time_of_order: historicalCogs };
             });
+            
             const taxAmount = order.status === OrderStatus.DELIVERED ? (order.cod_amount * (fetchedSettings.taxRate / 100)) : 0;
+
             return {
                 ...order,
                 courier_fee: rateCard.forward,
@@ -409,6 +473,7 @@ const App: React.FC = () => {
         // Save new products to DB for persistence
         if (!isDemoMode && finalProducts.length > savedProducts.length) {
              const newItems = finalProducts.filter(p => !savedProducts.find(sp => sp.id === p.id));
+             
              if (newItems.length > 0) {
                  const payload = newItems.map(p => ({
                      user_id: user.id,
@@ -437,14 +502,18 @@ const App: React.FC = () => {
   }, [session, isDemoMode, refreshTrigger]);
 
   const handleUpdateProducts = async (updatedProducts: Product[]) => {
+      // Optimistic UI Update
       setProducts(prev => prev.map(p => {
           const updated = updatedProducts.find(u => u.id === p.id);
           return updated ? updated : p;
       }));
+
+      // Update Orders Calculations based on new COGS
       const mergedProducts = products.map(p => updatedProducts.find(u => u.id === p.id) || p);
       const recalculatedOrders = recalculateOrderCosts(orders, mergedProducts);
       setOrders(recalculatedOrders);
 
+      // Persist to DB
       if (!isDemoMode && session?.user) {
           const payload = updatedProducts.map(p => ({
               user_id: session.user.id,
@@ -468,11 +537,20 @@ const App: React.FC = () => {
   };
 
   const handleMapProduct = async (shopifyTitle: string, systemProductId: string) => {
+      // Find the target system product
       const targetProduct = products.find(p => p.id === systemProductId);
       if(!targetProduct) return;
+
+      // Add alias (ensure unique)
       const currentAliases = targetProduct.aliases || [];
       if(currentAliases.includes(shopifyTitle)) return;
-      const updatedProduct = { ...targetProduct, aliases: [...currentAliases, shopifyTitle] };
+      
+      const updatedProduct = { 
+          ...targetProduct, 
+          aliases: [...currentAliases, shopifyTitle] 
+      };
+
+      // Ensure no other product claims this alias (Clean up old mappings)
       const cleanedProducts = products.map(p => {
           if (p.id === systemProductId) return updatedProduct;
           if (p.aliases && p.aliases.includes(shopifyTitle)) {
@@ -480,6 +558,8 @@ const App: React.FC = () => {
           }
           return p;
       });
+
+      // Update UI & DB
       await handleUpdateProducts(cleanedProducts);
   };
   
@@ -507,6 +587,8 @@ const App: React.FC = () => {
   const handleSyncAdSpend = async (platform: string, start: string, end: string, newAds: AdSpend[]) => {
       const startDate = new Date(start);
       const endDate = new Date(end);
+      
+      // Update Local State: Remove old, add new
       setAdSpend(prev => {
           const others = prev.filter(a => {
               const d = new Date(a.date);
@@ -516,8 +598,18 @@ const App: React.FC = () => {
           });
           return [...others, ...newAds];
       });
+
+      // DB Sync
       if (!isDemoMode && session?.user) {
-          await supabase.from('ad_spend').delete().eq('user_id', session.user.id).eq('platform', platform).gte('date', start).lte('date', end);
+          // Delete old
+          await supabase.from('ad_spend')
+            .delete()
+            .eq('user_id', session.user.id)
+            .eq('platform', platform)
+            .gte('date', start)
+            .lte('date', end);
+          
+          // Insert new
           if (newAds.length > 0) {
               const payload = newAds.map(a => ({
                   user_id: session.user.id,
@@ -537,6 +629,10 @@ const App: React.FC = () => {
   // --- MANUAL LIVE TRACKING ---
   const handleManualTrack = async (order: Order): Promise<OrderStatus> => {
       try {
+          if (!order.tracking_number || order.tracking_number === 'Pending') {
+              throw new Error("Order has no tracking number yet.");
+          }
+
           let updatedStatus = order.status;
           let rawStatus = order.courier_raw_status;
           
@@ -552,8 +648,13 @@ const App: React.FC = () => {
               rawStatus = result.raw_status_text;
           }
 
+          // Update Local State if status changed
           if (updatedStatus !== order.status || rawStatus !== order.courier_raw_status) {
-              setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: updatedStatus, courier_raw_status: rawStatus } : o));
+              setOrders(prev => prev.map(o => o.id === order.id ? { 
+                  ...o, 
+                  status: updatedStatus,
+                  courier_raw_status: rawStatus // Updated: Save Raw Status for UI display
+              } : o));
           }
           return updatedStatus;
       } catch (e) {
