@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { Order, ShopifyOrder, OrderStatus, IntegrationConfig } from '../types';
 import { TcsAdapter } from '../services/couriers/tcs';
-import { Radio, Database, CheckCircle2, Search, AlertTriangle, Filter, Package, RefreshCw, Loader2, PlayCircle, Terminal, Key } from 'lucide-react';
+import { Radio, Database, CheckCircle2, Search, AlertTriangle, Filter, Package, RefreshCw, Loader2, PlayCircle, Terminal, Key, Wifi, WifiOff, Globe } from 'lucide-react';
 
 interface TcsDebugProps {
   orders: Order[];
@@ -14,21 +14,13 @@ interface TcsDebugProps {
 const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], onTrackOrder, tcsConfig }) => {
   const [viewMode, setViewMode] = useState<'matched' | 'raw'>('raw');
   const [searchTerm, setSearchTerm] = useState('');
-  const [trackingIds, setTrackingIds] = useState<Set<string>>(new Set());
   
-  // Manual Tracking State
+  // Diagnostic State
   const [manualCn, setManualCn] = useState('');
-  const [manualToken, setManualToken] = useState('');
-  const [manualResult, setManualResult] = useState<any>(null);
-  const [manualFullResponse, setManualFullResponse] = useState<any>(null);
-  const [isManualTracking, setIsManualTracking] = useState(false);
-
-  // Bulk Scan State
-  const [isBulkScanning, setIsBulkScanning] = useState(false);
-  const [bulkProgress, setBulkProgress] = useState('');
-  const [stopSignal, setStopSignal] = useState(false);
-  
-  const [showOnlyTcsCandidates, setShowOnlyTcsCandidates] = useState(false);
+  const [manualToken, setManualToken] = useState(tcsConfig?.api_token || '');
+  const [diagnosticLog, setDiagnosticLog] = useState<string[]>([]);
+  const [isRunningDiag, setIsRunningDiag] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'unknown' | 'success' | 'failed'>('unknown');
 
   const safeOrders = useMemo(() => Array.isArray(orders) ? orders : [], [orders]);
   const safeShopifyOrders = useMemo(() => Array.isArray(shopifyOrders) ? shopifyOrders : [], [shopifyOrders]);
@@ -37,457 +29,227 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
     safeOrders.filter(o => o.data_source === 'tracking'), 
   [safeOrders]);
 
-  // --- MANUAL TRACKING LOGIC ---
-  const handleManualTrace = async () => {
-      if (!manualCn.trim()) {
-          alert("Please enter a Tracking Number (CN)");
+  const log = (msg: string) => {
+      const time = new Date().toLocaleTimeString();
+      setDiagnosticLog(prev => [`[${time}] ${msg}`, ...prev]);
+  };
+
+  const handleTestConnection = async () => {
+      setIsRunningDiag(true);
+      setDiagnosticLog([]);
+      setConnectionStatus('unknown');
+      log("Starting Connectivity Test...");
+
+      const tokenToUse = manualToken.trim();
+      if (!tokenToUse) {
+          log("ERROR: No API Token provided.");
+          setIsRunningDiag(false);
+          setConnectionStatus('failed');
           return;
       }
 
-      setIsManualTracking(true);
-      setManualResult(null);
-      setManualFullResponse(null);
+      log(`Token Length: ${tokenToUse.length} chars`);
+      log("Target Endpoint: https://ociconnect.tcscourier.com/tracking/api/Tracking/GetDynamicTrackDetail");
 
       try {
-          // Explicitly access the private request method for raw debugging if possible, 
-          // or just use track() and catch the internal fetch logic.
-          // Since we can't access private methods easily, we rely on the error message or success.
+          // 1. Direct Proxy Call Test
+          log("Step 1: Sending request via Proxy...");
           
-          const adapter = new TcsAdapter();
-          const configToUse = manualToken.trim() 
-              ? { api_token: manualToken.trim(), is_active: true, provider_id: 'TCS', id: 'temp' } as IntegrationConfig
-              : tcsConfig;
+          const cleanToken = tokenToUse.replace(/^Bearer\s+/i, '').trim();
+          const testCn = manualCn || '779412326902'; // Default test CN if empty
+          log(`Using Test CN: ${testCn}`);
 
-          if (!configToUse || !configToUse.api_token) {
-              throw new Error("No API Token found. Please enter one manually or configure it in Settings > Integrations.");
-          }
-
-          // Use the `track` method which we updated to be robust
-          const result = await adapter.track(manualCn.trim(), configToUse);
+          const targetUrl = `https://ociconnect.tcscourier.com/tracking/api/Tracking/GetDynamicTrackDetail?consignee=${testCn}`;
           
-          setManualResult({
-              status: result.status,
-              raw: result.raw_status_text,
-              timestamp: result.courier_timestamp
-          });
-          
-          // Re-fetch purely for the RAW JSON display (using the internal logic we can't access directly)
-          // We simulate the raw fetch here to show the user exactly what TCS sent back
-          const cleanToken = configToUse.api_token.replace(/^Bearer\s+/i, '').trim();
-          const targetUrl = `https://ociconnect.tcscourier.com/tracking/api/Tracking/GetDynamicTrackDetail?consignee=${manualCn.trim()}`;
-          
-          const rawRes = await fetch(`/api/proxy?url=${encodeURIComponent(targetUrl)}`, {
+          const res = await fetch(`/api/proxy?url=${encodeURIComponent(targetUrl)}`, {
+              method: 'GET',
               headers: { 
                   'Accept': 'application/json',
                   'Authorization': `Bearer ${cleanToken}`
               }
           });
-          const rawText = await rawRes.text();
+
+          log(`Response HTTP Status: ${res.status}`);
+          
+          const text = await res.text();
+          log(`Raw Response Body (First 200 chars): ${text.substring(0, 200)}...`);
+
+          if (!res.ok) {
+              log("HTTP Error detected.");
+              if (res.status === 401) log(">> 401 Unauthorized: Your Token is INVALID or EXPIRED.");
+              if (res.status === 403) log(">> 403 Forbidden: Token valid but permissions denied.");
+              if (res.status === 500) log(">> 500 Server Error: TCS Server issue.");
+              throw new Error(`HTTP ${res.status}`);
+          }
+
+          let json;
           try {
-              setManualFullResponse(JSON.parse(rawText));
-          } catch {
-              setManualFullResponse(rawText);
+              json = JSON.parse(text);
+              log("JSON Parsed Successfully.");
+          } catch (e) {
+              log("ERROR: Response is not valid JSON.");
+              throw new Error("Invalid JSON");
+          }
+
+          // Check logical response
+          if (json.message === 'Invalid access token' || json.code === '401') {
+              log(">> API Message: Invalid Access Token");
+              throw new Error("Token Rejected");
+          }
+
+          if (json.shipmentsummary && json.shipmentsummary.includes("No Data Found")) {
+              log(">> SUCCESS: Connected to TCS, but CN not found (Expected for dummy data).");
+              setConnectionStatus('success');
+          } else if (json.checkpoints) {
+              log(">> SUCCESS: Connected and retrieved tracking data.");
+              setConnectionStatus('success');
+          } else {
+              log(">> WARNING: Connected but response format is unexpected.");
+              setConnectionStatus('success'); // Still technically connected
           }
 
       } catch (e: any) {
-          console.error("Manual Track Error", e);
-          setManualResult({
-              status: "ERROR",
-              raw: e.message || "Unknown Error"
-          });
-          setManualFullResponse({ error: e.toString() });
+          log(`FATAL ERROR: ${e.message}`);
+          setConnectionStatus('failed');
       } finally {
-          setIsManualTracking(false);
+          setIsRunningDiag(false);
       }
   };
-
-  const handleTrackClick = async (order: Order) => {
-      if (!onTrackOrder || trackingIds.has(order.id)) return;
-      
-      const newSet = new Set(trackingIds);
-      newSet.add(order.id);
-      setTrackingIds(newSet);
-
-      try {
-          await onTrackOrder(order);
-      } catch (e) {
-          console.error("Tracking Failed", e);
-      } finally {
-          const finishedSet = new Set(trackingIds);
-          finishedSet.delete(order.id);
-          setTrackingIds(finishedSet);
-      }
-  };
-
-  const handleBulkScan = async () => {
-      if (!onTrackOrder) return;
-      setStopSignal(false);
-      
-      const activeOrders = trackingOrders.filter(o => 
-          o.status !== OrderStatus.DELIVERED && 
-          o.status !== OrderStatus.RETURNED &&
-          o.status !== OrderStatus.CANCELLED
-      );
-
-      if (activeOrders.length === 0) {
-          alert("No active orders (In Transit/Pending) to track.");
-          return;
-      }
-
-      if (!window.confirm(`Start scanning ${activeOrders.length} active orders?`)) return;
-
-      setIsBulkScanning(true);
-      let count = 0;
-
-      for (const order of activeOrders) {
-          if (stopSignal) break;
-          
-          count++;
-          setBulkProgress(`${count}/${activeOrders.length}`);
-          
-          const newSet = new Set(trackingIds);
-          newSet.add(order.id);
-          setTrackingIds(newSet);
-
-          try {
-              await onTrackOrder(order);
-          } catch (e) {
-              console.error("Bulk track failed for", order.id);
-          } finally {
-              // Wait briefly to avoid rate limits
-              await new Promise(r => setTimeout(r, 800)); 
-          }
-      }
-
-      setIsBulkScanning(false);
-      setBulkProgress('');
-      setTrackingIds(new Set()); 
-  };
-
-  const isTcsCandidate = (o: ShopifyOrder) => {
-      if (!o) return false;
-      const tags = o.tags ? String(o.tags).toLowerCase() : '';
-      const hasTcsTag = tags.includes('tcs');
-      
-      const fulfillments = Array.isArray(o.fulfillments) ? o.fulfillments : [];
-      const fulfillment = fulfillments.length > 0 ? fulfillments[0] : null;
-      
-      const company = fulfillment?.tracking_company ? String(fulfillment.tracking_company).toLowerCase() : '';
-      const trackNo = fulfillment?.tracking_number ? String(fulfillment.tracking_number) : '';
-      
-      const cleanTrackNo = trackNo.replace(/[^0-9]/g,'');
-      const isFormatMatch = cleanTrackNo.length >= 9 && cleanTrackNo.length <= 16;
-      const isOtherCourier = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('mnp') || company.includes('callcourier');
-
-      return hasTcsTag || company.includes('tcs') || (isFormatMatch && !isOtherCourier);
-  };
-
-  const filteredRawOrders = useMemo(() => {
-      let data = safeShopifyOrders;
-      if (showOnlyTcsCandidates) {
-          data = data.filter(isTcsCandidate);
-      }
-      if (searchTerm) {
-          const lowerTerm = searchTerm.toLowerCase();
-          data = data.filter(o => {
-              if (!o) return false;
-              const name = (o.name || '').toLowerCase();
-              const tags = (o.tags || '').toLowerCase();
-              const items = Array.isArray(o.line_items) ? o.line_items : [];
-              const hasItemMatch = items.some(i => i && i.title && i.title.toLowerCase().includes(lowerTerm));
-              return name.includes(lowerTerm) || tags.includes(lowerTerm) || hasItemMatch;
-          });
-      }
-      return data;
-  }, [safeShopifyOrders, searchTerm, showOnlyTcsCandidates]);
 
   return (
     <div className="space-y-6 pb-12">
-      {/* MANUAL TRACKING LAB */}
-      <div className="bg-slate-900 rounded-xl shadow-lg border border-slate-800 p-6 text-white">
-          <div className="flex items-center gap-3 mb-4">
-              <Terminal size={24} className="text-brand-500" />
+      {/* DIAGNOSTIC PANEL */}
+      <div className="bg-slate-900 rounded-xl shadow-xl border border-slate-800 overflow-hidden">
+          <div className="p-6 border-b border-slate-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div>
-                  <h3 className="font-bold text-lg">Manual Tracking Lab (Diagnostics)</h3>
-                  <p className="text-xs text-slate-400">Use this to verify your API Token connectivity and see RAW responses from TCS.</p>
-              </div>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
-              <div className="md:col-span-4">
-                  <label className="block text-xs font-bold text-slate-400 mb-1">Tracking Number (CN)</label>
-                  <input 
-                      type="text" 
-                      placeholder="e.g. 779412326902" 
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white focus:ring-2 focus:ring-brand-500 outline-none font-mono"
-                      value={manualCn}
-                      onChange={(e) => setManualCn(e.target.value)}
-                  />
-              </div>
-              <div className="md:col-span-5">
-                  <label className="block text-xs font-bold text-slate-400 mb-1 flex items-center gap-1">
-                      <Key size={12} /> Override Token (Optional)
-                  </label>
-                  <input 
-                      type="text" 
-                      placeholder={tcsConfig?.api_token ? "Using Saved Token (Default)" : "Enter Token Here"} 
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm placeholder:text-slate-600"
-                      value={manualToken}
-                      onChange={(e) => setManualToken(e.target.value)}
-                  />
-              </div>
-              <div className="md:col-span-3">
-                  <button 
-                      onClick={handleManualTrace}
-                      disabled={isManualTracking}
-                      className="w-full bg-brand-600 hover:bg-brand-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50"
-                  >
-                      {isManualTracking ? <Loader2 size={18} className="animate-spin" /> : <Search size={18} />}
-                      Track & Debug
-                  </button>
-              </div>
-          </div>
-
-          {/* RESULT DISPLAY */}
-          {(manualResult || manualFullResponse) && (
-              <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Status Box */}
-                  <div className={`p-4 rounded-lg border font-mono text-sm h-full ${manualResult?.status === 'ERROR' ? 'bg-red-900/20 border-red-900/50 text-red-200' : 'bg-green-900/20 border-green-900/50 text-green-200'}`}>
-                      <h4 className="font-bold border-b border-white/10 pb-2 mb-2">Parsed Result</h4>
-                      {manualResult ? (
-                          <>
-                              <p><span className="opacity-60">Status:</span> <strong>{manualResult.status}</strong></p>
-                              <p><span className="opacity-60">Message:</span> {manualResult.raw}</p>
-                              <p><span className="opacity-60">Time:</span> {manualResult.timestamp}</p>
-                          </>
-                      ) : (
-                          <p className="text-xs opacity-50">Processing...</p>
-                      )}
-                  </div>
-
-                  {/* Raw JSON Box */}
-                  <div className="bg-black/30 p-4 rounded-lg border border-slate-700 font-mono text-xs text-slate-300 overflow-auto max-h-[300px]">
-                      <h4 className="font-bold border-b border-slate-700 pb-2 mb-2 text-slate-400">Raw API Response (Debug Log)</h4>
-                      <pre className="whitespace-pre-wrap break-all">
-                          {manualFullResponse ? JSON.stringify(manualFullResponse, null, 2) : "Waiting for response..."}
-                      </pre>
-                  </div>
-              </div>
-          )}
-      </div>
-
-      {/* Main List Area */}
-      <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-          {/* ... existing UI ... */}
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-              <div>
-                  <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-                      <Radio className="text-red-600" /> TCS Monitor
-                  </h2>
-                  <p className="text-slate-500 text-sm mt-1">
-                      Inspect imported orders and batch update statuses.
+                  <h3 className="font-bold text-xl text-white flex items-center gap-3">
+                      <Terminal className="text-brand-500" /> 
+                      TCS API Diagnostics
+                  </h3>
+                  <p className="text-slate-400 text-sm mt-1">
+                      Use this tool to confirm your API Token is working before syncing orders.
                   </p>
               </div>
-              <div className="flex items-center gap-4">
-                  {viewMode === 'matched' && (
-                      <button
-                          onClick={isBulkScanning ? () => setStopSignal(true) : handleBulkScan}
-                          disabled={isBulkScanning && stopSignal}
-                          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all shadow-sm ${
-                              isBulkScanning 
-                                  ? 'bg-red-50 text-red-600 border border-red-200' 
-                                  : 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-50'
-                          }`}
-                      >
-                          {isBulkScanning ? (
-                              <>
-                                  <Loader2 size={16} className="animate-spin" />
-                                  Scanning {bulkProgress}... (Stop)
-                              </>
-                          ) : (
-                              <>
-                                  <PlayCircle size={16} />
-                                  Scan All Pending
-                              </>
-                          )}
-                      </button>
-                  )}
+              <div className="flex items-center gap-3">
+                  <div className={`px-4 py-2 rounded-lg flex items-center gap-2 font-bold text-sm ${
+                      connectionStatus === 'success' ? 'bg-green-500/20 text-green-400 border border-green-500/50' : 
+                      connectionStatus === 'failed' ? 'bg-red-500/20 text-red-400 border border-red-500/50' : 
+                      'bg-slate-800 text-slate-400 border border-slate-700'
+                  }`}>
+                      {connectionStatus === 'success' ? <Wifi size={18} /> : connectionStatus === 'failed' ? <WifiOff size={18} /> : <Globe size={18} />}
+                      {connectionStatus === 'success' ? 'CONNECTED' : connectionStatus === 'failed' ? 'CONNECTION FAILED' : 'NOT TESTED'}
+                  </div>
               </div>
           </div>
 
-          {/* View Toggles */}
-          <div className="flex gap-2 border-b border-slate-200">
-              <button 
-                  onClick={() => setViewMode('raw')}
-                  className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
-                      viewMode === 'raw' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-700'
-                  }`}
-              >
-                  <Database size={16} /> Raw Data Inspector
-              </button>
-              <button 
-                  onClick={() => setViewMode('matched')}
-                  className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
-                      viewMode === 'matched' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'
-                  }`}
-              >
-                  <CheckCircle2 size={16} /> Matched & Tracked
-              </button>
+          <div className="p-6 grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {/* Left: Inputs */}
+              <div className="space-y-5">
+                  <div>
+                      <label className="block text-xs font-bold text-slate-400 mb-1.5 uppercase">API Access Token</label>
+                      <div className="relative">
+                          <Key size={16} className="absolute left-3 top-3.5 text-slate-500" />
+                          <input 
+                              type="text" 
+                              className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-10 pr-4 py-3 text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none font-mono"
+                              placeholder="Paste your long TCS token here..."
+                              value={manualToken}
+                              onChange={(e) => setManualToken(e.target.value)}
+                          />
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-2">
+                          Note: This should be the long "Bearer" token from TCS OCI Portal.
+                      </p>
+                  </div>
+
+                  <div>
+                      <label className="block text-xs font-bold text-slate-400 mb-1.5 uppercase">Test Tracking Number (CN)</label>
+                      <div className="relative">
+                          <Package size={16} className="absolute left-3 top-3.5 text-slate-500" />
+                          <input 
+                              type="text" 
+                              className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-10 pr-4 py-3 text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none font-mono"
+                              placeholder="e.g. 779412326902"
+                              value={manualCn}
+                              onChange={(e) => setManualCn(e.target.value)}
+                          />
+                      </div>
+                  </div>
+
+                  <button 
+                      onClick={handleTestConnection}
+                      disabled={isRunningDiag || !manualToken}
+                      className="w-full bg-brand-600 hover:bg-brand-500 text-white font-bold py-4 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-brand-900/50"
+                  >
+                      {isRunningDiag ? <Loader2 size={20} className="animate-spin" /> : <PlayCircle size={20} />}
+                      Run Connection Test
+                  </button>
+              </div>
+
+              {/* Right: Logs */}
+              <div className="bg-black/50 rounded-xl border border-slate-800 p-4 flex flex-col h-[300px]">
+                  <div className="flex justify-between items-center mb-2 border-b border-slate-800 pb-2">
+                      <span className="text-xs font-bold text-slate-400 uppercase">Live Log Output</span>
+                      <button onClick={() => setDiagnosticLog([])} className="text-[10px] text-slate-500 hover:text-white">Clear</button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto font-mono text-xs space-y-1 pr-2 custom-scrollbar">
+                      {diagnosticLog.length === 0 && (
+                          <div className="h-full flex flex-col items-center justify-center text-slate-600 opacity-50">
+                              <Terminal size={32} className="mb-2" />
+                              <p>Ready to test...</p>
+                          </div>
+                      )}
+                      {diagnosticLog.map((line, i) => (
+                          <div key={i} className={`break-all ${
+                              line.includes('ERROR') || line.includes('failed') ? 'text-red-400' : 
+                              line.includes('SUCCESS') ? 'text-green-400' : 
+                              line.includes('WARNING') ? 'text-yellow-400' : 
+                              'text-slate-300'
+                          }`}>
+                              {line}
+                          </div>
+                      ))}
+                  </div>
+              </div>
           </div>
       </div>
 
-      {/* --- VIEW: RAW ORDERS --- */}
-      {viewMode === 'raw' && safeShopifyOrders.length > 0 && (
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-center gap-4">
-                  <div className="flex items-center gap-3">
-                      <button 
-                        onClick={() => setShowOnlyTcsCandidates(!showOnlyTcsCandidates)}
-                        className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold border transition-all ${
-                            showOnlyTcsCandidates 
-                                ? 'bg-red-100 text-red-700 border-red-200' 
-                                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                        }`}
-                      >
-                          <Filter size={14} />
-                          {showOnlyTcsCandidates ? 'Filter: Just TCS' : 'Show All Orders'}
-                      </button>
-                      <span className="text-xs text-slate-500">
-                          {filteredRawOrders.length} orders
-                      </span>
-                  </div>
-                  
-                  <div className="relative w-full sm:w-auto">
-                      <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
-                      <input 
-                          type="text" 
-                          placeholder="Search Order # or Product..."
-                          value={searchTerm}
-                          onChange={(e) => setSearchTerm(e.target.value)}
-                          className="pl-9 pr-4 py-2 border rounded-lg text-xs w-full sm:w-64 focus:ring-2 focus:ring-slate-500 outline-none"
-                      />
-                  </div>
-              </div>
-              <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs font-mono">
-                      <thead className="bg-slate-100 text-slate-500 uppercase font-bold border-b border-slate-200">
-                          <tr>
-                              <th className="px-4 py-3">Order</th>
-                              <th className="px-4 py-3">Date</th>
-                              <th className="px-4 py-3 w-[35%]">Items</th>
-                              <th className="px-4 py-3">Tracking</th>
-                              <th className="px-4 py-3">Tags</th>
-                              <th className="px-4 py-3">Analysis</th>
-                          </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                          {filteredRawOrders.slice(0, 100).map((o, idx) => {
-                              if (!o) return null;
-                              const id = o.id || idx;
-                              const name = o.name || 'Unknown';
-                              let date = 'N/A';
-                              try { date = o.created_at ? new Date(o.created_at).toLocaleDateString() : 'N/A'; } catch (e) { }
-                              
-                              const tags = o.tags || '';
-                              const fulfillments = Array.isArray(o.fulfillments) ? o.fulfillments : [];
-                              const fulfillment = fulfillments.length > 0 ? fulfillments[0] : null;
-                              
-                              return (
-                                  <tr key={id} className="hover:bg-slate-50">
-                                      <td className="px-4 py-3 font-bold text-slate-800 align-top">{name}</td>
-                                      <td className="px-4 py-3 text-slate-500 align-top">{date}</td>
-                                      <td className="px-4 py-3 text-slate-600 align-top truncate max-w-[200px]">
-                                          {(o.line_items || []).map(i => i?.title).join(', ')}
-                                      </td>
-                                      <td className="px-4 py-3 align-top">
-                                          {fulfillment ? (
-                                              <div className="flex flex-col gap-1">
-                                                  <span className="font-bold truncate max-w-[100px]">{fulfillment.tracking_company || 'None'}</span>
-                                                  <span className="truncate max-w-[100px]">{fulfillment.tracking_number || 'None'}</span>
-                                              </div>
-                                          ) : <span className="text-red-400">No Fulfillment</span>}
-                                      </td>
-                                      <td className="px-4 py-3 max-w-[100px] align-top truncate">{tags || '-'}</td>
-                                      <td className="px-4 py-3 align-top text-slate-500">
-                                          {isTcsCandidate(o) ? <span className="text-green-600 font-bold">Match</span> : 'Ignore'}
-                                      </td>
-                                  </tr>
-                              );
-                          })}
-                      </tbody>
-                  </table>
-              </div>
-          </div>
-      )}
-
-      {/* --- VIEW: MATCHED ORDERS --- */}
-      {viewMode === 'matched' && (
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      {/* Existing Orders List (Simplified) */}
+      <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm opacity-75 hover:opacity-100 transition-opacity">
+          <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
+              <Database size={18} /> Cached Tracking Data
+          </h3>
+          <p className="text-sm text-slate-500 mb-4">
+              Below are the TCS orders currently in your system. Use the "Sync" button on the Orders page to update them once the connection above is verified Green.
+          </p>
+          <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-50 border-b border-slate-200 uppercase text-xs font-bold text-slate-500">
+                  <thead className="bg-slate-50 text-xs uppercase font-bold text-slate-500">
                       <tr>
-                          <th className="px-6 py-4">Shopify Ref</th>
-                          <th className="px-6 py-4 w-[35%]">Items</th>
-                          <th className="px-6 py-4">Tracking Number</th>
-                          <th className="px-6 py-4">Status</th>
-                          <th className="px-6 py-4">Live Check</th>
+                          <th className="px-4 py-2">Tracking #</th>
+                          <th className="px-4 py-2">System Status</th>
+                          <th className="px-4 py-2">Raw Courier Message</th>
                       </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                      {trackingOrders.length > 0 ? trackingOrders.map((o, idx) => (
-                          <tr key={o.id || idx} className="hover:bg-slate-50 transition-colors">
-                              <td className="px-6 py-4 font-medium text-slate-900 align-top">
-                                  {o.shopify_order_number}
+                      {trackingOrders.slice(0, 10).map(o => (
+                          <tr key={o.id}>
+                              <td className="px-4 py-2 font-mono">{o.tracking_number}</td>
+                              <td className="px-4 py-2">
+                                  <span className={`px-2 py-0.5 rounded text-xs ${o.status === 'DELIVERED' ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
+                                      {o.status}
+                                  </span>
                               </td>
-                              <td className="px-6 py-4 text-slate-600 text-xs align-top">
-                                  {(o.items || []).map(i => `${i.quantity}x ${i.product_name}`).join(', ') || 'No Items'}
-                              </td>
-                              <td className="px-6 py-4 text-slate-600 font-mono align-top">
-                                  {o.tracking_number}
-                              </td>
-                              <td className="px-6 py-4 align-top">
-                                  <div className="flex flex-col items-start gap-1">
-                                      <span className={`px-2 py-1 rounded text-xs font-bold ${
-                                          o.status === OrderStatus.DELIVERED ? 'bg-green-100 text-green-700' :
-                                          o.status === OrderStatus.RETURNED || o.status === OrderStatus.RTO_INITIATED ? 'bg-red-100 text-red-700' :
-                                          'bg-blue-50 text-blue-700'
-                                      }`}>
-                                          {o.status.replace('_', ' ')}
-                                      </span>
-                                      
-                                      {o.courier_raw_status ? (
-                                          <span className="text-[10px] text-slate-500 font-medium block max-w-[180px] leading-tight">
-                                              {o.courier_raw_status}
-                                          </span>
-                                      ) : (
-                                          <span className="text-[10px] text-slate-300 italic">
-                                              Pending Check...
-                                          </span>
-                                      )}
-                                  </div>
-                              </td>
-                              <td className="px-6 py-4 align-top">
-                                  <button 
-                                    onClick={() => handleTrackClick(o)}
-                                    disabled={trackingIds.has(o.id) || isBulkScanning}
-                                    className="p-1.5 bg-slate-100 text-slate-600 rounded hover:bg-blue-100 hover:text-blue-600 transition-colors disabled:opacity-50"
-                                    title="Check Live Status"
-                                  >
-                                      {trackingIds.has(o.id) || isBulkScanning ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-                                  </button>
+                              <td className="px-4 py-2 text-slate-500 text-xs truncate max-w-[200px]">
+                                  {o.courier_raw_status || '-'}
                               </td>
                           </tr>
-                      )) : (
-                          <tr>
-                              <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
-                                  No matched orders found.
-                              </td>
-                          </tr>
-                      )}
+                      ))}
+                      {trackingOrders.length === 0 && <tr><td colSpan={3} className="px-4 py-4 text-center text-slate-400">No TCS orders found.</td></tr>}
                   </tbody>
               </table>
           </div>
-      )}
+      </div>
     </div>
   );
 };
