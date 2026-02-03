@@ -20,6 +20,7 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
   const [manualCn, setManualCn] = useState('');
   const [manualToken, setManualToken] = useState('');
   const [manualResult, setManualResult] = useState<any>(null);
+  const [manualFullResponse, setManualFullResponse] = useState<any>(null);
   const [isManualTracking, setIsManualTracking] = useState(false);
 
   // Bulk Scan State
@@ -29,7 +30,6 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
   
   const [showOnlyTcsCandidates, setShowOnlyTcsCandidates] = useState(false);
 
-  // SAFEGUARD: Ensure inputs are arrays to prevent crashes
   const safeOrders = useMemo(() => Array.isArray(orders) ? orders : [], [orders]);
   const safeShopifyOrders = useMemo(() => Array.isArray(shopifyOrders) ? shopifyOrders : [], [shopifyOrders]);
 
@@ -46,10 +46,14 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
 
       setIsManualTracking(true);
       setManualResult(null);
+      setManualFullResponse(null);
 
       try {
+          // Explicitly access the private request method for raw debugging if possible, 
+          // or just use track() and catch the internal fetch logic.
+          // Since we can't access private methods easily, we rely on the error message or success.
+          
           const adapter = new TcsAdapter();
-          // Use manual token if provided, otherwise fallback to saved config
           const configToUse = manualToken.trim() 
               ? { api_token: manualToken.trim(), is_active: true, provider_id: 'TCS', id: 'temp' } as IntegrationConfig
               : tcsConfig;
@@ -58,21 +62,40 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
               throw new Error("No API Token found. Please enter one manually or configure it in Settings > Integrations.");
           }
 
+          // Use the `track` method which we updated to be robust
           const result = await adapter.track(manualCn.trim(), configToUse);
+          
           setManualResult({
               status: result.status,
               raw: result.raw_status_text,
-              timestamp: result.courier_timestamp,
-              full_data: "Success"
+              timestamp: result.courier_timestamp
           });
+          
+          // Re-fetch purely for the RAW JSON display (using the internal logic we can't access directly)
+          // We simulate the raw fetch here to show the user exactly what TCS sent back
+          const cleanToken = configToUse.api_token.replace(/^Bearer\s+/i, '').trim();
+          const targetUrl = `https://ociconnect.tcscourier.com/tracking/api/Tracking/GetDynamicTrackDetail?consignee=${manualCn.trim()}`;
+          
+          const rawRes = await fetch(`/api/proxy?url=${encodeURIComponent(targetUrl)}`, {
+              headers: { 
+                  'Accept': 'application/json',
+                  'Authorization': `Bearer ${cleanToken}`
+              }
+          });
+          const rawText = await rawRes.text();
+          try {
+              setManualFullResponse(JSON.parse(rawText));
+          } catch {
+              setManualFullResponse(rawText);
+          }
 
       } catch (e: any) {
           console.error("Manual Track Error", e);
           setManualResult({
               status: "ERROR",
-              raw: e.message || "Unknown Error",
-              full_data: e.toString()
+              raw: e.message || "Unknown Error"
           });
+          setManualFullResponse({ error: e.toString() });
       } finally {
           setIsManualTracking(false);
       }
@@ -180,13 +203,13 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
 
   return (
     <div className="space-y-6 pb-12">
-      {/* MANUAL TRACKING LAB (NEW) */}
+      {/* MANUAL TRACKING LAB */}
       <div className="bg-slate-900 rounded-xl shadow-lg border border-slate-800 p-6 text-white">
           <div className="flex items-center gap-3 mb-4">
               <Terminal size={24} className="text-brand-500" />
               <div>
-                  <h3 className="font-bold text-lg">Manual Tracking Lab</h3>
-                  <p className="text-xs text-slate-400">Test specific CN numbers and credentials directly.</p>
+                  <h3 className="font-bold text-lg">Manual Tracking Lab (Diagnostics)</h3>
+                  <p className="text-xs text-slate-400">Use this to verify your API Token connectivity and see RAW responses from TCS.</p>
               </div>
           </div>
           
@@ -220,20 +243,34 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
                       className="w-full bg-brand-600 hover:bg-brand-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50"
                   >
                       {isManualTracking ? <Loader2 size={18} className="animate-spin" /> : <Search size={18} />}
-                      Track Shipment
+                      Track & Debug
                   </button>
               </div>
           </div>
 
           {/* RESULT DISPLAY */}
-          {manualResult && (
-              <div className={`mt-4 p-4 rounded-lg border font-mono text-sm ${manualResult.status === 'ERROR' ? 'bg-red-900/20 border-red-900/50 text-red-200' : 'bg-green-900/20 border-green-900/50 text-green-200'}`}>
-                  <div className="flex justify-between items-start">
-                      <div>
-                          <p className="font-bold mb-1">Status: {manualResult.status}</p>
-                          <p>Message: {manualResult.raw}</p>
-                      </div>
-                      {manualResult.timestamp && <span className="text-xs opacity-60">{new Date(manualResult.timestamp).toLocaleString()}</span>}
+          {(manualResult || manualFullResponse) && (
+              <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Status Box */}
+                  <div className={`p-4 rounded-lg border font-mono text-sm h-full ${manualResult?.status === 'ERROR' ? 'bg-red-900/20 border-red-900/50 text-red-200' : 'bg-green-900/20 border-green-900/50 text-green-200'}`}>
+                      <h4 className="font-bold border-b border-white/10 pb-2 mb-2">Parsed Result</h4>
+                      {manualResult ? (
+                          <>
+                              <p><span className="opacity-60">Status:</span> <strong>{manualResult.status}</strong></p>
+                              <p><span className="opacity-60">Message:</span> {manualResult.raw}</p>
+                              <p><span className="opacity-60">Time:</span> {manualResult.timestamp}</p>
+                          </>
+                      ) : (
+                          <p className="text-xs opacity-50">Processing...</p>
+                      )}
+                  </div>
+
+                  {/* Raw JSON Box */}
+                  <div className="bg-black/30 p-4 rounded-lg border border-slate-700 font-mono text-xs text-slate-300 overflow-auto max-h-[300px]">
+                      <h4 className="font-bold border-b border-slate-700 pb-2 mb-2 text-slate-400">Raw API Response (Debug Log)</h4>
+                      <pre className="whitespace-pre-wrap break-all">
+                          {manualFullResponse ? JSON.stringify(manualFullResponse, null, 2) : "Waiting for response..."}
+                      </pre>
                   </div>
               </div>
           )}
@@ -241,6 +278,7 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
 
       {/* Main List Area */}
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+          {/* ... existing UI ... */}
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
               <div>
                   <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
