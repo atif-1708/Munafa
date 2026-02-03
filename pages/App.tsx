@@ -278,22 +278,35 @@ const App: React.FC = () => {
                  
                  if (!isUnmapped || !isFulfilled) return false;
 
-                 // TCS Check (Look at Tracking Company OR Regex)
-                 return s.fulfillments?.some(f => 
-                     (f.tracking_company && f.tracking_company.toLowerCase().includes('tcs')) || 
-                     (f.tracking_number && /^\d{9,15}$/.test(f.tracking_number)) // Matches common TCS formats
-                 );
+                 // Robust TCS Detection
+                 return s.fulfillments?.some(f => {
+                     const company = f.tracking_company?.toLowerCase() || '';
+                     const num = (f.tracking_number || '').replace(/[^a-zA-Z0-9]/g, '');
+                     
+                     // Negative check: Not other common couriers
+                     const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('callcourier') || company.includes('mnp');
+                     
+                     if (isOther) return false;
+
+                     // Positive check: Name includes TCS OR Number format is 9-16 digits (TCS standard)
+                     return company.includes('tcs') || /^\d{9,16}$/.test(num);
+                 });
              });
 
              if (candidates.length > 0) {
                  console.log(`[TCS Backfill] Found ${candidates.length} candidates from last 60 days.`);
                  
                  // 3. Process Candidates
-                 // We map ALL candidates. If we have a token, we try to track. 
-                 // If not, we default to IN_TRANSIT.
                  const results = await Promise.all(candidates.map(async (sOrder) => {
-                     const ff = sOrder.fulfillments?.find(f => f.tracking_number);
-                     if (!ff) return null;
+                     // Find the exact fulfillment that triggered the inclusion
+                     const ff = sOrder.fulfillments?.find(f => {
+                         const company = f.tracking_company?.toLowerCase() || '';
+                         const num = (f.tracking_number || '').replace(/[^a-zA-Z0-9]/g, '');
+                         const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('callcourier') || company.includes('mnp');
+                         return !isOther && (company.includes('tcs') || /^\d{9,16}$/.test(num));
+                     });
+
+                     if (!ff || !ff.tracking_number) return null;
 
                      let status = OrderStatus.IN_TRANSIT; // Default assumption for fulfilled order
                      
@@ -304,7 +317,7 @@ const App: React.FC = () => {
                              const update = await tcsAdapter.track(ff.tracking_number, tcsConfig);
                              status = update.status;
                          } catch (e) {
-                             // SIlently fail back to IN_TRANSIT
+                             // Silently fail back to IN_TRANSIT
                          }
                      }
 
