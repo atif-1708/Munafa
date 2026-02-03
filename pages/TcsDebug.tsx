@@ -1,8 +1,8 @@
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Order, OrderStatus, ShopifyOrder } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { Radio, AlertCircle, Search, HelpCircle } from 'lucide-react';
+import { Radio, AlertCircle, Search, HelpCircle, Code, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface TcsDebugProps {
   orders: Order[];
@@ -10,6 +10,8 @@ interface TcsDebugProps {
 }
 
 const TcsDebug: React.FC<TcsDebugProps> = ({ orders, shopifyOrders }) => {
+  const [showRaw, setShowRaw] = useState(false);
+
   // 1. Orders successfully tracked by App.tsx
   const trackingOrders = orders.filter(o => o.data_source === 'tracking');
   
@@ -210,6 +212,72 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders, shopifyOrders }) => {
                 </tbody>
             </table>
         </div>
+      </div>
+
+      {/* RAW DATA INSPECTOR */}
+      <div className="border-t border-slate-200 pt-8 mt-8">
+          <button 
+            onClick={() => setShowRaw(!showRaw)}
+            className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-md hover:bg-slate-800 transition-colors mx-auto"
+          >
+              <Code size={16} />
+              {showRaw ? 'Hide Raw Data Inspector' : 'Show Raw Data Inspector'}
+              {showRaw ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </button>
+
+          {showRaw && (
+              <div className="mt-6 bg-slate-100 p-4 rounded-xl border border-slate-300">
+                  <h3 className="font-bold text-slate-900 mb-2">Raw Shopify Data Inspector (Last 20 Fulfilled Orders)</h3>
+                  <p className="text-xs text-slate-500 mb-4">
+                      This table shows the raw data coming from Shopify WITHOUT any filtering. Use this to verify if Tags or Tracking Company names are matching what you expect.
+                  </p>
+                  
+                  {shopifyOrders.length === 0 ? (
+                      <div className="bg-red-100 text-red-700 p-4 rounded-lg font-bold text-center border border-red-200">
+                          CRITICAL: No Shopify Orders found in memory. Please check the Integrations page and ensure Shopify is connected and syncing.
+                      </div>
+                  ) : (
+                      <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-x-auto">
+                          <table className="w-full text-left text-xs font-mono">
+                              <thead className="bg-slate-200 text-slate-700 border-b border-slate-300">
+                                  <tr>
+                                      <th className="px-4 py-2">Order</th>
+                                      <th className="px-4 py-2">Date</th>
+                                      <th className="px-4 py-2">Tags (Raw)</th>
+                                      <th className="px-4 py-2">Fulfillment Data</th>
+                                  </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                  {shopifyOrders
+                                    .filter(o => o.fulfillment_status === 'fulfilled' || o.fulfillment_status === 'partial')
+                                    .slice(0, 20)
+                                    .map(o => (
+                                      <tr key={o.id} className="hover:bg-slate-50">
+                                          <td className="px-4 py-2 font-bold">{o.name}</td>
+                                          <td className="px-4 py-2">{new Date(o.created_at).toLocaleDateString()}</td>
+                                          <td className="px-4 py-2 text-blue-600 break-words max-w-xs">
+                                              {o.tags ? o.tags : <span className="text-slate-300">No Tags</span>}
+                                          </td>
+                                          <td className="px-4 py-2 text-slate-600">
+                                              {o.fulfillments && o.fulfillments.length > 0 ? (
+                                                  o.fulfillments.map((f, i) => (
+                                                      <div key={i} className="mb-1 p-1 bg-slate-50 rounded border border-slate-100">
+                                                          <span className="block font-bold">Company: "{f.tracking_company}"</span>
+                                                          <span className="block">Track #: {f.tracking_number}</span>
+                                                      </div>
+                                                  ))
+                                              ) : (
+                                                  <span className="text-red-500">Empty Fulfillments Array</span>
+                                              )}
+                                          </td>
+                                      </tr>
+                                  ))}
+                              </tbody>
+                          </table>
+                      </div>
+                  )}
+              </div>
+          )}
       </div>
     </div>
   );
