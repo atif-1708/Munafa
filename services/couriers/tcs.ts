@@ -48,77 +48,18 @@ export class TcsAdapter implements CourierAdapter {
     throw new Error("Unable to connect to TCS API via any route.");
   }
 
-  /**
-   * Helper: Decode JWT to find ClientID/Account Number
-   */
-  private extractAccountFromToken(token: string): string | null {
-      if (!token) return null;
-      try {
-          // JWT structure: Header.Payload.Signature
-          const parts = token.split('.');
-          if (parts.length !== 3) return null;
-
-          const base64Url = parts[1];
-          const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-          const jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function(c) {
-              return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-          }).join(''));
-
-          const payload = JSON.parse(jsonPayload);
-          
-          // Enhanced extraction logic
-          const candidate = 
-            payload.clientid || 
-            payload.ClientId || 
-            payload.customerno || 
-            payload.customerNo || 
-            payload.unique_name || 
-            payload.sub || 
-            payload.nameid;
-
-          // If it looks like a TCS account number (numeric or alphanumeric code), return it
-          if (candidate) return String(candidate);
-          
-          return null;
-      } catch (e) {
-          console.error("Error decoding TCS Token:", e);
-          return null;
-      }
-  }
-
-  /**
-   * Get Token - Strictly follows PDF GET method
-   */
-  private async getToken(config: IntegrationConfig): Promise<string> {
-      // Manual Token Override
-      if (config.api_token && config.api_token.length > 50) return config.api_token;
-
-      if (!config.username || !config.password) {
-          throw new Error("Client ID and Client Secret are required.");
-      }
-
-      for (const baseUrl of this.BASE_URLS) {
-          const url = `${baseUrl}/auth/api/auth?clientid=${config.username}&clientsecret=${config.password}`;
-          try {
-              const res = await this.fetchUniversal(url, { method: 'GET' });
-              if (res?.result?.accessToken) return res.result.accessToken;
-              if (res?.access_token) return res.access_token;
-          } catch (e) {}
-      }
-      throw new Error("Authentication Failed. Please check Client ID and Secret.");
-  }
-
   private mapStatus(rawStatus: string): OrderStatus {
     const s = String(rawStatus || '').toLowerCase();
+    
+    // Page 23/34 Mappings
+    if (s === 'ok' || s === 'delivered' || s === 'shipment delivered') return OrderStatus.DELIVERED;
+    if (s === 'ro' || s === 'return to origin' || s === 'returned') return OrderStatus.RETURNED;
+    if (s === 'cr' || s === 'cn') return OrderStatus.RETURNED; 
     
     if (s.includes('delivered')) return OrderStatus.DELIVERED;
     if (s.includes('return') || s.includes('rto')) return OrderStatus.RETURNED;
     if (s.includes('cancel')) return OrderStatus.CANCELLED;
     if (s.includes('booked')) return OrderStatus.BOOKED;
-    // Specific TCS codes
-    if (s === 'ok') return OrderStatus.DELIVERED;
-    if (s === 'ro') return OrderStatus.RETURNED;
-    if (s === 'cr') return OrderStatus.RETURNED; // Credit/Return
     
     return OrderStatus.IN_TRANSIT;
   }
@@ -139,22 +80,40 @@ export class TcsAdapter implements CourierAdapter {
   }
 
   /**
-   * Deep Connection Test
+   * Validation Test: Checks if credentials are valid by attempting a quick fetch
    */
   async testConnection(config: IntegrationConfig): Promise<boolean> {
       try {
-          const token = await this.getToken(config);
-          if (!token) return false;
+          const token = config.api_token;
+          const accountNo = config.merchant_id?.trim();
 
-          // CRITICAL FIX: Ensure we have an Account Number before saying "Success"
-          const explicitAccount = config.merchant_id?.trim();
-          const extractedAccount = this.extractAccountFromToken(token);
+          if (!token) throw new Error("API Token is required.");
+          if (!accountNo) throw new Error("Account Number is required.");
+
+          // Perform a lightweight check. Since there isn't a dedicated "ping" endpoint documented
+          // that takes just a token, we try fetching 1 day of data. Even if empty, a 200 OK means success.
+          const today = new Date().toISOString().split('T')[0];
           
-          if (!explicitAccount && !extractedAccount) {
-              throw new Error("Token Valid, but Account Number not found inside it. Please enter Account Number manually in the optional field.");
+          for (const baseUrl of this.BASE_URLS) {
+              const url = `${baseUrl}/ecom/api/Payment/detail?accesstoken=${encodeURIComponent(token)}&customerno=${accountNo}&fromdate=${today}&todate=${today}`;
+              try {
+                  const res = await this.fetchUniversal(url, { method: 'GET' });
+                  // If we get a response object with 'detail' or 'message', the credentials worked.
+                  if (res && (res.detail || res.message || res.status === 'true' || res.status === true)) {
+                      return true;
+                  }
+                  // If unauthorized, it usually returns status: false or code: 401
+                  if (res && (res.code === 401 || res.status === 'UnAuthorized')) {
+                      throw new Error("Invalid Token or Account Number.");
+                  }
+              } catch (e) {
+                  // Continue to next base URL
+              }
           }
           
-          return true;
+          // If we reach here, no endpoint worked
+          throw new Error("Could not validate credentials with TCS.");
+
       } catch (e: any) {
           console.error("TCS Test Failed:", e);
           throw new Error(e.message);
@@ -162,75 +121,46 @@ export class TcsAdapter implements CourierAdapter {
   }
 
   /**
-   * Fetches orders using "Shotgun" approach (GET & POST) to handle API ambiguity
+   * Fetches orders strictly using the Payment Detail API (Page 22) with Token + Account Number
    */
   async fetchRecentOrders(config: IntegrationConfig): Promise<Order[]> {
-      const token = await this.getToken(config);
+      const token = config.api_token;
+      const accountNo = config.merchant_id?.trim();
       
-      // Logic: Prefer Manual Entry -> Then Extracted -> Then Username
-      let accountNo = config.merchant_id?.trim();
-      
-      if (!accountNo) {
-          accountNo = this.extractAccountFromToken(token) || config.username?.trim();
-      }
-      
-      if (!accountNo) {
-          console.error("Critical: No TCS Account Number available.");
+      if (!token || !accountNo) {
+          console.error("Critical: Missing TCS Token or Account Number.");
           return [];
       }
 
       const end = new Date();
       const start = new Date();
-      start.setDate(start.getDate() - 60); // INCREASED TO 60 DAYS to match UI message
+      start.setDate(start.getDate() - 60); 
 
-      const dateFormats = [
-          { start: start.toISOString().split('T')[0], end: end.toISOString().split('T')[0] }, // YYYY-MM-DD
-          { start: start.toISOString().split('T')[0].replace(/-/g, ''), end: end.toISOString().split('T')[0].replace(/-/g, '') } // YYYYMMDD
-      ];
+      // Date Format: The PDF examples use "2024-09-08" (YYYY-MM-DD). 
+      const fromDate = start.toISOString().split('T')[0];
+      const toDate = end.toISOString().split('T')[0];
 
       let rawData: any[] = [];
 
-      // Try combinations until we get data
-      outerLoop:
-      for (const dates of dateFormats) {
-          for (const baseUrl of this.BASE_URLS) {
-              const endpoint = `${baseUrl}/ecom/api/Payment/detail`;
+      for (const baseUrl of this.BASE_URLS) {
+          // Endpoint from PDF Page 22
+          const endpoint = `${baseUrl}/ecom/api/Payment/detail`;
+          
+          // Construct Query Params
+          const query = `?accesstoken=${encodeURIComponent(token)}&customerno=${accountNo}&fromdate=${fromDate}&todate=${toDate}`;
+          
+          try {
+              const res = await this.fetchUniversal(endpoint + query, { method: 'GET' });
               
-              // Strategy A: Standard 'customerno' (GET)
-              try {
-                  const query = `?accesstoken=${encodeURIComponent(token)}&customerno=${accountNo}&fromdate=${dates.start}&todate=${dates.end}`;
-                  const res = await this.fetchUniversal(endpoint + query, { method: 'GET' });
-                  if (res?.detail && Array.isArray(res.detail)) { rawData = res.detail; break outerLoop; }
-              } catch (e) {}
-
-              // Strategy B: 'costCenterCode' (GET) - Common for Cost Center Accounts like LGEC...
-              try {
-                  const query = `?accesstoken=${encodeURIComponent(token)}&costCenterCode=${accountNo}&fromdate=${dates.start}&todate=${dates.end}`;
-                  const res = await this.fetchUniversal(endpoint + query, { method: 'GET' });
-                  if (res?.detail && Array.isArray(res.detail)) { rawData = res.detail; break outerLoop; }
-              } catch (e) {}
-              
-               // Strategy C: 'costCenter' (GET) - Another variation
-              try {
-                  const query = `?accesstoken=${encodeURIComponent(token)}&costCenter=${accountNo}&fromdate=${dates.start}&todate=${dates.end}`;
-                  const res = await this.fetchUniversal(endpoint + query, { method: 'GET' });
-                  if (res?.detail && Array.isArray(res.detail)) { rawData = res.detail; break outerLoop; }
-              } catch (e) {}
-
-              // Strategy D: Standard 'customerno' (POST)
-              try {
-                  const res = await this.fetchUniversal(endpoint, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                          accesstoken: token,
-                          customerno: accountNo,
-                          fromdate: dates.start,
-                          todate: dates.end
-                      })
-                  });
-                  if (res?.detail && Array.isArray(res.detail)) { rawData = res.detail; break outerLoop; }
-              } catch (e) {}
+              if (res?.detail && Array.isArray(res.detail)) {
+                  rawData = res.detail;
+                  break; // Success
+              } else if (res?.message === "Invalid CN" || res?.message?.includes("No Record")) {
+                  // Valid connection but no data
+                  break; 
+              }
+          } catch (e) {
+              console.warn(`Failed TCS fetch on ${baseUrl}`, e);
           }
       }
 
@@ -241,18 +171,26 @@ export class TcsAdapter implements CourierAdapter {
           const refNo = item['order no'] || item['refNo'] || 'N/A';
           const trackNo = item['cn by courier'] || item['consignmentNo'] || '';
           
-          // Parse Money
+          // Financials
           const cod = parseFloat(item['codamount'] || item['cod amount'] || item['amount paid'] || 0);
+          
+          // PDF Page 22 shows "delivery charges": 116. This is the cost to seller.
           const shipFee = parseFloat(item['delivery charges'] || 0);
           
-          // Status
-          const status = this.mapStatus(item['cn status'] || item.status);
+          // Status Mapping
+          const rawStatus = item['cn status'] || item.status;
+          const status = this.mapStatus(rawStatus);
+          
+          // Payment Status: "payment status": "N" or "Y" or "Paid"
           const isRemitted = item['payment status'] === 'Y' || item['payment status'] === 'Paid';
+
+          // Date Parsing (PDF shows "09/09/2024")
+          const createdDate = this.parseDate(item['booking date']);
 
           return {
               id: trackNo || Math.random().toString(),
               shopify_order_number: refNo,
-              created_at: this.parseDate(item['booking date']),
+              created_at: createdDate,
               customer_city: item.city || 'Unknown',
               courier: CourierName.TCS,
               tracking_number: trackNo,
@@ -262,8 +200,12 @@ export class TcsAdapter implements CourierAdapter {
               cod_amount: cod,
               shipping_fee_paid_by_customer: 0,
               
-              courier_fee: shipFee > 0 ? shipFee : 250,
-              rto_penalty: status === OrderStatus.RETURNED ? 0 : 0, // TCS doesn't usually charge RTO separately on this API
+              // If API returns 0 fee (happens on Booked status), fallback to constant, otherwise use real fee
+              courier_fee: shipFee > 0 ? shipFee : 250, 
+              
+              // TCS RTO Penalty is often embedded in delivery charges or separate line items not shown in basic detail.
+              // For safety, if Returned, we assume the delivery charge INCLUDES the return penalty or is just the forward cost lost.
+              rto_penalty: 0, 
               packaging_cost: 45,
               overhead_cost: 0,
               tax_amount: 0,
@@ -282,10 +224,14 @@ export class TcsAdapter implements CourierAdapter {
 
   private parseDate(dateStr: string): string {
       try {
-          // Handle "09/09/2024" format from PDF
+          if (!dateStr) return new Date().toISOString();
+          // Handle "09/09/2024" (DD/MM/YYYY) format from PDF
           if (dateStr.includes('/')) {
-              const [d, m, y] = dateStr.split('/');
-              return new Date(`${y}-${m}-${d}`).toISOString();
+              const parts = dateStr.split('/');
+              if (parts.length === 3) {
+                  // DD/MM/YYYY -> YYYY-MM-DD
+                  return new Date(`${parts[2]}-${parts[1]}-${parts[0]}`).toISOString();
+              }
           }
           return new Date(dateStr).toISOString();
       } catch {

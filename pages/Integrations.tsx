@@ -27,7 +27,7 @@ const COURIER_META: Record<string, { color: string, bg: string, border: string, 
     },
     [CourierName.TCS]: { 
         color: 'text-red-900', bg: 'bg-red-50', border: 'border-red-200', icon: 'TCS', label: 'TCS',
-        desc: 'Pakistan’s largest courier network integration.'
+        desc: 'Official API integration via OCI Connect.'
     },
     [CourierName.MNP]: { 
         color: 'text-blue-700', bg: 'bg-blue-50', border: 'border-blue-200', icon: 'M&P', label: 'M&P',
@@ -85,9 +85,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
   const [testingConnection, setTestingConnection] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Local state for TCS Toggle
-  const [useTcsManualToken, setUseTcsManualToken] = useState(false);
-
   useEffect(() => {
     const loadConfigs = async () => {
         setLoading(true);
@@ -114,11 +111,6 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                 is_active: conf.is_active, 
                                 courier_id: cName 
                             };
-                            
-                            // Auto-detect TCS manual mode
-                            if (cName === CourierName.TCS && conf.api_token && conf.api_token.length > 20) {
-                                setUseTcsManualToken(true);
-                            }
                         }
                     });
                     return newConfigs;
@@ -324,6 +316,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
             success = await adapter.testConnection({ ...courierConfigs[courierName], is_active: true } as any);
         } else if (courierName === CourierName.TCS) {
             const adapter = new TcsAdapter();
+            // Pass full config to testConnection
             success = await adapter.testConnection({ ...courierConfigs[courierName], is_active: true } as any);
         }
 
@@ -581,77 +574,28 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                 <div className="space-y-3">
                                     {isTCS ? (
                                         <>
-                                            <div className="flex justify-center gap-2 mb-2 p-1 bg-slate-50 rounded-lg border border-slate-100">
-                                                <button 
-                                                    onClick={() => { setUseTcsManualToken(false); setCourierConfigs(prev => ({...prev, [CourierName.TCS]: {...prev[CourierName.TCS], api_token: ''}})); }}
-                                                    className={`flex-1 py-1 text-[10px] font-bold rounded flex items-center justify-center gap-1 ${!useTcsManualToken ? 'bg-white shadow text-slate-900' : 'text-slate-400 hover:text-slate-600'}`}
-                                                >
-                                                    <Key size={10} /> Auto-Auth
-                                                </button>
-                                                <button 
-                                                    onClick={() => setUseTcsManualToken(true)}
-                                                    className={`flex-1 py-1 text-[10px] font-bold rounded flex items-center justify-center gap-1 ${useTcsManualToken ? 'bg-white shadow text-slate-900' : 'text-slate-400 hover:text-slate-600'}`}
-                                                >
-                                                    <Zap size={10} /> Manual Token
-                                                </button>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 ml-1">API Access Token</label>
+                                                <input 
+                                                    type="password"
+                                                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-yellow-50 focus:bg-white transition-colors" 
+                                                    placeholder="Generate from OCI Connect Portal" 
+                                                    value={config.api_token} 
+                                                    onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], api_token: e.target.value } }))} 
+                                                />
                                             </div>
-
-                                            {useTcsManualToken ? (
-                                                <div className="space-y-1">
-                                                    <input 
-                                                        type="password"
-                                                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-yellow-50 focus:bg-white transition-colors" 
-                                                        placeholder="Paste Access Token (Bearer)" 
-                                                        value={config.api_token} 
-                                                        onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], api_token: e.target.value } }))} 
-                                                    />
-                                                    <p className="text-[9px] text-orange-600 text-center">Warning: Tokens expire every 24h. Update daily.</p>
-                                                    
-                                                    {/* RESTORED: Account Number Field for Fallback */}
-                                                    <div className="mt-2">
-                                                        <label className="text-xs font-bold text-slate-500 ml-1">Account Number / Cost Center</label>
-                                                        <input 
-                                                            type="text"
-                                                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
-                                                            placeholder="e.g. LGEC18790" 
-                                                            value={config.merchant_id} 
-                                                            onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], merchant_id: e.target.value } }))} 
-                                                        />
-                                                        <p className="text-[9px] text-slate-400 ml-1">Required if your token does not contain your ID.</p>
-                                                    </div>
-                                                </div>
-                                            ) : (
-                                                <>
-                                                    <div className="space-y-1">
-                                                        <input 
-                                                            type="text"
-                                                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
-                                                            placeholder="Client ID (or Username)" 
-                                                            value={config.username} 
-                                                            onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], username: e.target.value } }))} 
-                                                        />
-                                                    </div>
-                                                    <div className="space-y-1">
-                                                        <input 
-                                                            type="password"
-                                                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
-                                                            placeholder="Client Secret (or Password)" 
-                                                            value={config.password} 
-                                                            onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], password: e.target.value } }))} 
-                                                        />
-                                                    </div>
-                                                    <div className="space-y-1">
-                                                        <label className="text-xs font-bold text-slate-500 ml-1">Account Number (Optional)</label>
-                                                        <input 
-                                                            type="text"
-                                                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
-                                                            placeholder="Cost Center Code (if different from Client ID)" 
-                                                            value={config.merchant_id} 
-                                                            onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], merchant_id: e.target.value } }))} 
-                                                        />
-                                                    </div>
-                                                </>
-                                            )}
+                                            
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 ml-1">Account Number / Cost Center</label>
+                                                <input 
+                                                    type="text"
+                                                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
+                                                    placeholder="e.g. 10102030 (Required)" 
+                                                    value={config.merchant_id} 
+                                                    onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], merchant_id: e.target.value } }))} 
+                                                />
+                                                <p className="text-[9px] text-slate-400 ml-1">Required to fetch financial data.</p>
+                                            </div>
                                         </>
                                     ) : (
                                         <input 
