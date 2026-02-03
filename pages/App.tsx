@@ -279,29 +279,32 @@ const App: React.FC = () => {
 
                  // Duplication Check
                  const safeName = String(s.name || '').replace('#','');
-                 if (existingRefNos.has(safeName)) return false;
-
+                 const isUnmapped = !existingRefNos.has(safeName);
+                 const isFulfilled = s.fulfillment_status === 'fulfilled' || s.fulfillment_status === 'partial';
+                 
                  // --- Robust TCS Detection Logic ---
-                 // A. Check Tags
+                 // A. Check Tags (Include even if unfulfilled if tagged TCS)
                  const tags = (s.tags || '').toLowerCase();
                  const hasTcsTag = tags.includes('tcs');
 
-                 // B. Check Fulfillments
-                 const hasTcsFulfillment = s.fulfillments?.some(f => {
-                     const company = f.tracking_company ? String(f.tracking_company).toLowerCase() : '';
-                     const num = (f.tracking_number ? String(f.tracking_number) : '').replace(/[^a-zA-Z0-9]/g, '');
-                     
-                     // Negative check: Not other common couriers
-                     const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('mnp') || company.includes('callcourier');
-                     
-                     if (isOther) return false;
+                 if (isUnmapped && hasTcsTag) return true;
 
-                     // Positive check: Name includes TCS OR Number format is 9-16 digits (TCS standard)
-                     return company.includes('tcs') || /^\d{9,16}$/.test(num);
-                 });
+                 // If already fulfilled but not mapped, check if it's TCS fulfillment
+                 if (isUnmapped && isFulfilled) {
+                     return s.fulfillments?.some(f => {
+                         const company = f.tracking_company ? String(f.tracking_company).toLowerCase() : '';
+                         const num = (f.tracking_number ? String(f.tracking_number) : '').replace(/[^a-zA-Z0-9]/g, '');
+                         
+                         // Negative check: Not other common couriers
+                         const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('mnp') || company.includes('callcourier');
+                         
+                         if (isOther) return false;
 
-                 // INCLUDE if tagged 'TCS' OR looks like TCS fulfillment
-                 return hasTcsTag || hasTcsFulfillment;
+                         // Positive check: Name includes TCS OR Number format is 9-16 digits (TCS standard)
+                         return company.includes('tcs') || /^\d{9,16}$/.test(num);
+                     });
+                 }
+                 return false;
              });
 
              if (candidates.length > 0) {
@@ -309,7 +312,9 @@ const App: React.FC = () => {
                  console.log(`[TCS Backfill] Found ${tcsBatchCount} candidates from last 120 days.`);
                  infoMsgs.push(`Found ${tcsBatchCount} TCS orders via Shopify tags/tracking.`);
 
-                 // --- BATCH PROCESSING ---
+                 // --- BATCH PROCESSING FOR TCS AUTOMATIC TRACKING ---
+                 // TCS API only allows single tracking. We must process in small batches.
+                 
                  const BATCH_SIZE = 5;
                  const TCS_DELAY_MS = 1000;
                  const processedTcsOrders: Order[] = [];
@@ -347,7 +352,7 @@ const App: React.FC = () => {
                                 status = OrderStatus.IN_TRANSIT; // Default assumption if tracking fails
                                 rawStatusText = 'Shipped / In Transit';
                                 
-                                // *** LIVE TRACKING ***
+                                // *** AUTOMATIC LIVE TRACKING ***
                                 if (tcsConfig && tcsConfig.api_token) {
                                     try {
                                         const tcsAdapter = new TcsAdapter();
@@ -365,12 +370,15 @@ const App: React.FC = () => {
 
                             const cod = parseFloat(sOrder.total_price || '0');
                             const safeItems = Array.isArray(sOrder.line_items) ? sOrder.line_items : [];
+                            
+                            // Use Shipping Address City if available, else Customer City
+                            const customerCity = sOrder.shipping_address?.city || sOrder.customer?.city || 'Unknown';
 
                             const newOrder: Order = {
                                 id: orderId,
                                 shopify_order_number: sOrder.name || 'Unknown',
                                 created_at: sOrder.created_at,
-                                customer_city: sOrder.customer?.city || 'Unknown',
+                                customer_city: customerCity,
                                 courier: CourierName.TCS,
                                 tracking_number: trackingNo,
                                 status: status,
@@ -383,7 +391,7 @@ const App: React.FC = () => {
                                 overhead_cost: 0,
                                 tax_amount: 0,
                                 data_source: 'tracking', 
-                                courier_raw_status: rawStatusText,
+                                courier_raw_status: rawStatusText, // Save the auto-fetched status
                                 items: safeItems.map(li => ({
                                     product_id: 'unknown',
                                     quantity: li.quantity,
@@ -629,10 +637,6 @@ const App: React.FC = () => {
   // --- MANUAL LIVE TRACKING ---
   const handleManualTrack = async (order: Order): Promise<OrderStatus> => {
       try {
-          if (!order.tracking_number || order.tracking_number === 'Pending') {
-              throw new Error("Order has no tracking number yet.");
-          }
-
           let updatedStatus = order.status;
           let rawStatus = order.courier_raw_status;
           

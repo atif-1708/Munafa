@@ -123,6 +123,11 @@ export interface ShopifyOrder {
       first_name: string;
       city: string;
   };
+  shipping_address?: {
+      city: string;
+      province?: string;
+      country?: string;
+  };
 }
 // -------------------------------------
 
