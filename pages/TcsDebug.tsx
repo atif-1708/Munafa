@@ -1,26 +1,36 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Order, OrderStatus, ShopifyOrder } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { Radio, AlertCircle, Database, CheckCircle2, XCircle, Search, ArrowRight, RefreshCw, FileQuestion } from 'lucide-react';
+import { Radio, Database, CheckCircle2, Search, FileQuestion, AlertTriangle } from 'lucide-react';
 
 interface TcsDebugProps {
   orders: Order[];
   shopifyOrders: ShopifyOrder[];
 }
 
-const TcsDebug: React.FC<TcsDebugProps> = ({ orders, shopifyOrders }) => {
+const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) => {
   const [viewMode, setViewMode] = useState<'matched' | 'raw'>('raw');
   const [searchTerm, setSearchTerm] = useState('');
 
+  // SAFEGUARD: Ensure arrays exist
+  const safeOrders = Array.isArray(orders) ? orders : [];
+  const safeShopifyOrders = Array.isArray(shopifyOrders) ? shopifyOrders : [];
+
   // 1. Orders successfully tracked by App.tsx logic
-  const trackingOrders = orders.filter(o => o.data_source === 'tracking');
+  const trackingOrders = useMemo(() => 
+    safeOrders.filter(o => o.data_source === 'tracking'), 
+  [safeOrders]);
 
   // 2. Filter Raw Orders for search
-  const filteredRawOrders = shopifyOrders.filter(o => 
-      o.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (o.tags && o.tags.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+  const filteredRawOrders = useMemo(() => {
+      if (!searchTerm) return safeShopifyOrders;
+      const lowerTerm = searchTerm.toLowerCase();
+      return safeShopifyOrders.filter(o => 
+          (o.name || '').toLowerCase().includes(lowerTerm) ||
+          (o.tags && o.tags.toLowerCase().includes(lowerTerm))
+      );
+  }, [safeShopifyOrders, searchTerm]);
 
   return (
     <div className="space-y-6 pb-12">
@@ -29,17 +39,17 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders, shopifyOrders }) => {
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
               <div>
                   <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-                      <Radio className="text-red-600" /> TCS Integration Monitor
+                      <Radio className="text-red-600" /> TCS Monitor
                   </h2>
                   <p className="text-slate-500 text-sm mt-1">
-                      Diagnose why orders are appearing (or missing) from the tracker.
+                      Raw Data Inspector & Tracking Status
                   </p>
               </div>
               <div className="flex items-center gap-4 bg-slate-50 px-4 py-2 rounded-lg border border-slate-100">
                   <div className="text-center">
                       <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Total Fetched</p>
-                      <p className={`text-xl font-bold ${shopifyOrders.length === 0 ? 'text-red-600' : 'text-slate-900'}`}>
-                          {shopifyOrders.length}
+                      <p className={`text-xl font-bold ${safeShopifyOrders.length === 0 ? 'text-red-600' : 'text-slate-900'}`}>
+                          {safeShopifyOrders.length}
                       </p>
                   </div>
                   <div className="w-px h-8 bg-slate-200"></div>
@@ -51,23 +61,6 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders, shopifyOrders }) => {
                   </div>
               </div>
           </div>
-
-          {shopifyOrders.length === 0 && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex gap-3 text-red-800 mb-4">
-                  <AlertCircle className="shrink-0" />
-                  <div>
-                      <h4 className="font-bold text-sm">No Data Received from Shopify</h4>
-                      <p className="text-xs mt-1">
-                          The app has fetched <strong>0 orders</strong>. This means the connection to Shopify is active but returning empty lists, or the connection failed silently.
-                      </p>
-                      <ul className="list-disc list-inside text-xs mt-2 space-y-1">
-                          <li>Check <strong>Integrations</strong> page: Is the Access Token valid?</li>
-                          <li>Are there orders in the last <strong>120 days</strong>?</li>
-                          <li>Does the token have <code>read_orders</code> permission?</li>
-                      </ul>
-                  </div>
-              </div>
-          )}
 
           {/* View Toggles */}
           <div className="flex gap-2 border-b border-slate-200">
@@ -90,8 +83,18 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders, shopifyOrders }) => {
           </div>
       </div>
 
+      {safeShopifyOrders.length === 0 && (
+          <div className="bg-red-50 border border-red-200 p-4 rounded-lg flex items-center gap-3 text-red-800">
+              <AlertTriangle size={24} />
+              <div>
+                  <h3 className="font-bold">No Data Available</h3>
+                  <p className="text-sm">Shopify did not return any orders. Please check Integrations page.</p>
+              </div>
+          </div>
+      )}
+
       {/* --- VIEW: ALL RAW ORDERS --- */}
-      {viewMode === 'raw' && (
+      {viewMode === 'raw' && safeShopifyOrders.length > 0 && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
               <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
                   <div className="flex items-center gap-2 text-sm text-slate-600">
@@ -114,63 +117,54 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders, shopifyOrders }) => {
                       <thead className="bg-slate-100 text-slate-500 uppercase font-bold border-b border-slate-200">
                           <tr>
                               <th className="px-4 py-3">Order</th>
-                              <th className="px-4 py-3">Created At</th>
+                              <th className="px-4 py-3">Date</th>
                               <th className="px-4 py-3">Fulfillment</th>
                               <th className="px-4 py-3">Tags</th>
-                              <th className="px-4 py-3">Tracking Data</th>
-                              <th className="px-4 py-3">System Analysis</th>
+                              <th className="px-4 py-3">Analysis</th>
                           </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                           {filteredRawOrders.slice(0, 100).map(o => {
+                              // SAFE GUARDED ACCESSORS
+                              const name = o.name || 'Unknown';
+                              const date = o.created_at ? new Date(o.created_at).toLocaleDateString() : 'No Date';
                               const hasTcsTag = (o.tags || '').toLowerCase().includes('tcs');
-                              const fulfillment = o.fulfillments?.[0];
-                              const company = fulfillment?.tracking_company?.toLowerCase() || '';
-                              const trackNo = fulfillment?.tracking_number || '';
+                              const fulfillment = o.fulfillments && o.fulfillments.length > 0 ? o.fulfillments[0] : null;
+                              const company = fulfillment?.tracking_company || 'None';
+                              const trackNo = fulfillment?.tracking_number || 'None';
                               
                               let analysis = "Ignored";
                               let color = "text-slate-400";
 
                               if (o.fulfillment_status !== 'fulfilled' && o.fulfillment_status !== 'partial') {
-                                  analysis = "Status not Fulfilled";
+                                  analysis = "Unfulfilled";
                               } else if (hasTcsTag) {
-                                  analysis = "Candidate (Tag Match)";
+                                  analysis = "Match: Tag";
                                   color = "text-green-600 font-bold";
-                              } else if (company.includes('tcs')) {
-                                  analysis = "Candidate (Company Match)";
+                              } else if (company.toLowerCase().includes('tcs')) {
+                                  analysis = "Match: Company";
                                   color = "text-green-600 font-bold";
-                              } else if (trackNo && /^\d{9,16}$/.test(trackNo)) {
-                                  analysis = "Candidate (Format Match)";
+                              } else if (trackNo && /^\d{9,16}$/.test(trackNo.replace(/[^0-9]/g,''))) {
+                                  analysis = "Match: Format";
                                   color = "text-blue-600 font-bold";
                               } else {
-                                  analysis = "No Match Criteria";
+                                  analysis = "No Match";
                               }
 
                               return (
                                   <tr key={o.id} className="hover:bg-slate-50">
-                                      <td className="px-4 py-3 font-bold text-slate-800">{o.name}</td>
-                                      <td className="px-4 py-3 text-slate-500">{new Date(o.created_at).toLocaleDateString()}</td>
-                                      <td className="px-4 py-3">
-                                          <span className={`px-2 py-1 rounded ${
-                                              o.fulfillment_status === 'fulfilled' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
-                                          }`}>
-                                              {o.fulfillment_status || 'Unfulfilled'}
-                                          </span>
-                                      </td>
-                                      <td className="px-4 py-3">
-                                          {o.tags ? (
-                                              <span className="bg-slate-100 px-2 py-1 rounded break-words max-w-[150px] block">
-                                                  {o.tags}
-                                              </span>
-                                          ) : <span className="text-slate-300">-</span>}
-                                      </td>
+                                      <td className="px-4 py-3 font-bold text-slate-800">{name}</td>
+                                      <td className="px-4 py-3 text-slate-500">{date}</td>
                                       <td className="px-4 py-3">
                                           {fulfillment ? (
                                               <div className="flex flex-col gap-1">
-                                                  <span className="font-bold">Co: {fulfillment.tracking_company || 'N/A'}</span>
-                                                  <span>#: {fulfillment.tracking_number || 'N/A'}</span>
+                                                  <span className="font-bold">Co: {company}</span>
+                                                  <span>#: {trackNo}</span>
                                               </div>
-                                          ) : <span className="text-red-400">No Fulfillment Obj</span>}
+                                          ) : <span className="text-red-400">No Fulfillment</span>}
+                                      </td>
+                                      <td className="px-4 py-3 max-w-[150px] truncate" title={o.tags}>
+                                          {o.tags || '-'}
                                       </td>
                                       <td className={`px-4 py-3 ${color}`}>
                                           {analysis}
@@ -178,13 +172,6 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders, shopifyOrders }) => {
                                   </tr>
                               );
                           })}
-                          {filteredRawOrders.length === 0 && (
-                              <tr>
-                                  <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
-                                      {shopifyOrders.length === 0 ? "No orders fetched from Shopify API." : "No orders match search."}
-                                  </td>
-                              </tr>
-                          )}
                       </tbody>
                   </table>
               </div>
@@ -201,7 +188,6 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders, shopifyOrders }) => {
                           <th className="px-6 py-4">Tracking Number</th>
                           <th className="px-6 py-4">Status</th>
                           <th className="px-6 py-4">Est. COD</th>
-                          <th className="px-6 py-4">Date</th>
                       </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -214,19 +200,16 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders, shopifyOrders }) => {
                                   {o.tracking_number}
                               </td>
                               <td className="px-6 py-4">
-                                  <StatusBadge status={o.status} />
+                                  <span className="bg-slate-100 px-2 py-1 rounded text-xs">{o.status}</span>
                               </td>
                               <td className="px-6 py-4 font-medium">
                                   {formatCurrency(o.cod_amount)}
                               </td>
-                              <td className="px-6 py-4 text-slate-500">
-                                  {new Date(o.created_at).toLocaleDateString()}
-                              </td>
                           </tr>
                       )) : (
                           <tr>
-                              <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
-                                  No orders currently matched. Check the Raw Data Inspector tab to see why.
+                              <td colSpan={4} className="px-6 py-12 text-center text-slate-400">
+                                  No matched orders found.
                               </td>
                           </tr>
                       )}
@@ -236,24 +219,6 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders, shopifyOrders }) => {
       )}
     </div>
   );
-};
-
-const StatusBadge = ({ status }: { status: OrderStatus }) => {
-    const styles = {
-        [OrderStatus.DELIVERED]: 'bg-green-100 text-green-700',
-        [OrderStatus.PENDING]: 'bg-yellow-100 text-yellow-700',
-        [OrderStatus.BOOKED]: 'bg-indigo-100 text-indigo-700',
-        [OrderStatus.IN_TRANSIT]: 'bg-blue-100 text-blue-700',
-        [OrderStatus.RTO_INITIATED]: 'bg-orange-100 text-orange-700',
-        [OrderStatus.RETURNED]: 'bg-red-100 text-red-700',
-        [OrderStatus.CANCELLED]: 'bg-gray-100 text-gray-700',
-    };
-    
-    return (
-        <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${styles[status]}`}>
-            {status.replace(/_/g, ' ')}
-        </span>
-    );
 };
 
 export default TcsDebug;
