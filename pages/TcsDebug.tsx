@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { Order, ShopifyOrder } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { Radio, Database, CheckCircle2, Search, AlertTriangle, Filter, Package, ChevronRight } from 'lucide-react';
+import { Radio, Database, CheckCircle2, Search, AlertTriangle, Filter, Package } from 'lucide-react';
 
 interface TcsDebugProps {
   orders: Order[];
@@ -13,7 +13,7 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) 
   const [viewMode, setViewMode] = useState<'matched' | 'raw'>('raw');
   const [searchTerm, setSearchTerm] = useState('');
   
-  // DEFAULT TO FALSE: Show all orders immediately to ensure page is not blank
+  // DEFAULT TO FALSE: Show all orders immediately so the user sees data.
   const [showOnlyTcsCandidates, setShowOnlyTcsCandidates] = useState(false);
 
   // SAFEGUARD: Ensure inputs are arrays to prevent crashes
@@ -65,7 +65,7 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) 
               const tags = (o.tags || '').toLowerCase();
               
               const items = Array.isArray(o.line_items) ? o.line_items : [];
-              const hasItemMatch = items.some(i => (i.title || '').toLowerCase().includes(lowerTerm));
+              const hasItemMatch = items.some(i => i && i.title && i.title.toLowerCase().includes(lowerTerm));
               
               return name.includes(lowerTerm) || tags.includes(lowerTerm) || hasItemMatch;
           });
@@ -200,13 +200,15 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) 
                               const company = fulfillment?.tracking_company || 'None';
                               const trackNo = fulfillment?.tracking_number || 'None';
                               
-                              // Item Processing
+                              // Safe Item Processing
                               const lineItems = Array.isArray(o.line_items) ? o.line_items : [];
-                              const itemsDisplay = lineItems.map(i => {
+                              const itemsDisplay = lineItems
+                                .filter(i => i) // Filter out nulls
+                                .map(i => {
                                   const q = i.quantity || 0;
                                   const t = i.title || 'Unknown Item';
                                   return `${q}x ${t}`;
-                              }).join(', ');
+                                }).join(', ');
 
                               let analysis = "Ignored";
                               let color = "text-slate-400";
@@ -289,7 +291,9 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) 
                                   {o.shopify_order_number}
                               </td>
                               <td className="px-6 py-4 text-slate-600 text-xs align-top">
-                                  {(o.items || []).map(i => `${i.quantity}x ${i.product_name}`).join(', ') || 'No Items'}
+                                  {(o.items || [])
+                                    .map(i => `${i.quantity}x ${i.product_name}`)
+                                    .join(', ') || 'No Items'}
                               </td>
                               <td className="px-6 py-4 text-slate-600 font-mono align-top">
                                   {o.tracking_number}
