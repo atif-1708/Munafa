@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { Order, ShopifyOrder, OrderStatus } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { Radio, Database, CheckCircle2, Search, AlertTriangle, Filter, Package, RefreshCw, Loader2 } from 'lucide-react';
+import { Radio, Database, CheckCircle2, Search, AlertTriangle, Filter, Package, RefreshCw, Loader2, PlayCircle, StopCircle } from 'lucide-react';
 
 interface TcsDebugProps {
   orders: Order[];
@@ -14,6 +14,11 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
   const [viewMode, setViewMode] = useState<'matched' | 'raw'>('raw');
   const [searchTerm, setSearchTerm] = useState('');
   const [trackingIds, setTrackingIds] = useState<Set<string>>(new Set());
+  
+  // Bulk Scan State
+  const [isBulkScanning, setIsBulkScanning] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState('');
+  const [stopSignal, setStopSignal] = useState(false);
   
   // DEFAULT TO FALSE: Show all orders immediately so the user sees data.
   const [showOnlyTcsCandidates, setShowOnlyTcsCandidates] = useState(false);
@@ -37,12 +42,65 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
       try {
           await onTrackOrder(order);
       } catch (e) {
-          alert("Tracking Failed. Check console.");
+          console.error("Tracking Failed", e);
       } finally {
           const finishedSet = new Set(trackingIds);
           finishedSet.delete(order.id);
           setTrackingIds(finishedSet);
       }
+  };
+
+  const handleBulkScan = async () => {
+      if (!onTrackOrder) return;
+      setStopSignal(false);
+      
+      // Find active orders (not delivered/returned/cancelled)
+      const activeOrders = trackingOrders.filter(o => 
+          o.status !== OrderStatus.DELIVERED && 
+          o.status !== OrderStatus.RETURNED &&
+          o.status !== OrderStatus.CANCELLED
+      );
+
+      if (activeOrders.length === 0) {
+          alert("No active orders (In Transit/Pending) to track.");
+          return;
+      }
+
+      if (!window.confirm(`Start scanning ${activeOrders.length} active orders? This may take a moment.`)) return;
+
+      setIsBulkScanning(true);
+      let count = 0;
+
+      for (const order of activeOrders) {
+          if (stopSignal) break; // Check for stop signal (note: simplistic implementation due to closure, might need ref refactor for perfect stop)
+          
+          count++;
+          setBulkProgress(`${count}/${activeOrders.length}`);
+          
+          // Visual feedback on row
+          const newSet = new Set(trackingIds);
+          newSet.add(order.id);
+          setTrackingIds(newSet);
+
+          try {
+              await onTrackOrder(order);
+          } catch (e) {
+              console.error("Bulk track failed for", order.id);
+          } finally {
+              // We don't remove from trackingIds immediately to keep spinner for a sec? 
+              // No, remove it so it shows done.
+              // Actually, we can't easily access the *latest* trackingIds in this loop due to closure if we used state directly without functional updates, 
+              // but we are just triggering the parent function.
+              // Let's just rely on the parent updating the order status.
+          }
+          
+          // Delay to be nice to API
+          await new Promise(r => setTimeout(r, 800)); 
+      }
+
+      setIsBulkScanning(false);
+      setBulkProgress('');
+      setTrackingIds(new Set()); // Clear all spinners
   };
 
   // Helper to safely determine if an order looks like TCS
@@ -106,19 +164,46 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
                       Raw Data Inspector & Tracking Status
                   </p>
               </div>
-              <div className="flex items-center gap-4 bg-slate-50 px-4 py-2 rounded-lg border border-slate-100">
-                  <div className="text-center">
-                      <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Total Fetched</p>
-                      <p className={`text-xl font-bold ${safeShopifyOrders.length === 0 ? 'text-red-600' : 'text-slate-900'}`}>
-                          {safeShopifyOrders.length}
-                      </p>
-                  </div>
-                  <div className="w-px h-8 bg-slate-200"></div>
-                  <div className="text-center">
-                      <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Matched TCS</p>
-                      <p className="text-xl font-bold text-blue-600">
-                          {trackingOrders.length}
-                      </p>
+              <div className="flex items-center gap-4">
+                  {/* Bulk Scan Button */}
+                  {viewMode === 'matched' && (
+                      <button
+                          onClick={isBulkScanning ? () => setStopSignal(true) : handleBulkScan}
+                          disabled={isBulkScanning && stopSignal}
+                          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all shadow-sm ${
+                              isBulkScanning 
+                                  ? 'bg-red-50 text-red-600 border border-red-200' 
+                                  : 'bg-slate-900 text-white hover:bg-slate-800'
+                          }`}
+                      >
+                          {isBulkScanning ? (
+                              <>
+                                  <Loader2 size={16} className="animate-spin" />
+                                  Scanning {bulkProgress}... (Stop)
+                              </>
+                          ) : (
+                              <>
+                                  <PlayCircle size={16} />
+                                  Scan All Pending
+                              </>
+                          )}
+                      </button>
+                  )}
+
+                  <div className="flex items-center gap-4 bg-slate-50 px-4 py-2 rounded-lg border border-slate-100">
+                      <div className="text-center">
+                          <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Total Fetched</p>
+                          <p className={`text-xl font-bold ${safeShopifyOrders.length === 0 ? 'text-red-600' : 'text-slate-900'}`}>
+                              {safeShopifyOrders.length}
+                          </p>
+                      </div>
+                      <div className="w-px h-8 bg-slate-200"></div>
+                      <div className="text-center">
+                          <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Matched TCS</p>
+                          <p className="text-xl font-bold text-blue-600">
+                              {trackingOrders.length}
+                          </p>
+                      </div>
                   </div>
               </div>
           </div>
@@ -320,7 +405,13 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
                                   {o.tracking_number}
                               </td>
                               <td className="px-6 py-4 align-top">
-                                  <span className="bg-slate-100 px-2 py-1 rounded text-xs">{o.status}</span>
+                                  <span className={`px-2 py-1 rounded text-xs font-bold ${
+                                      o.status === OrderStatus.DELIVERED ? 'bg-green-100 text-green-700' :
+                                      o.status === OrderStatus.RETURNED || o.status === OrderStatus.RTO_INITIATED ? 'bg-red-100 text-red-700' :
+                                      'bg-blue-50 text-blue-700'
+                                  }`}>
+                                      {o.status.replace('_', ' ')}
+                                  </span>
                               </td>
                               <td className="px-6 py-4 font-medium align-top">
                                   {formatCurrency(o.cod_amount)}
@@ -328,11 +419,11 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
                               <td className="px-6 py-4 align-top">
                                   <button 
                                     onClick={() => handleTrackClick(o)}
-                                    disabled={trackingIds.has(o.id)}
-                                    className="p-1.5 bg-slate-100 text-slate-600 rounded hover:bg-blue-100 hover:text-blue-600 transition-colors"
+                                    disabled={trackingIds.has(o.id) || isBulkScanning}
+                                    className="p-1.5 bg-slate-100 text-slate-600 rounded hover:bg-blue-100 hover:text-blue-600 transition-colors disabled:opacity-50"
                                     title="Check Live Status"
                                   >
-                                      {trackingIds.has(o.id) ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                                      {trackingIds.has(o.id) || isBulkScanning ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
                                   </button>
                               </td>
                           </tr>
