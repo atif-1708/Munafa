@@ -237,6 +237,8 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
     doc.save(`${storeName.replace(/\s+/g, '_')}_Sales_Report_${todayStr}.pdf`);
   };
 
+  const getPct = (val: number, base: number) => base > 0 ? `${Math.round((val/base)*100)}%` : '0%';
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -315,40 +317,69 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
                         <td className="px-2 py-4 text-center font-bold text-slate-800">
                             {item.total_ordered}
                         </td>
+                        
+                        {/* Pending vs Total */}
                         <td className="px-2 py-4 text-center bg-orange-50/30">
-                            <span className={`font-medium ${item.pending_fulfillment > 0 ? 'text-orange-600' : 'text-slate-300'}`}>
-                                {item.pending_fulfillment}
-                            </span>
+                            <div className="flex flex-col items-center">
+                                <span className={`font-medium ${item.pending_fulfillment > 0 ? 'text-orange-600' : 'text-slate-300'}`}>
+                                    {item.pending_fulfillment}
+                                </span>
+                                {item.pending_fulfillment > 0 && <span className="text-[10px] text-orange-400/80">{getPct(item.pending_fulfillment, item.total_ordered)}</span>}
+                            </div>
                         </td>
+                        
+                        {/* Fulfilled vs Total */}
                         <td className="px-2 py-4 text-center bg-blue-50/30">
-                            <span className={`font-medium ${item.fulfilled > 0 ? 'text-blue-600' : 'text-slate-300'}`}>
-                                {item.fulfilled}
-                            </span>
+                            <div className="flex flex-col items-center">
+                                <span className={`font-medium ${item.fulfilled > 0 ? 'text-blue-600' : 'text-slate-300'}`}>
+                                    {item.fulfilled}
+                                </span>
+                                {item.fulfilled > 0 && <span className="text-[10px] text-blue-400/80">{getPct(item.fulfilled, item.total_ordered)}</span>}
+                            </div>
                         </td>
 
                         <td className="px-1 py-4 text-center text-slate-300">
                             <ArrowRight size={14} />
                         </td>
 
+                        {/* Dispatch vs Total */}
                          <td className="px-2 py-4 text-center bg-purple-50/30">
-                            <span className={`font-medium ${item.dispatched > 0 ? 'text-purple-600' : 'text-slate-300'}`}>
-                                {item.dispatched}
-                            </span>
+                            <div className="flex flex-col items-center">
+                                <span className={`font-medium ${item.dispatched > 0 ? 'text-purple-600' : 'text-slate-300'}`}>
+                                    {item.dispatched}
+                                </span>
+                                {item.dispatched > 0 && <span className="text-[10px] text-purple-400/80">{getPct(item.dispatched, item.total_ordered)}</span>}
+                            </div>
                         </td>
+                        
+                        {/* Transit vs Dispatched */}
                         <td className="px-2 py-4 text-center bg-indigo-50/30">
-                            <span className={`font-medium ${item.in_transit > 0 ? 'text-indigo-600' : 'text-slate-300'}`}>
-                                {item.in_transit}
-                            </span>
+                            <div className="flex flex-col items-center">
+                                <span className={`font-medium ${item.in_transit > 0 ? 'text-indigo-600' : 'text-slate-300'}`}>
+                                    {item.in_transit}
+                                </span>
+                                {item.in_transit > 0 && <span className="text-[10px] text-indigo-400/80">{getPct(item.in_transit, item.dispatched)}</span>}
+                            </div>
                         </td>
+                        
+                        {/* Delivered vs Dispatched */}
                          <td className="px-2 py-4 text-center bg-green-50/30">
-                            <span className={`font-bold ${item.delivered > 0 ? 'text-green-600' : 'text-slate-300'}`}>
-                                {item.delivered}
-                            </span>
+                            <div className="flex flex-col items-center">
+                                <span className={`font-bold ${item.delivered > 0 ? 'text-green-600' : 'text-slate-300'}`}>
+                                    {item.delivered}
+                                </span>
+                                {item.delivered > 0 && <span className="text-[10px] text-green-600/70">{getPct(item.delivered, item.dispatched)}</span>}
+                            </div>
                         </td>
+                        
+                        {/* RTO vs Dispatched */}
                          <td className="px-2 py-4 text-center bg-red-50/30">
-                             <span className={`font-bold ${item.rto > 0 ? 'text-red-600' : 'text-slate-300'}`}>
-                                {item.rto}
-                            </span>
+                             <div className="flex flex-col items-center">
+                                 <span className={`font-bold ${item.rto > 0 ? 'text-red-600' : 'text-slate-300'}`}>
+                                    {item.rto}
+                                </span>
+                                {item.rto > 0 && <span className="text-[10px] text-red-600/70">{getPct(item.rto, item.dispatched)}</span>}
+                            </div>
                         </td>
                     </tr>
                 ))}
