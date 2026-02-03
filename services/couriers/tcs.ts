@@ -169,6 +169,7 @@ export class TcsAdapter implements CourierAdapter {
                   overhead_cost: 0,
                   tax_amount: 0,
                   data_source: 'settlement',
+                  courier_raw_status: rawStatus,
                   items: [{
                       product_id: 'unknown',
                       quantity: 1,
@@ -189,10 +190,25 @@ export class TcsAdapter implements CourierAdapter {
 
   private mapStatus(raw: string): OrderStatus {
       const s = String(raw).toLowerCase();
-      if (s === 'ok' || s.includes('delivered') || s === 'shipment delivered') return OrderStatus.DELIVERED;
-      if (s === 'ro' || s.includes('return') || s.includes('rto')) return OrderStatus.RETURNED;
-      if (s.includes('cancel')) return OrderStatus.CANCELLED;
-      if (s.includes('booked') || s.includes('booking')) return OrderStatus.BOOKED;
+      
+      // 1. DELIVERED
+      if (s === 'ok' || s.includes('delivered') || s === 'shipment delivered') {
+          return OrderStatus.DELIVERED;
+      }
+      
+      // 2. RETURNED (Aggregating all RTO/Cancel types)
+      if (
+          s === 'ro' || 
+          s.includes('return') || 
+          s.includes('rto') || 
+          s.includes('cancelled') || 
+          s.includes('refused') ||
+          s.includes('returned')
+      ) {
+          return OrderStatus.RETURNED;
+      }
+      
+      // 3. IN TRANSIT (Aggregating Booked, Pending, In Transit, Arrivals, etc.)
       return OrderStatus.IN_TRANSIT;
   }
 

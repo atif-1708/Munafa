@@ -385,8 +385,8 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
                           <th className="px-6 py-4">Shopify Ref</th>
                           <th className="px-6 py-4 w-[35%]">Items</th>
                           <th className="px-6 py-4">Tracking Number</th>
+                          <th className="px-6 py-4">Courier Update</th>
                           <th className="px-6 py-4">Status</th>
-                          <th className="px-6 py-4">Est. COD</th>
                           <th className="px-6 py-4">Live Check</th>
                       </tr>
                   </thead>
@@ -404,6 +404,16 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
                               <td className="px-6 py-4 text-slate-600 font-mono align-top">
                                   {o.tracking_number}
                               </td>
+                              {/* New Column: Raw Courier Status */}
+                              <td className="px-6 py-4 align-top">
+                                  {o.courier_raw_status ? (
+                                      <span className="text-[10px] text-slate-500 font-medium block max-w-[150px] leading-tight">
+                                          "{o.courier_raw_status}"
+                                      </span>
+                                  ) : (
+                                      <span className="text-slate-300 text-xs italic">Pending Check...</span>
+                                  )}
+                              </td>
                               <td className="px-6 py-4 align-top">
                                   <span className={`px-2 py-1 rounded text-xs font-bold ${
                                       o.status === OrderStatus.DELIVERED ? 'bg-green-100 text-green-700' :
@@ -412,9 +422,6 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
                                   }`}>
                                       {o.status.replace('_', ' ')}
                                   </span>
-                              </td>
-                              <td className="px-6 py-4 font-medium align-top">
-                                  {formatCurrency(o.cod_amount)}
                               </td>
                               <td className="px-6 py-4 align-top">
                                   <button 

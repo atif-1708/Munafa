@@ -82,6 +82,9 @@ export interface Order {
 
   // NEW: Data Source Tracking
   data_source?: 'settlement' | 'tracking';
+  
+  // NEW: Store the exact text from Courier (e.g. "Arrived at Station")
+  courier_raw_status?: string;
 }
 
 // --- NEW: Shopify Order Interfaces ---

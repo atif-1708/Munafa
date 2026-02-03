@@ -221,7 +221,6 @@ const App: React.FC = () => {
             try {
                 const shopifyAdapter = new ShopifyAdapter();
                 rawShopifyOrders = await shopifyAdapter.fetchOrders(shopifyConfig);
-                // SET SHOPIFY ORDERS IMMEDIATELY TO ENSURE TCS PAGE GETS DATA
                 setShopifyOrders(rawShopifyOrders);
             } catch (e: any) {
                 console.error("Shopify Sync Error:", e);
@@ -268,7 +267,6 @@ const App: React.FC = () => {
              const cutoffDate = new Date();
              cutoffDate.setDate(cutoffDate.getDate() - 120);
 
-             // SAFE MAP: Ensure shopify_order_number is a string before replace
              const existingRefNos = new Set(fetchedOrders.map(o => String(o.shopify_order_number || '').replace('#','')));
              
              // 2. Filter Candidates from Shopify
@@ -307,93 +305,102 @@ const App: React.FC = () => {
              });
 
              if (candidates.length > 0) {
-                 console.log(`[TCS Backfill] Found ${candidates.length} candidates from last 120 days.`);
+                 const tcsBatchCount = candidates.length;
+                 console.log(`[TCS Backfill] Found ${tcsBatchCount} candidates from last 120 days.`);
+                 infoMsgs.push(`Found ${tcsBatchCount} TCS orders via Shopify tags/tracking.`);
+
+                 // --- BATCH PROCESSING FOR TCS AUTOMATIC TRACKING ---
+                 // TCS API only allows single tracking. We must process in small batches to not freeze the app or get blocked.
                  
-                 // 3. Process Candidates
-                 const results = await Promise.all(candidates.map(async (sOrder) => {
-                     try {
-                        // Check if Tag implies TCS
-                        const hasTcsTag = (sOrder.tags || '').toLowerCase().includes('tcs');
+                 const BATCH_SIZE = 5;
+                 const TCS_DELAY_MS = 1000;
+                 const processedTcsOrders: Order[] = [];
 
-                        // Find the most likely TCS fulfillment
-                        let ff = sOrder.fulfillments?.find(f => {
-                            const company = f.tracking_company ? String(f.tracking_company).toLowerCase() : '';
-                            const num = (f.tracking_number ? String(f.tracking_number) : '').replace(/[^a-zA-Z0-9]/g, '');
-                            const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('mnp') || company.includes('callcourier');
-                            
-                            // If tagged as TCS, accept any non-other fulfillment that has a tracking number
-                            if (hasTcsTag && !isOther && f.tracking_number) return true;
+                 // Process in chunks
+                 for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
+                     const batch = candidates.slice(i, i + BATCH_SIZE);
+                     
+                     const batchResults = await Promise.all(batch.map(async (sOrder) => {
+                         try {
+                            // Find the most likely TCS fulfillment
+                            const hasTcsTag = (sOrder.tags || '').toLowerCase().includes('tcs');
+                            let ff = sOrder.fulfillments?.find(f => {
+                                const company = f.tracking_company ? String(f.tracking_company).toLowerCase() : '';
+                                const num = (f.tracking_number ? String(f.tracking_number) : '').replace(/[^a-zA-Z0-9]/g, '');
+                                const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('mnp') || company.includes('callcourier');
+                                
+                                if (hasTcsTag && !isOther && f.tracking_number) return true;
+                                return !isOther && (company.includes('tcs') || /^\d{9,16}$/.test(num));
+                            });
 
-                            return !isOther && (company.includes('tcs') || /^\d{9,16}$/.test(num));
-                        });
-
-                        // FALLBACK: If explicitly tagged 'TCS', take ANY fulfillment with a tracking number (last resort)
-                        if (!ff && hasTcsTag && sOrder.fulfillments) {
-                            ff = sOrder.fulfillments.find(f => f.tracking_number && String(f.tracking_number).length > 5);
-                        }
-
-                        if (!ff || !ff.tracking_number) return null;
-
-                        let status = OrderStatus.IN_TRANSIT; // Default assumption for fulfilled order
-                        
-                        // Try Live Tracking only if Config exists
-                        if (tcsConfig && tcsConfig.api_token) {
-                            try {
-                                const tcsAdapter = new TcsAdapter();
-                                const update = await tcsAdapter.track(ff.tracking_number, tcsConfig);
-                                status = update.status;
-                            } catch (e) {
-                                // Silently fail back to IN_TRANSIT
+                            if (!ff && hasTcsTag && sOrder.fulfillments) {
+                                ff = sOrder.fulfillments.find(f => f.tracking_number && String(f.tracking_number).length > 5);
                             }
-                        }
 
-                        const cod = parseFloat(sOrder.total_price || '0');
-                        
-                        // Check lines safety
-                        const safeItems = Array.isArray(sOrder.line_items) ? sOrder.line_items : [];
+                            if (!ff || !ff.tracking_number) return null;
 
-                        const newOrder: Order = {
-                            id: ff.tracking_number,
-                            shopify_order_number: sOrder.name || 'Unknown',
-                            created_at: sOrder.created_at,
-                            customer_city: sOrder.customer?.city || 'Unknown',
-                            courier: CourierName.TCS,
-                            tracking_number: ff.tracking_number,
-                            status: status,
-                            payment_status: PaymentStatus.UNPAID,
-                            cod_amount: cod,
-                            shipping_fee_paid_by_customer: 0,
-                            courier_fee: fetchedSettings.rates[CourierName.TCS].forward,
-                            rto_penalty: 0, 
-                            packaging_cost: fetchedSettings.packagingCost,
-                            overhead_cost: 0,
-                            tax_amount: 0,
-                            data_source: 'tracking', 
-                            items: safeItems.map(li => ({
-                                product_id: 'unknown',
-                                quantity: li.quantity,
-                                sale_price: parseFloat(li.price || '0'),
-                                product_name: li.title || 'Unknown Product',
-                                sku: li.sku || 'unknown',
-                                variant_fingerprint: li.sku || 'unknown',
-                                cogs_at_time_of_order: 0
-                            }))
-                        };
-                        return newOrder;
-                     } catch (err) {
-                        console.error("Error processing candidate order", sOrder.id, err);
-                        return null;
-                     }
-                 }));
+                            let status = OrderStatus.IN_TRANSIT;
+                            let rawStatusText = 'Pending Check';
+                            
+                            // *** AUTOMATIC LIVE TRACKING ***
+                            if (tcsConfig && tcsConfig.api_token) {
+                                try {
+                                    const tcsAdapter = new TcsAdapter();
+                                    const update = await tcsAdapter.track(ff.tracking_number, tcsConfig);
+                                    status = update.status;
+                                    rawStatusText = update.raw_status_text;
+                                } catch (e) {
+                                    // Silent fail - will remain IN_TRANSIT
+                                }
+                            }
 
-                 const validResults = results.filter((o): o is Order => o !== null);
-                 
-                 if (validResults.length > 0) {
-                     fetchedOrders = [...fetchedOrders, ...validResults];
-                     if (!tcsFoundOrders) {
-                         infoMsgs.push(`Found ${validResults.length} TCS orders via Shopify tags/tracking.`);
+                            const cod = parseFloat(sOrder.total_price || '0');
+                            const safeItems = Array.isArray(sOrder.line_items) ? sOrder.line_items : [];
+
+                            const newOrder: Order = {
+                                id: ff.tracking_number,
+                                shopify_order_number: sOrder.name || 'Unknown',
+                                created_at: sOrder.created_at,
+                                customer_city: sOrder.customer?.city || 'Unknown',
+                                courier: CourierName.TCS,
+                                tracking_number: ff.tracking_number,
+                                status: status,
+                                payment_status: PaymentStatus.UNPAID,
+                                cod_amount: cod,
+                                shipping_fee_paid_by_customer: 0,
+                                courier_fee: fetchedSettings.rates[CourierName.TCS].forward,
+                                rto_penalty: 0, 
+                                packaging_cost: fetchedSettings.packagingCost,
+                                overhead_cost: 0,
+                                tax_amount: 0,
+                                data_source: 'tracking', 
+                                courier_raw_status: rawStatusText, // Save the auto-fetched status
+                                items: safeItems.map(li => ({
+                                    product_id: 'unknown',
+                                    quantity: li.quantity,
+                                    sale_price: parseFloat(li.price || '0'),
+                                    product_name: li.title || 'Unknown Product',
+                                    sku: li.sku || 'unknown',
+                                    variant_fingerprint: li.sku || 'unknown',
+                                    cogs_at_time_of_order: 0
+                                }))
+                            };
+                            return newOrder;
+                         } catch (err) {
+                            return null;
+                         }
+                     }));
+
+                     const validBatch = batchResults.filter((o): o is Order => o !== null);
+                     processedTcsOrders.push(...validBatch);
+
+                     // Throttle if we are actually calling the API
+                     if (tcsConfig && tcsConfig.api_token && i + BATCH_SIZE < candidates.length) {
+                         await new Promise(r => setTimeout(r, TCS_DELAY_MS));
                      }
                  }
+
+                 fetchedOrders = [...fetchedOrders, ...processedTcsOrders];
              }
         }
 
@@ -614,20 +621,27 @@ const App: React.FC = () => {
   const handleManualTrack = async (order: Order): Promise<OrderStatus> => {
       try {
           let updatedStatus = order.status;
+          let rawStatus = order.courier_raw_status;
           
           if (order.courier === CourierName.TCS && configs.tcs) {
               const adapter = new TcsAdapter();
               const result = await adapter.track(order.tracking_number, configs.tcs);
               updatedStatus = result.status;
+              rawStatus = result.raw_status_text;
           } else if (order.courier === CourierName.POSTEX && configs.postex) {
               const adapter = new PostExAdapter();
               const result = await adapter.track(order.tracking_number, configs.postex);
               updatedStatus = result.status;
+              rawStatus = result.raw_status_text;
           }
 
           // Update Local State if status changed
-          if (updatedStatus !== order.status) {
-              setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: updatedStatus } : o));
+          if (updatedStatus !== order.status || rawStatus !== order.courier_raw_status) {
+              setOrders(prev => prev.map(o => o.id === order.id ? { 
+                  ...o, 
+                  status: updatedStatus,
+                  courier_raw_status: rawStatus // Updated: Save Raw Status for UI display
+              } : o));
           }
           return updatedStatus;
       } catch (e) {
