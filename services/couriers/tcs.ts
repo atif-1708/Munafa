@@ -88,14 +88,20 @@ export class TcsAdapter implements CourierAdapter {
           const accountNo = config.merchant_id?.trim();
 
           if (!token) throw new Error("API Token is required.");
-          if (!accountNo) throw new Error("Account Number is required.");
+          // NOTE: Account Number is now Optional based on user feedback
 
-          // Perform a lightweight check. Since there isn't a dedicated "ping" endpoint documented
-          // that takes just a token, we try fetching 1 day of data. Even if empty, a 200 OK means success.
           const today = new Date().toISOString().split('T')[0];
           
           for (const baseUrl of this.BASE_URLS) {
-              const url = `${baseUrl}/ecom/api/Payment/detail?accesstoken=${encodeURIComponent(token)}&customerno=${accountNo}&fromdate=${today}&todate=${today}`;
+              const endpoint = `${baseUrl}/ecom/api/Payment/detail`;
+              let query = `?accesstoken=${encodeURIComponent(token)}&fromdate=${today}&todate=${today}`;
+              
+              if (accountNo) {
+                  query += `&customerno=${accountNo}`;
+              }
+
+              const url = endpoint + query;
+
               try {
                   const res = await this.fetchUniversal(url, { method: 'GET' });
                   // If we get a response object with 'detail' or 'message', the credentials worked.
@@ -104,7 +110,7 @@ export class TcsAdapter implements CourierAdapter {
                   }
                   // If unauthorized, it usually returns status: false or code: 401
                   if (res && (res.code === 401 || res.status === 'UnAuthorized')) {
-                      throw new Error("Invalid Token or Account Number.");
+                      throw new Error("Invalid Token.");
                   }
               } catch (e) {
                   // Continue to next base URL
@@ -121,14 +127,14 @@ export class TcsAdapter implements CourierAdapter {
   }
 
   /**
-   * Fetches orders strictly using the Payment Detail API (Page 22) with Token + Account Number
+   * Fetches orders strictly using the Payment Detail API (Page 22)
    */
   async fetchRecentOrders(config: IntegrationConfig): Promise<Order[]> {
       const token = config.api_token;
       const accountNo = config.merchant_id?.trim();
       
-      if (!token || !accountNo) {
-          console.error("Critical: Missing TCS Token or Account Number.");
+      if (!token) {
+          console.error("Critical: Missing TCS Token.");
           return [];
       }
 
@@ -147,7 +153,11 @@ export class TcsAdapter implements CourierAdapter {
           const endpoint = `${baseUrl}/ecom/api/Payment/detail`;
           
           // Construct Query Params
-          const query = `?accesstoken=${encodeURIComponent(token)}&customerno=${accountNo}&fromdate=${fromDate}&todate=${toDate}`;
+          let query = `?accesstoken=${encodeURIComponent(token)}&fromdate=${fromDate}&todate=${toDate}`;
+          
+          if (accountNo) {
+              query += `&customerno=${accountNo}`;
+          }
           
           try {
               const res = await this.fetchUniversal(endpoint + query, { method: 'GET' });

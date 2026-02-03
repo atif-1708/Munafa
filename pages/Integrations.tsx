@@ -586,15 +586,14 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                             </div>
                                             
                                             <div className="space-y-1">
-                                                <label className="text-xs font-bold text-slate-500 ml-1">Account Number / Cost Center</label>
+                                                <label className="text-xs font-bold text-slate-500 ml-1">Account Number / Cost Center (Optional)</label>
                                                 <input 
                                                     type="text"
                                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
-                                                    placeholder="e.g. 10102030 (Required)" 
+                                                    placeholder="e.g. 10102030" 
                                                     value={config.merchant_id} 
                                                     onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], merchant_id: e.target.value } }))} 
                                                 />
-                                                <p className="text-[9px] text-slate-400 ml-1">Required to fetch financial data.</p>
                                             </div>
                                         </>
                                     ) : (
