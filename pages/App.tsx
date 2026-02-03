@@ -260,9 +260,9 @@ const App: React.FC = () => {
 
         // G. Backfill TCS Orders from Shopify (ROBUST: Works without TCS Token & Checks Tags)
         if (rawShopifyOrders.length > 0) {
-             // 1. Define window (Last 60 Days)
+             // 1. Define window (Last 120 Days to match fetch)
              const cutoffDate = new Date();
-             cutoffDate.setDate(cutoffDate.getDate() - 60);
+             cutoffDate.setDate(cutoffDate.getDate() - 120);
 
              const existingRefNos = new Set(fetchedOrders.map(o => o.shopify_order_number.replace('#','')));
              
@@ -299,7 +299,7 @@ const App: React.FC = () => {
              });
 
              if (candidates.length > 0) {
-                 console.log(`[TCS Backfill] Found ${candidates.length} candidates from last 60 days.`);
+                 console.log(`[TCS Backfill] Found ${candidates.length} candidates from last 120 days.`);
                  
                  // 3. Process Candidates
                  const results = await Promise.all(candidates.map(async (sOrder) => {
@@ -700,7 +700,7 @@ const App: React.FC = () => {
                 {currentPage === 'dashboard' && <Dashboard orders={orders} shopifyOrders={shopifyOrders} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} storeName={storeName} />}
                 {currentPage === 'orders' && <Orders orders={orders} />}
                 {currentPage === 'couriers' && <Couriers orders={orders} />}
-                {currentPage === 'tcs-debug' && <TcsDebug orders={orders} />}
+                {currentPage === 'tcs-debug' && <TcsDebug orders={orders} shopifyOrders={shopifyOrders} />}
                 {currentPage === 'profitability' && <Profitability orders={orders} shopifyOrders={shopifyOrders} products={products} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} storeName={storeName} />}
                 {currentPage === 'inventory' && <Inventory products={products} orders={orders} shopifyOrders={shopifyOrders} onUpdateProducts={handleUpdateProducts} />}
                 {currentPage === 'marketing' && <Marketing adSpend={adSpend} products={products} orders={orders} onAddAdSpend={handleUpdateAdSpend} onDeleteAdSpend={handleDeleteAdSpend} onSyncAdSpend={handleSyncAdSpend} onNavigate={setCurrentPage} />}

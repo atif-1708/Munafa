@@ -1,18 +1,87 @@
 
-import React from 'react';
-import { Order, OrderStatus } from '../types';
+import React, { useMemo } from 'react';
+import { Order, OrderStatus, ShopifyOrder } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { Radio, AlertCircle } from 'lucide-react';
+import { Radio, AlertCircle, Search, HelpCircle } from 'lucide-react';
 
 interface TcsDebugProps {
   orders: Order[];
+  shopifyOrders: ShopifyOrder[];
 }
 
-const TcsDebug: React.FC<TcsDebugProps> = ({ orders }) => {
+const TcsDebug: React.FC<TcsDebugProps> = ({ orders, shopifyOrders }) => {
+  // 1. Orders successfully tracked by App.tsx
   const trackingOrders = orders.filter(o => o.data_source === 'tracking');
   
+  // 2. Orders that *might* be TCS but weren't picked up
+  const missedOpportunities = useMemo(() => {
+      const alreadyTracked = new Set(orders.map(o => o.shopify_order_number.replace('#','')));
+      
+      const results: { order: ShopifyOrder, reason: string }[] = [];
+
+      // Filter last 120 days to match sync
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - 120);
+
+      shopifyOrders.forEach(s => {
+          // Ignore if already synced
+          if (alreadyTracked.has(s.name.replace('#',''))) return;
+
+          // Check Tag
+          const hasTcsTag = (s.tags || '').toLowerCase().includes('tcs');
+          
+          // Check Fulfillment
+          const tcsFulfillment = s.fulfillments?.find(f => {
+              const company = (f.tracking_company || '').toLowerCase();
+              const num = (f.tracking_number || '').replace(/[^a-zA-Z0-9]/g, '');
+              const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex');
+              if (isOther) return false;
+              return company.includes('tcs') || /^\d{9,16}$/.test(num);
+          });
+
+          // Candidates are those that look like TCS or are tagged TCS
+          if (hasTcsTag || tcsFulfillment) {
+              let reason = "Unknown";
+              
+              const isFulfilled = s.fulfillment_status === 'fulfilled' || s.fulfillment_status === 'partial';
+              const dateOk = new Date(s.created_at) >= cutoffDate;
+
+              if (!dateOk) {
+                  reason = "Order older than 120 days (Sync Limit)";
+              } else if (!isFulfilled) {
+                  reason = "Order status is Unfulfilled";
+              } else {
+                  // It is fulfilled and in date range. Why missed?
+                  if (!s.fulfillments || s.fulfillments.length === 0) {
+                      reason = "No Fulfillment Object found in Shopify Data";
+                  } else {
+                      // Check for ANY tracking number if tagged
+                      const anyTracking = s.fulfillments.find(f => f.tracking_number);
+                      
+                      if (!anyTracking) {
+                          reason = "No Tracking Number entered in Fulfillment";
+                      } else if (!tcsFulfillment && !hasTcsTag) {
+                          // This shouldn't happen due to parent if, but logic check
+                          reason = "Tracking Company not TCS & No Tag";
+                      } else if (hasTcsTag && !tcsFulfillment) {
+                          // Has Tag, but fulfillment analysis failed. 
+                          // If we are here, it means App.tsx logic failed to match the fallback
+                          reason = `Tagged TCS but Tracking Number '${anyTracking.tracking_number}' format rejected or Company '${anyTracking.tracking_company}' is treated as Other.`;
+                      } else {
+                          reason = "Pending Sync (Try refreshing or checking console)";
+                      }
+                  }
+              }
+              
+              results.push({ order: s, reason });
+          }
+      });
+
+      return results.sort((a,b) => new Date(b.order.created_at).getTime() - new Date(a.order.created_at).getTime());
+  }, [shopifyOrders, orders]);
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-8 pb-12">
       <div className="flex items-center gap-3">
           <div className="bg-red-50 p-2 rounded-lg text-red-600">
               <Radio size={24} />
@@ -20,7 +89,7 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders }) => {
           <div>
               <h2 className="text-2xl font-bold text-slate-900">TCS Live Tracking Monitor</h2>
               <p className="text-slate-500 text-sm">
-                  Orders detected via Shopify Fulfillments and tracked individually (not found in Settlement API).
+                  Orders tracked individually via TCS API (bypassing Settlement Report).
               </p>
           </div>
       </div>
@@ -28,16 +97,17 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders }) => {
       <div className="bg-blue-50 border border-blue-100 p-4 rounded-xl flex gap-3 text-blue-900">
           <AlertCircle size={20} className="shrink-0 mt-0.5" />
           <div className="text-sm">
-              <strong>How this works:</strong> Since TCS doesn't provide an API list of all booked orders, we:
-              <ol className="list-decimal ml-4 mt-1 space-y-1 text-blue-800">
-                  <li>Scan your Shopify orders for TCS tracking numbers.</li>
-                  <li>Call the TCS <code>/shipmentinfo</code> endpoint for each number found.</li>
-                  <li>If the order wasn't already in the Settlement Report (Payment API), we add it here.</li>
-              </ol>
+              <strong>Status:</strong> {trackingOrders.length} orders currently being tracked live. <br/>
+              <strong>Note:</strong> We scan orders from the last 120 days that are tagged <code>Shipped by TCS Courier</code> or have <code>TCS</code> in the tracking company.
           </div>
       </div>
 
+      {/* Main Tracked Table */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+            <h3 className="font-bold text-slate-700 text-sm">Successfully Synced</h3>
+            <span className="text-xs text-slate-500">{trackingOrders.length} Orders</span>
+        </div>
         <table className="w-full text-left text-sm">
             <thead className="bg-slate-50 border-b border-slate-200 uppercase text-xs font-bold text-slate-500">
                 <tr>
@@ -70,13 +140,76 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders }) => {
                 )) : (
                     <tr>
                         <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
-                            No orders found via live tracking backfill yet. <br/>
-                            <span className="text-xs">Ensure you have entered a valid TCS Token and have Shopify Orders with 'TCS' in the tracking company or valid formats.</span>
+                            No orders currently found via live tracking. <br/>
+                            <span className="text-xs">If you expect orders here, check the Diagnostic table below.</span>
                         </td>
                     </tr>
                 )}
             </tbody>
         </table>
+      </div>
+
+      {/* Diagnostic Table */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+            <div className="flex items-center gap-2">
+                <HelpCircle size={16} className="text-orange-500" />
+                <h3 className="font-bold text-slate-700 text-sm">Diagnostic: Potential Missed Orders</h3>
+            </div>
+            <span className="text-xs text-slate-500">{missedOpportunities.length} Candidates</span>
+        </div>
+        <div className="bg-orange-50 px-6 py-3 text-xs text-orange-800 border-b border-orange-100">
+            These orders contain "TCS" in tags or fulfillment but are NOT being tracked. Check the "Reason Skipped" column.
+        </div>
+        <div className="max-h-96 overflow-y-auto">
+            <table className="w-full text-left text-sm">
+                <thead className="bg-slate-50 border-b border-slate-200 uppercase text-xs font-bold text-slate-500 sticky top-0">
+                    <tr>
+                        <th className="px-6 py-3">Order</th>
+                        <th className="px-6 py-3">Date</th>
+                        <th className="px-6 py-3">Tags</th>
+                        <th className="px-6 py-3">Fulfillment Status</th>
+                        <th className="px-6 py-3 text-red-600">Reason Skipped</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                    {missedOpportunities.length > 0 ? missedOpportunities.map(({ order, reason }) => (
+                        <tr key={order.id} className="hover:bg-slate-50 transition-colors">
+                            <td className="px-6 py-3 font-medium text-slate-900">
+                                {order.name}
+                            </td>
+                            <td className="px-6 py-3 text-slate-600 text-xs">
+                                {new Date(order.created_at).toLocaleDateString()}
+                            </td>
+                            <td className="px-6 py-3">
+                                {order.tags ? (
+                                    <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-xs">
+                                        {order.tags}
+                                    </span>
+                                ) : <span className="text-slate-300">-</span>}
+                            </td>
+                            <td className="px-6 py-3">
+                                <span className={`text-xs font-bold px-2 py-1 rounded ${
+                                    order.fulfillment_status === 'fulfilled' ? 'bg-green-100 text-green-700' : 
+                                    order.fulfillment_status === 'partial' ? 'bg-yellow-100 text-yellow-700' : 'bg-slate-100 text-slate-500'
+                                }`}>
+                                    {order.fulfillment_status || 'Unfulfilled'}
+                                </span>
+                            </td>
+                            <td className="px-6 py-3 text-red-600 font-medium text-xs">
+                                {reason}
+                            </td>
+                        </tr>
+                    )) : (
+                        <tr>
+                            <td colSpan={5} className="px-6 py-8 text-center text-slate-400">
+                                No missed orders detected. All potential TCS orders seem to be syncing correctly.
+                            </td>
+                        </tr>
+                    )}
+                </tbody>
+            </table>
+        </div>
       </div>
     </div>
   );
