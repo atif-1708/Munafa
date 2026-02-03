@@ -253,85 +253,99 @@ const App: React.FC = () => {
                 if (tcsOrders.length > 0) tcsFoundOrders = true;
             } catch (e: any) {
                 console.error("TCS Sync Error:", e);
-                setError((prev) => (prev ? prev + " | " : "") + "TCS Failed: " + e.message);
+                // Non-blocking error for TCS Settlement
+                console.warn("TCS Settlement API Failed: " + e.message);
             }
         }
 
-        // G. Backfill TCS Orders from Shopify (If list API missed them)
-        if (tcsConfig && rawShopifyOrders.length > 0) {
-             const tcsAdapter = new TcsAdapter();
+        // G. Backfill TCS Orders from Shopify (ROBUST: Works without TCS Token)
+        if (rawShopifyOrders.length > 0) {
+             // 1. Define window (Last 60 Days)
+             const cutoffDate = new Date();
+             cutoffDate.setDate(cutoffDate.getDate() - 60);
+
              const existingRefNos = new Set(fetchedOrders.map(o => o.shopify_order_number.replace('#','')));
              
-             // IMPROVED STRATEGY:
-             // 1. Filter ALL Shopify orders to find TCS candidates first (ignore unfulfilled or non-TCS).
-             // 2. Slice the CANDIDATES list, not the raw list, to ensure we find older orders.
-             const candidates = rawShopifyOrders
-                .filter(s => {
-                    const isUnmapped = !existingRefNos.has(s.name.replace('#',''));
-                    // Is fulfilled/partial?
-                    const isFulfilled = s.fulfillment_status === 'fulfilled' || s.fulfillment_status === 'partial';
-                    if (!isUnmapped || !isFulfilled) return false;
+             // 2. Filter Candidates from Shopify
+             const candidates = rawShopifyOrders.filter(s => {
+                 // Date Check
+                 const d = new Date(s.created_at);
+                 if (d < cutoffDate) return false;
 
-                    // Is fulfilled by TCS?
-                    return s.fulfillments?.some(f => 
-                        (f.tracking_company && f.tracking_company.toLowerCase().includes('tcs')) || 
-                        (f.tracking_number && /^\d{9,15}$/.test(f.tracking_number)) // Guess TCS format
-                    );
-                })
-                .slice(0, 30); // Limit concurrent requests to 30 to avoid timeout/rate-limit
+                 // Duplication Check
+                 const isUnmapped = !existingRefNos.has(s.name.replace('#',''));
+                 const isFulfilled = s.fulfillment_status === 'fulfilled' || s.fulfillment_status === 'partial';
+                 
+                 if (!isUnmapped || !isFulfilled) return false;
+
+                 // TCS Check (Look at Tracking Company OR Regex)
+                 return s.fulfillments?.some(f => 
+                     (f.tracking_company && f.tracking_company.toLowerCase().includes('tcs')) || 
+                     (f.tracking_number && /^\d{9,15}$/.test(f.tracking_number)) // Matches common TCS formats
+                 );
+             });
 
              if (candidates.length > 0) {
-                 console.log(`[TCS Backfill] Found ${candidates.length} candidates to track...`);
+                 console.log(`[TCS Backfill] Found ${candidates.length} candidates from last 60 days.`);
                  
-                 const promises = candidates.map(async (sOrder) => {
+                 // 3. Process Candidates
+                 // We map ALL candidates. If we have a token, we try to track. 
+                 // If not, we default to IN_TRANSIT.
+                 const results = await Promise.all(candidates.map(async (sOrder) => {
                      const ff = sOrder.fulfillments?.find(f => f.tracking_number);
                      if (!ff) return null;
 
-                     try {
-                         const update = await tcsAdapter.track(ff.tracking_number, tcsConfig!);
-                         const cod = parseFloat(sOrder.total_price);
-                         
-                         const newOrder: Order = {
-                             id: ff.tracking_number,
-                             shopify_order_number: sOrder.name,
-                             created_at: sOrder.created_at,
-                             customer_city: sOrder.customer?.city || 'Unknown',
-                             courier: CourierName.TCS,
-                             tracking_number: ff.tracking_number,
-                             status: update.status,
-                             payment_status: PaymentStatus.UNPAID,
-                             cod_amount: cod,
-                             shipping_fee_paid_by_customer: 0,
-                             courier_fee: fetchedSettings.rates[CourierName.TCS].forward,
-                             rto_penalty: 0, 
-                             packaging_cost: fetchedSettings.packagingCost,
-                             overhead_cost: 0,
-                             tax_amount: 0,
-                             data_source: 'tracking', 
-                             items: sOrder.line_items.map(li => ({
-                                 product_id: 'unknown',
-                                 quantity: li.quantity,
-                                 sale_price: parseFloat(li.price),
-                                 product_name: li.title,
-                                 sku: li.sku,
-                                 variant_fingerprint: li.sku || 'unknown',
-                                 cogs_at_time_of_order: 0
-                             }))
-                         };
-                         return newOrder;
-                     } catch (e: any) {
-                         console.warn(`[TCS Backfill] Failed to track ${ff.tracking_number}:`, e.message);
-                         return null;
+                     let status = OrderStatus.IN_TRANSIT; // Default assumption for fulfilled order
+                     
+                     // Try Live Tracking only if Config exists
+                     if (tcsConfig && tcsConfig.api_token) {
+                         try {
+                             const tcsAdapter = new TcsAdapter();
+                             const update = await tcsAdapter.track(ff.tracking_number, tcsConfig);
+                             status = update.status;
+                         } catch (e) {
+                             // SIlently fail back to IN_TRANSIT
+                         }
                      }
-                 });
 
-                 const results = await Promise.all(promises);
+                     const cod = parseFloat(sOrder.total_price);
+                     
+                     const newOrder: Order = {
+                         id: ff.tracking_number,
+                         shopify_order_number: sOrder.name,
+                         created_at: sOrder.created_at,
+                         customer_city: sOrder.customer?.city || 'Unknown',
+                         courier: CourierName.TCS,
+                         tracking_number: ff.tracking_number,
+                         status: status,
+                         payment_status: PaymentStatus.UNPAID,
+                         cod_amount: cod,
+                         shipping_fee_paid_by_customer: 0,
+                         courier_fee: fetchedSettings.rates[CourierName.TCS].forward,
+                         rto_penalty: 0, 
+                         packaging_cost: fetchedSettings.packagingCost,
+                         overhead_cost: 0,
+                         tax_amount: 0,
+                         data_source: 'tracking', 
+                         items: sOrder.line_items.map(li => ({
+                             product_id: 'unknown',
+                             quantity: li.quantity,
+                             sale_price: parseFloat(li.price),
+                             product_name: li.title,
+                             sku: li.sku,
+                             variant_fingerprint: li.sku || 'unknown',
+                             cogs_at_time_of_order: 0
+                         }))
+                     };
+                     return newOrder;
+                 }));
+
                  const validResults = results.filter((o): o is Order => o !== null);
                  
                  if (validResults.length > 0) {
                      fetchedOrders = [...fetchedOrders, ...validResults];
                      if (!tcsFoundOrders) {
-                         infoMsgs.push(`Fetched ${validResults.length} active orders via TCS Live Tracking.`);
+                         infoMsgs.push(`Populated ${validResults.length} TCS orders from Shopify (Last 60 Days).`);
                      }
                  }
              }
