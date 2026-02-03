@@ -46,39 +46,67 @@ export class TcsAdapter implements CourierAdapter {
   async track(trackingNumber: string, config: IntegrationConfig): Promise<TrackingUpdate> {
       if (!config.api_token) throw new Error("Token missing");
 
-      // UPDATED: Using 'GetDynamicTrackDetail' from PDF Page 32
-      // This endpoint provides live checkpoints
-      const data = await this.request(
-          `${this.TRACKING_URL}/GetDynamicTrackDetail`, 
-          config.api_token, 
-          { consignee: trackingNumber }
-      );
-      
-      if (!data) {
-          throw new Error("Tracking not found");
-      }
-
-      // Checkpoints array contains the history. The first one is usually the latest status.
-      // Or we can use 'shipmentsummary'
-      
       let rawStatus = "Unknown";
       let statusDate = new Date().toISOString();
+      let foundData = false;
 
-      if (data.checkpoints && Array.isArray(data.checkpoints) && data.checkpoints.length > 0) {
-          // Checkpoints usually sorted newest first, but let's be safe
-          const latest = data.checkpoints[0];
-          rawStatus = latest.status || "Unknown";
-          statusDate = latest.datetime || statusDate;
-      } else if (data.shipmentsummary) {
-          rawStatus = data.shipmentsummary;
+      // 1. Try Live Tracking (GetDynamicTrackDetail) - Preferred for checkpoints
+      try {
+          const data = await this.request(
+              `${this.TRACKING_URL}/GetDynamicTrackDetail`, 
+              config.api_token, 
+              { consignee: trackingNumber }
+          );
+          
+          if (data) {
+              if (data.checkpoints && Array.isArray(data.checkpoints) && data.checkpoints.length > 0) {
+                  // Checkpoints usually sorted newest first
+                  const latest = data.checkpoints[0];
+                  rawStatus = latest.status || "Unknown";
+                  statusDate = latest.datetime || statusDate;
+                  foundData = true;
+              } else if (data.shipmentsummary && typeof data.shipmentsummary === 'string' && !data.shipmentsummary.includes('No Data Found')) {
+                  rawStatus = data.shipmentsummary;
+                  foundData = true;
+              }
+          }
+      } catch (e) {
+          console.warn(`TCS Live Track failed for ${trackingNumber}, attempting fallback.`);
       }
 
+      // 2. Fallback to Shipment Info (Booking Data) if Live Tracking failed
+      if (!foundData || rawStatus === "Unknown") {
+           try {
+               const data = await this.request(`${this.ECOM_URL}/shipmentinfo`, config.api_token, { consignmentNo: trackingNumber });
+               
+               let item = null;
+               if (Array.isArray(data) && data.length > 0) item = data[0];
+               else if (data && data.shipmentInfo) item = data.shipmentInfo;
+               else if (data && data.consignmentNo) item = data;
+
+               if (item) {
+                   const s = item['cn status'] || item['currentStatus'] || item['status'];
+                   if (s) {
+                       rawStatus = s;
+                       foundData = true;
+                   }
+               }
+           } catch (e) {
+               console.warn(`TCS Fallback failed for ${trackingNumber}`);
+           }
+      }
+
+      // 3. Map status or default
       const status = this.mapStatus(rawStatus);
+
+      // Clean up raw status for display if it's messy
+      let displayStatus = rawStatus;
+      if (rawStatus.includes('\n')) displayStatus = rawStatus.split('\n')[0]; // Take first line if summary
 
       return {
           tracking_number: trackingNumber,
           status: status,
-          raw_status_text: rawStatus, // e.g. "Arrived at TCS Facility"
+          raw_status_text: displayStatus, 
           courier_timestamp: statusDate
       };
   }
@@ -91,13 +119,11 @@ export class TcsAdapter implements CourierAdapter {
       const token = config.api_token;
       if (!token) throw new Error("Token is missing");
 
-      // Test with Payment/detail as it is the most reliable for list checking
       const end = new Date();
       const start = new Date();
       start.setDate(start.getDate() - 7); 
       
       try {
-          // Check Payment Detail (Financial)
           const data = await this.request(`${this.ECOM_URL}/Payment/detail`, token, {
               fromdate: start.toISOString().split('T')[0],
               todate: end.toISOString().split('T')[0]
@@ -109,11 +135,9 @@ export class TcsAdapter implements CourierAdapter {
           return true;
       } catch (e: any) {
            if (e.message.includes("Invalid Token")) throw e;
-           
-           // Fallback: Try tracking a dummy number just to check token validity
            try {
                await this.request(`${this.TRACKING_URL}/GetDynamicTrackDetail`, token, { consignee: '123456' });
-               return true; // If we get here without Invalid Token error, token is good
+               return true; 
            } catch (e2) {
                throw e;
            }
@@ -127,10 +151,6 @@ export class TcsAdapter implements CourierAdapter {
       const end = new Date();
       const start = new Date();
       start.setDate(start.getDate() - 60); 
-
-      // We ONLY use Payment/detail for bulk fetching because 'shipmentinfo' 
-      // typically does not support date ranges for listing all bookings.
-      // We will rely on App.tsx to "Backfill" other orders via individual tracking.
       
       try {
           const data = await this.request(`${this.ECOM_URL}/Payment/detail`, token, {
@@ -141,13 +161,9 @@ export class TcsAdapter implements CourierAdapter {
           if (!data) return [];
 
           let rawList: any[] = [];
-          
-          if (Array.isArray(data)) {
-              rawList = data;
-          } else if (data.detail && Array.isArray(data.detail)) {
-              rawList = data.detail;
-          } else {
-             // Fallback: Check for ANY array property
+          if (Array.isArray(data)) rawList = data;
+          else if (data.detail && Array.isArray(data.detail)) rawList = data.detail;
+          else {
              const keys = Object.keys(data);
              for(const k of keys) {
                  if(Array.isArray(data[k]) && data[k].length > 0) {
@@ -210,7 +226,7 @@ export class TcsAdapter implements CourierAdapter {
           return OrderStatus.DELIVERED;
       }
       
-      // 2. RETURNED (Aggregating all RTO/Cancel types)
+      // 2. RETURNED
       if (
           s === 'ro' || 
           s.includes('return') || 
@@ -222,7 +238,7 @@ export class TcsAdapter implements CourierAdapter {
           return OrderStatus.RETURNED;
       }
       
-      // 3. IN TRANSIT (Aggregating Booked, Pending, In Transit, Arrivals, etc.)
+      // 3. IN TRANSIT
       return OrderStatus.IN_TRANSIT;
   }
 
