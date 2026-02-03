@@ -58,7 +58,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
       id: '', platform: 'Shopify', store_url: '', access_token: '', scope: '', is_active: false
   });
   
-  // Expanded Config State to handle Username/Password for TCS
+  // Courier Config State
   const [courierConfigs, setCourierConfigs] = useState<Record<string, CourierConfig>>(() => {
     const initial: Record<string, CourierConfig> = {};
     Object.values(CourierName).forEach(name => {
@@ -300,7 +300,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
         } catch (e: any) {
             console.error("Save failed:", e);
             // 5. Show Error to User
-            setErrorMessage(`Save Failed: ${e.message}. (If error says column does not exist, please run the migration script in Supabase SQL Editor.)`);
+            setErrorMessage(`Save Failed: ${e.message}.`);
         }
     }
   };
@@ -589,10 +589,13 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                                 <input 
                                                     type="password"
                                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-yellow-50 focus:bg-white transition-colors" 
-                                                    placeholder="Generate from OCI Connect Portal" 
-                                                    value={config.api_token} 
+                                                    placeholder="Paste the long-term token from portal" 
+                                                    value={config.api_token || ''} 
                                                     onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], api_token: e.target.value } }))} 
                                                 />
+                                                <p className="text-[10px] text-slate-400 leading-tight">
+                                                    TCS does not provide Client ID/Secret. Use the long-term access token generated from their portal.
+                                                </p>
                                             </div>
                                         </>
                                     ) : (

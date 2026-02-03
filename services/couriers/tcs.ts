@@ -10,19 +10,23 @@ export class TcsAdapter implements CourierAdapter {
   private readonly TRACKING_URL = 'https://ociconnect.tcscourier.com/tracking/api/Tracking';
   
   /**
-   * Helper to perform the API request through our proxy
+   * Helper to perform the API request through our proxy.
+   * Directly uses the long-term Access Token provided in config.
    */
-  private async request(fullUrl: string, token: string, params: Record<string, string>): Promise<any> {
-      // 1. Construct Query Params
+  private async request(fullUrl: string, config: IntegrationConfig, params: Record<string, string>): Promise<any> {
+      // 1. Get Token (Directly from Config)
+      const token = config.api_token;
+      if (!token) throw new Error("TCS Access Token is missing. Please check Integrations settings.");
+
+      // 2. Construct Query Params
       const query = new URLSearchParams({
           ...params
       }).toString();
       
       const targetUrl = `${fullUrl}?${query}`;
       
-      // 2. Send via Proxy
-      // PDF Page 32: "Bearer Token Provided in Authorization API"
-      // We must send 'Authorization: Bearer <token>'
+      // 3. Send via Proxy
+      // Note: We use 'Bearer' prefix as is standard for OCI Connect tokens.
       const res = await fetch(`/api/proxy?url=${encodeURIComponent(targetUrl)}`, {
           method: 'GET',
           headers: {
@@ -34,26 +38,22 @@ export class TcsAdapter implements CourierAdapter {
 
       const text = await res.text();
 
-      // 3. Parse Response
+      // 4. Parse Response
       try {
           const json = JSON.parse(text);
-          // Check for API-level errors even if HTTP is 200
           if (json.message && (json.message === 'Invalid access token' || json.code === '401')) {
-              throw new Error("TCS Error: Invalid Token");
+              throw new Error("TCS Error: Token Invalid or Expired");
           }
           return json;
       } catch (e: any) {
           if (text.includes('Invalid Token') || text.includes('Unauthorized') || text.includes('401')) {
               throw new Error("TCS Error: Invalid Token");
           }
-          // If valid JSON but business error, let caller handle it or return null
           return null; 
       }
   }
 
   async track(trackingNumber: string, config: IntegrationConfig): Promise<TrackingUpdate> {
-      if (!config.api_token) throw new Error("Token missing");
-
       let rawStatus = "Unknown";
       let statusDate = new Date().toISOString();
       let foundData = false;
@@ -62,13 +62,12 @@ export class TcsAdapter implements CourierAdapter {
       try {
           const data = await this.request(
               `${this.TRACKING_URL}/GetDynamicTrackDetail`, 
-              config.api_token, 
+              config, 
               { consignee: trackingNumber }
           );
           
           if (data) {
               if (data.checkpoints && Array.isArray(data.checkpoints) && data.checkpoints.length > 0) {
-                  // Checkpoints usually sorted newest first (index 0)
                   const latest = data.checkpoints[0];
                   rawStatus = latest.status || "Unknown";
                   statusDate = latest.datetime || statusDate;
@@ -85,7 +84,7 @@ export class TcsAdapter implements CourierAdapter {
       // 2. Fallback to Shipment Info (Booking Data) if Live Tracking failed
       if (!foundData || rawStatus === "Unknown") {
            try {
-               const data = await this.request(`${this.ECOM_URL}/shipmentinfo`, config.api_token, { consignmentNo: trackingNumber });
+               const data = await this.request(`${this.ECOM_URL}/shipmentinfo`, config, { consignmentNo: trackingNumber });
                
                let item = null;
                if (Array.isArray(data) && data.length > 0) item = data[0];
@@ -109,7 +108,7 @@ export class TcsAdapter implements CourierAdapter {
 
       // Clean up raw status for display if it's messy
       let displayStatus = rawStatus;
-      if (rawStatus.includes('\n')) displayStatus = rawStatus.split('\n')[0]; // Take first line if summary
+      if (rawStatus.includes('\n')) displayStatus = rawStatus.split('\n')[0]; 
 
       return {
           tracking_number: trackingNumber,
@@ -124,52 +123,50 @@ export class TcsAdapter implements CourierAdapter {
   }
 
   async testConnection(config: IntegrationConfig): Promise<boolean> {
-      const token = config.api_token;
-      if (!token) throw new Error("Token is missing");
+      // Step 1: Check if token exists
+      if (!config.api_token) throw new Error("Access Token is required");
 
-      // Use a known date range to validte connection
+      // Step 2: Test Data Access
       const end = new Date();
       const start = new Date();
       start.setDate(start.getDate() - 7); 
       
-      // PDF Page 22: Payment Detail - requires customerno
-      const customerNo = config.merchant_id || config.username || "";
+      const customerNo = config.merchant_id || "";
 
       if (!customerNo) {
-          // Fallback to Tracking API if customer number is missing (Just checks if token works)
-          try {
-               await this.request(`${this.TRACKING_URL}/GetDynamicTrackDetail`, token, { consignee: '123456' });
+          // If customer no is missing, try a lightweight tracking call to verify token
+           try {
+               await this.request(`${this.TRACKING_URL}/GetDynamicTrackDetail`, config, { consignee: '123456789' });
                return true; 
            } catch (e: any) {
-               throw new Error("Connection failed. Please ensure Token is correct.");
+               if (e.message.includes("Invalid Token")) throw e;
+               // If it's just "No Data Found", the token worked.
+               return true;
            }
       }
       
       try {
-          const data = await this.request(`${this.ECOM_URL}/Payment/detail`, token, {
+          const data = await this.request(`${this.ECOM_URL}/Payment/detail`, config, {
               fromdate: start.toISOString().split('T')[0],
               todate: end.toISOString().split('T')[0],
               customerno: customerNo 
           });
 
           if (data && (data.status === false || data.status === "false")) {
-              throw new Error(data.message || "TCS Rejected Credentials");
+              throw new Error(data.message || "TCS Rejected Account Number");
           }
           return true;
       } catch (e: any) {
            if (e.message.includes("Invalid Token")) throw e;
-           // If request failed but token might be valid (e.g. no data found), consider success for connection test
            if (e.message.includes("No Record")) return true;
            throw e;
       }
   }
 
   async fetchRecentOrders(config: IntegrationConfig): Promise<Order[]> {
-      const token = config.api_token;
-      const customerNo = config.merchant_id || config.username; 
+      const customerNo = config.merchant_id; 
 
-      if (!token || !customerNo) {
-          // If credentials missing, we can't do bulk fetch
+      if (!customerNo) {
           return [];
       }
 
@@ -178,7 +175,8 @@ export class TcsAdapter implements CourierAdapter {
       start.setDate(start.getDate() - 30); 
       
       try {
-          const data = await this.request(`${this.ECOM_URL}/Payment/detail`, token, {
+          // Pass full config so request() can generate token
+          const data = await this.request(`${this.ECOM_URL}/Payment/detail`, config, {
               fromdate: start.toISOString().split('T')[0],
               todate: end.toISOString().split('T')[0],
               customerno: customerNo
@@ -246,12 +244,10 @@ export class TcsAdapter implements CourierAdapter {
   private mapStatus(raw: string): OrderStatus {
       const s = String(raw).toLowerCase();
       
-      // 1. DELIVERED
       if (s === 'ok' || s.includes('delivered') || s === 'shipment delivered') {
           return OrderStatus.DELIVERED;
       }
       
-      // 2. RETURNED
       if (
           s === 'ro' || 
           s.includes('return') || 
@@ -263,7 +259,6 @@ export class TcsAdapter implements CourierAdapter {
           return OrderStatus.RETURNED;
       }
       
-      // 3. IN TRANSIT
       return OrderStatus.IN_TRANSIT;
   }
 
