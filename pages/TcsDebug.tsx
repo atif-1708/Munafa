@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { Order, ShopifyOrder } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { Radio, Database, CheckCircle2, Search, FileQuestion, AlertTriangle, Filter, Package, ChevronRight } from 'lucide-react';
+import { Radio, Database, CheckCircle2, Search, AlertTriangle, Filter, Package } from 'lucide-react';
 
 interface TcsDebugProps {
   orders: Order[];
@@ -12,7 +12,8 @@ interface TcsDebugProps {
 const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) => {
   const [viewMode, setViewMode] = useState<'matched' | 'raw'>('raw');
   const [searchTerm, setSearchTerm] = useState('');
-  const [showOnlyTcsCandidates, setShowOnlyTcsCandidates] = useState(true);
+  // Changed default to FALSE so we see all data first (prevents "blank" screen)
+  const [showOnlyTcsCandidates, setShowOnlyTcsCandidates] = useState(false);
 
   // SAFEGUARD: Ensure inputs are arrays to prevent crashes
   const safeOrders = useMemo(() => Array.isArray(orders) ? orders : [], [orders]);
@@ -187,9 +188,13 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) 
                               const company = fulfillment?.tracking_company || 'None';
                               const trackNo = fulfillment?.tracking_number || 'None';
                               
-                              // Safe Item Summary
+                              // Safe Item Summary Logic
                               const items = Array.isArray(o.line_items) ? o.line_items : [];
-                              const itemsSummary = items.map(i => `${i.quantity}x ${i.title}`).join(', ');
+                              const itemsSummary = items.map(i => {
+                                  const qty = i.quantity || 0;
+                                  const title = i.title || 'Item';
+                                  return `${qty}x ${title}`;
+                              }).join(', ');
 
                               let analysis = "Ignored";
                               let color = "text-slate-400";
