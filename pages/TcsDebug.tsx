@@ -1,17 +1,19 @@
 
 import React, { useState, useMemo } from 'react';
-import { Order, ShopifyOrder } from '../types';
+import { Order, ShopifyOrder, OrderStatus } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { Radio, Database, CheckCircle2, Search, AlertTriangle, Filter, Package } from 'lucide-react';
+import { Radio, Database, CheckCircle2, Search, AlertTriangle, Filter, Package, RefreshCw, Loader2 } from 'lucide-react';
 
 interface TcsDebugProps {
   orders: Order[];
   shopifyOrders: ShopifyOrder[];
+  onTrackOrder?: (order: Order) => Promise<OrderStatus>;
 }
 
-const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) => {
+const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], onTrackOrder }) => {
   const [viewMode, setViewMode] = useState<'matched' | 'raw'>('raw');
   const [searchTerm, setSearchTerm] = useState('');
+  const [trackingIds, setTrackingIds] = useState<Set<string>>(new Set());
   
   // DEFAULT TO FALSE: Show all orders immediately so the user sees data.
   const [showOnlyTcsCandidates, setShowOnlyTcsCandidates] = useState(false);
@@ -24,6 +26,24 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) 
   const trackingOrders = useMemo(() => 
     safeOrders.filter(o => o.data_source === 'tracking'), 
   [safeOrders]);
+
+  const handleTrackClick = async (order: Order) => {
+      if (!onTrackOrder || trackingIds.has(order.id)) return;
+      
+      const newSet = new Set(trackingIds);
+      newSet.add(order.id);
+      setTrackingIds(newSet);
+
+      try {
+          await onTrackOrder(order);
+      } catch (e) {
+          alert("Tracking Failed. Check console.");
+      } finally {
+          const finishedSet = new Set(trackingIds);
+          finishedSet.delete(order.id);
+          setTrackingIds(finishedSet);
+      }
+  };
 
   // Helper to safely determine if an order looks like TCS
   const isTcsCandidate = (o: ShopifyOrder) => {
@@ -282,6 +302,7 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) 
                           <th className="px-6 py-4">Tracking Number</th>
                           <th className="px-6 py-4">Status</th>
                           <th className="px-6 py-4">Est. COD</th>
+                          <th className="px-6 py-4">Live Check</th>
                       </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -304,10 +325,20 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [] }) 
                               <td className="px-6 py-4 font-medium align-top">
                                   {formatCurrency(o.cod_amount)}
                               </td>
+                              <td className="px-6 py-4 align-top">
+                                  <button 
+                                    onClick={() => handleTrackClick(o)}
+                                    disabled={trackingIds.has(o.id)}
+                                    className="p-1.5 bg-slate-100 text-slate-600 rounded hover:bg-blue-100 hover:text-blue-600 transition-colors"
+                                    title="Check Live Status"
+                                  >
+                                      {trackingIds.has(o.id) ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                                  </button>
+                              </td>
                           </tr>
                       )) : (
                           <tr>
-                              <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
+                              <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
                                   No matched orders found.
                               </td>
                           </tr>

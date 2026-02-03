@@ -58,6 +58,9 @@ const App: React.FC = () => {
   // Trigger to force re-fetch
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
+  // Integration Configs Cache (for manual tracking)
+  const [configs, setConfigs] = useState<{ tcs?: IntegrationConfig, postex?: IntegrationConfig }>({});
+
   // Inventory Alert Count (Items with 0 COGS)
   const inventoryAlertCount = useMemo(() => {
       return products.filter(p => p.current_cogs === 0).length;
@@ -195,6 +198,7 @@ const App: React.FC = () => {
              if (courierData) {
                 postExConfig = courierData.find((c: any) => c.provider_id === CourierName.POSTEX);
                 tcsConfig = courierData.find((c: any) => c.provider_id === CourierName.TCS);
+                setConfigs({ tcs: tcsConfig, postex: postExConfig });
             }
         }
 
@@ -293,7 +297,7 @@ const App: React.FC = () => {
                      const num = (f.tracking_number ? String(f.tracking_number) : '').replace(/[^a-zA-Z0-9]/g, '');
                      
                      // Negative check: Not other common couriers
-                     const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('callcourier') || company.includes('mnp');
+                     const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('mnp') || company.includes('callcourier');
                      
                      if (isOther) return false;
 
@@ -315,7 +319,7 @@ const App: React.FC = () => {
                         let ff = sOrder.fulfillments?.find(f => {
                             const company = f.tracking_company ? String(f.tracking_company).toLowerCase() : '';
                             const num = (f.tracking_number ? String(f.tracking_number) : '').replace(/[^a-zA-Z0-9]/g, '');
-                            const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('callcourier') || company.includes('mnp');
+                            const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('mnp') || company.includes('callcourier');
                             
                             // If tagged as TCS, accept any non-other fulfillment that has a tracking number
                             if (hasTcsTag && !isOther && f.tracking_number) return true;
@@ -606,6 +610,32 @@ const App: React.FC = () => {
       }
   };
 
+  // --- MANUAL LIVE TRACKING ---
+  const handleManualTrack = async (order: Order): Promise<OrderStatus> => {
+      try {
+          let updatedStatus = order.status;
+          
+          if (order.courier === CourierName.TCS && configs.tcs) {
+              const adapter = new TcsAdapter();
+              const result = await adapter.track(order.tracking_number, configs.tcs);
+              updatedStatus = result.status;
+          } else if (order.courier === CourierName.POSTEX && configs.postex) {
+              const adapter = new PostExAdapter();
+              const result = await adapter.track(order.tracking_number, configs.postex);
+              updatedStatus = result.status;
+          }
+
+          // Update Local State if status changed
+          if (updatedStatus !== order.status) {
+              setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: updatedStatus } : o));
+          }
+          return updatedStatus;
+      } catch (e) {
+          console.error("Manual Track Error", e);
+          throw e;
+      }
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsAuthSubmitting(true);
@@ -713,7 +743,7 @@ const App: React.FC = () => {
                 {currentPage === 'dashboard' && <Dashboard orders={orders} shopifyOrders={shopifyOrders} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} storeName={storeName} />}
                 {currentPage === 'orders' && <Orders orders={orders} />}
                 {currentPage === 'couriers' && <Couriers orders={orders} />}
-                {currentPage === 'tcs-debug' && <TcsDebug orders={orders} shopifyOrders={shopifyOrders} />}
+                {currentPage === 'tcs-debug' && <TcsDebug orders={orders} shopifyOrders={shopifyOrders} onTrackOrder={handleManualTrack} />}
                 {currentPage === 'profitability' && <Profitability orders={orders} shopifyOrders={shopifyOrders} products={products} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} storeName={storeName} />}
                 {currentPage === 'inventory' && <Inventory products={products} orders={orders} shopifyOrders={shopifyOrders} onUpdateProducts={handleUpdateProducts} />}
                 {currentPage === 'marketing' && <Marketing adSpend={adSpend} products={products} orders={orders} onAddAdSpend={handleUpdateAdSpend} onDeleteAdSpend={handleDeleteAdSpend} onSyncAdSpend={handleSyncAdSpend} onNavigate={setCurrentPage} />}
