@@ -5,20 +5,20 @@ import { IntegrationConfig, TrackingUpdate, OrderStatus, Order, CourierName, Pay
 export class TcsAdapter implements CourierAdapter {
   name = CourierName.TCS;
   
-  // Base URL for OCI Connect
-  private readonly BASE_URL = 'https://ociconnect.tcscourier.com/ecom/api';
+  // Base URLs
+  private readonly ECOM_URL = 'https://ociconnect.tcscourier.com/ecom/api';
+  private readonly TRACKING_URL = 'https://ociconnect.tcscourier.com/tracking/api/Tracking';
   
   /**
    * Helper to perform the API request through our proxy
    */
-  private async request(endpoint: string, token: string, params: Record<string, string>): Promise<any> {
-      // 1. Construct Target URL with Query Params
+  private async request(fullUrl: string, token: string, params: Record<string, string>): Promise<any> {
+      // 1. Construct Query Params
       const query = new URLSearchParams({
-          accesstoken: token,
           ...params
       }).toString();
       
-      const targetUrl = `${this.BASE_URL}${endpoint}?${query}`;
+      const targetUrl = `${fullUrl}?${query}`;
       
       // 2. Send via Proxy
       const res = await fetch(`/api/proxy?url=${encodeURIComponent(targetUrl)}`, {
@@ -46,26 +46,40 @@ export class TcsAdapter implements CourierAdapter {
   async track(trackingNumber: string, config: IntegrationConfig): Promise<TrackingUpdate> {
       if (!config.api_token) throw new Error("Token missing");
 
-      // Use shipmentinfo for tracking as requested by user
-      const data = await this.request('/shipmentinfo', config.api_token, { consignmentNo: trackingNumber });
+      // UPDATED: Using 'GetDynamicTrackDetail' from PDF Page 32
+      // This endpoint provides live checkpoints
+      const data = await this.request(
+          `${this.TRACKING_URL}/GetDynamicTrackDetail`, 
+          config.api_token, 
+          { consignee: trackingNumber }
+      );
       
-      let item = null;
-      if (Array.isArray(data) && data.length > 0) item = data[0];
-      else if (data && data.shipmentInfo) item = data.shipmentInfo;
-      else if (data && data.consignmentNo) item = data; // Sometimes direct object
-
-      if (!item) {
+      if (!data) {
           throw new Error("Tracking not found");
       }
 
-      const rawStatus = item['cn status'] || item['currentStatus'] || item['status'] || 'Unknown';
+      // Checkpoints array contains the history. The first one is usually the latest status.
+      // Or we can use 'shipmentsummary'
+      
+      let rawStatus = "Unknown";
+      let statusDate = new Date().toISOString();
+
+      if (data.checkpoints && Array.isArray(data.checkpoints) && data.checkpoints.length > 0) {
+          // Checkpoints usually sorted newest first, but let's be safe
+          const latest = data.checkpoints[0];
+          rawStatus = latest.status || "Unknown";
+          statusDate = latest.datetime || statusDate;
+      } else if (data.shipmentsummary) {
+          rawStatus = data.shipmentsummary;
+      }
+
       const status = this.mapStatus(rawStatus);
 
       return {
           tracking_number: trackingNumber,
           status: status,
-          raw_status_text: rawStatus,
-          courier_timestamp: new Date().toISOString()
+          raw_status_text: rawStatus, // e.g. "Arrived at TCS Facility"
+          courier_timestamp: statusDate
       };
   }
 
@@ -84,7 +98,7 @@ export class TcsAdapter implements CourierAdapter {
       
       try {
           // Check Payment Detail (Financial)
-          const data = await this.request('/Payment/detail', token, {
+          const data = await this.request(`${this.ECOM_URL}/Payment/detail`, token, {
               fromdate: start.toISOString().split('T')[0],
               todate: end.toISOString().split('T')[0]
           });
@@ -98,7 +112,7 @@ export class TcsAdapter implements CourierAdapter {
            
            // Fallback: Try tracking a dummy number just to check token validity
            try {
-               await this.request('/shipmentinfo', token, { consignmentNo: '123456' });
+               await this.request(`${this.TRACKING_URL}/GetDynamicTrackDetail`, token, { consignee: '123456' });
                return true; // If we get here without Invalid Token error, token is good
            } catch (e2) {
                throw e;
@@ -119,7 +133,7 @@ export class TcsAdapter implements CourierAdapter {
       // We will rely on App.tsx to "Backfill" other orders via individual tracking.
       
       try {
-          const data = await this.request('/Payment/detail', token, {
+          const data = await this.request(`${this.ECOM_URL}/Payment/detail`, token, {
               fromdate: start.toISOString().split('T')[0],
               todate: end.toISOString().split('T')[0]
           });
