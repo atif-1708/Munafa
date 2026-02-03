@@ -58,7 +58,7 @@ export class TcsAdapter implements CourierAdapter {
       let statusDate = new Date().toISOString();
       let foundData = false;
 
-      // 1. Try Live Tracking (GetDynamicTrackDetail) - Page 32
+      // 1. Try Live Tracking (GetDynamicTrackDetail) - Page 32 of Guide
       try {
           const data = await this.request(
               `${this.TRACKING_URL}/GetDynamicTrackDetail`, 
@@ -67,12 +67,14 @@ export class TcsAdapter implements CourierAdapter {
           );
           
           if (data) {
+              // Check 'checkpoints' array as per guide response structure
               if (data.checkpoints && Array.isArray(data.checkpoints) && data.checkpoints.length > 0) {
                   const latest = data.checkpoints[0];
                   rawStatus = latest.status || "Unknown";
                   statusDate = latest.datetime || statusDate;
                   foundData = true;
               } else if (data.shipmentsummary && typeof data.shipmentsummary === 'string' && !data.shipmentsummary.includes('No Data Found')) {
+                  // Fallback to summary string
                   rawStatus = data.shipmentsummary;
                   foundData = true;
               }
@@ -106,9 +108,9 @@ export class TcsAdapter implements CourierAdapter {
       // 3. Map status or default
       const status = this.mapStatus(rawStatus);
 
-      // Clean up raw status for display if it's messy
-      let displayStatus = rawStatus;
-      if (rawStatus.includes('\n')) displayStatus = rawStatus.split('\n')[0]; 
+      // Clean up raw status for display if it's messy (e.g. remove "Current Status: " prefix)
+      let displayStatus = rawStatus.replace('Current Status:', '').trim();
+      if (displayStatus.includes('\n')) displayStatus = displayStatus.split('\n')[0]; 
 
       return {
           tracking_number: trackingNumber,
@@ -244,10 +246,16 @@ export class TcsAdapter implements CourierAdapter {
   private mapStatus(raw: string): OrderStatus {
       const s = String(raw).toLowerCase();
       
+      // Success Check
       if (s === 'ok' || s.includes('delivered') || s === 'shipment delivered') {
+          // If it says "Delivered to Shipper", that's actually a RETURN (Loss)
+          if (s.includes('shipper') || s.includes('origin')) {
+              return OrderStatus.RETURNED;
+          }
           return OrderStatus.DELIVERED;
       }
       
+      // Return Checks
       if (
           s === 'ro' || 
           s.includes('return') || 
@@ -256,7 +264,13 @@ export class TcsAdapter implements CourierAdapter {
           s.includes('refused') ||
           s.includes('returned')
       ) {
-          return OrderStatus.RETURNED;
+          // Distinguish between Active RTO and Final Return
+          // "Returned to Shipper" or "Delivered to Shipper" means it is back in your hand.
+          if (s.includes('shipper') || s.includes('delivered to')) {
+              return OrderStatus.RETURNED;
+          }
+          // "Return to Origin" or "Refused" means it is on the way back.
+          return OrderStatus.RTO_INITIATED;
       }
       
       return OrderStatus.IN_TRANSIT;

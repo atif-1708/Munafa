@@ -49,13 +49,14 @@ const Orders: React.FC<OrdersProps> = ({ orders, onTrackOrder }) => {
   }, [orders, search, dateRange, filter]);
 
   // Identify orders that are eligible for live tracking updates
+  // Updated: Include RTO_INITIATED so we can track when it becomes RETURNED (Closed)
   const trackableTcsOrders = useMemo(() => {
       return orders.filter(o => 
           o.courier === CourierName.TCS && 
           o.tracking_number && 
           o.tracking_number.length > 6 &&
           o.tracking_number !== 'Pending' &&
-          (o.status === OrderStatus.IN_TRANSIT || o.status === OrderStatus.PENDING)
+          (o.status === OrderStatus.IN_TRANSIT || o.status === OrderStatus.PENDING || o.status === OrderStatus.RTO_INITIATED)
       );
   }, [orders]);
 
