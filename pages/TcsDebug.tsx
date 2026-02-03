@@ -1,8 +1,8 @@
 
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { Order, OrderStatus, ShopifyOrder } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { Radio, AlertCircle, Search, HelpCircle, Code, ChevronDown, ChevronUp } from 'lucide-react';
+import { Radio, AlertCircle, Database, CheckCircle2, XCircle, Search, ArrowRight, RefreshCw, FileQuestion } from 'lucide-react';
 
 interface TcsDebugProps {
   orders: Order[];
@@ -10,275 +10,230 @@ interface TcsDebugProps {
 }
 
 const TcsDebug: React.FC<TcsDebugProps> = ({ orders, shopifyOrders }) => {
-  const [showRaw, setShowRaw] = useState(false);
+  const [viewMode, setViewMode] = useState<'matched' | 'raw'>('raw');
+  const [searchTerm, setSearchTerm] = useState('');
 
-  // 1. Orders successfully tracked by App.tsx
+  // 1. Orders successfully tracked by App.tsx logic
   const trackingOrders = orders.filter(o => o.data_source === 'tracking');
-  
-  // 2. Orders that *might* be TCS but weren't picked up
-  const missedOpportunities = useMemo(() => {
-      const alreadyTracked = new Set(orders.map(o => o.shopify_order_number.replace('#','')));
-      
-      const results: { order: ShopifyOrder, reason: string }[] = [];
 
-      // Filter last 120 days to match sync
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - 120);
-
-      shopifyOrders.forEach(s => {
-          // Ignore if already synced
-          if (alreadyTracked.has(s.name.replace('#',''))) return;
-
-          // Check Tag
-          const hasTcsTag = (s.tags || '').toLowerCase().includes('tcs');
-          
-          // Check Fulfillment
-          const tcsFulfillment = s.fulfillments?.find(f => {
-              const company = (f.tracking_company || '').toLowerCase();
-              const num = (f.tracking_number || '').replace(/[^a-zA-Z0-9]/g, '');
-              const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex');
-              if (isOther) return false;
-              return company.includes('tcs') || /^\d{9,16}$/.test(num);
-          });
-
-          // Candidates are those that look like TCS or are tagged TCS
-          if (hasTcsTag || tcsFulfillment) {
-              let reason = "Unknown";
-              
-              const isFulfilled = s.fulfillment_status === 'fulfilled' || s.fulfillment_status === 'partial';
-              const dateOk = new Date(s.created_at) >= cutoffDate;
-
-              if (!dateOk) {
-                  reason = "Order older than 120 days (Sync Limit)";
-              } else if (!isFulfilled) {
-                  reason = "Order status is Unfulfilled";
-              } else {
-                  // It is fulfilled and in date range. Why missed?
-                  if (!s.fulfillments || s.fulfillments.length === 0) {
-                      reason = "No Fulfillment Object found in Shopify Data";
-                  } else {
-                      // Check for ANY tracking number if tagged
-                      const anyTracking = s.fulfillments.find(f => f.tracking_number);
-                      
-                      if (!anyTracking) {
-                          reason = "No Tracking Number entered in Fulfillment";
-                      } else if (!tcsFulfillment && !hasTcsTag) {
-                          // This shouldn't happen due to parent if, but logic check
-                          reason = "Tracking Company not TCS & No Tag";
-                      } else if (hasTcsTag && !tcsFulfillment) {
-                          // Has Tag, but fulfillment analysis failed. 
-                          // If we are here, it means App.tsx logic failed to match the fallback
-                          reason = `Tagged TCS but Tracking Number '${anyTracking.tracking_number}' format rejected or Company '${anyTracking.tracking_company}' is treated as Other.`;
-                      } else {
-                          reason = "Pending Sync (Try refreshing or checking console)";
-                      }
-                  }
-              }
-              
-              results.push({ order: s, reason });
-          }
-      });
-
-      return results.sort((a,b) => new Date(b.order.created_at).getTime() - new Date(a.order.created_at).getTime());
-  }, [shopifyOrders, orders]);
+  // 2. Filter Raw Orders for search
+  const filteredRawOrders = shopifyOrders.filter(o => 
+      o.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (o.tags && o.tags.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
 
   return (
-    <div className="space-y-8 pb-12">
-      <div className="flex items-center gap-3">
-          <div className="bg-red-50 p-2 rounded-lg text-red-600">
-              <Radio size={24} />
-          </div>
-          <div>
-              <h2 className="text-2xl font-bold text-slate-900">TCS Live Tracking Monitor</h2>
-              <p className="text-slate-500 text-sm">
-                  Orders tracked individually via TCS API (bypassing Settlement Report).
-              </p>
-          </div>
-      </div>
-
-      <div className="bg-blue-50 border border-blue-100 p-4 rounded-xl flex gap-3 text-blue-900">
-          <AlertCircle size={20} className="shrink-0 mt-0.5" />
-          <div className="text-sm">
-              <strong>Status:</strong> {trackingOrders.length} orders currently being tracked live. <br/>
-              <strong>Note:</strong> We scan orders from the last 120 days that are tagged <code>Shipped by TCS Courier</code> or have <code>TCS</code> in the tracking company.
-          </div>
-      </div>
-
-      {/* Main Tracked Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
-            <h3 className="font-bold text-slate-700 text-sm">Successfully Synced</h3>
-            <span className="text-xs text-slate-500">{trackingOrders.length} Orders</span>
-        </div>
-        <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50 border-b border-slate-200 uppercase text-xs font-bold text-slate-500">
-                <tr>
-                    <th className="px-6 py-4">Shopify Ref</th>
-                    <th className="px-6 py-4">Tracking Number</th>
-                    <th className="px-6 py-4">Status</th>
-                    <th className="px-6 py-4">Est. COD</th>
-                    <th className="px-6 py-4">Date</th>
-                </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-                {trackingOrders.length > 0 ? trackingOrders.map(o => (
-                    <tr key={o.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-6 py-4 font-medium text-slate-900">
-                            {o.shopify_order_number}
-                        </td>
-                        <td className="px-6 py-4 text-slate-600 font-mono">
-                            {o.tracking_number}
-                        </td>
-                        <td className="px-6 py-4">
-                            <StatusBadge status={o.status} />
-                        </td>
-                        <td className="px-6 py-4 font-medium">
-                            {formatCurrency(o.cod_amount)}
-                        </td>
-                        <td className="px-6 py-4 text-slate-500">
-                            {new Date(o.created_at).toLocaleDateString()}
-                        </td>
-                    </tr>
-                )) : (
-                    <tr>
-                        <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
-                            No orders currently found via live tracking. <br/>
-                            <span className="text-xs">If you expect orders here, check the Diagnostic table below.</span>
-                        </td>
-                    </tr>
-                )}
-            </tbody>
-        </table>
-      </div>
-
-      {/* Diagnostic Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
-            <div className="flex items-center gap-2">
-                <HelpCircle size={16} className="text-orange-500" />
-                <h3 className="font-bold text-slate-700 text-sm">Diagnostic: Potential Missed Orders</h3>
-            </div>
-            <span className="text-xs text-slate-500">{missedOpportunities.length} Candidates</span>
-        </div>
-        <div className="bg-orange-50 px-6 py-3 text-xs text-orange-800 border-b border-orange-100">
-            These orders contain "TCS" in tags or fulfillment but are NOT being tracked. Check the "Reason Skipped" column.
-        </div>
-        <div className="max-h-96 overflow-y-auto">
-            <table className="w-full text-left text-sm">
-                <thead className="bg-slate-50 border-b border-slate-200 uppercase text-xs font-bold text-slate-500 sticky top-0">
-                    <tr>
-                        <th className="px-6 py-3">Order</th>
-                        <th className="px-6 py-3">Date</th>
-                        <th className="px-6 py-3">Tags</th>
-                        <th className="px-6 py-3">Fulfillment Status</th>
-                        <th className="px-6 py-3 text-red-600">Reason Skipped</th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                    {missedOpportunities.length > 0 ? missedOpportunities.map(({ order, reason }) => (
-                        <tr key={order.id} className="hover:bg-slate-50 transition-colors">
-                            <td className="px-6 py-3 font-medium text-slate-900">
-                                {order.name}
-                            </td>
-                            <td className="px-6 py-3 text-slate-600 text-xs">
-                                {new Date(order.created_at).toLocaleDateString()}
-                            </td>
-                            <td className="px-6 py-3">
-                                {order.tags ? (
-                                    <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-xs">
-                                        {order.tags}
-                                    </span>
-                                ) : <span className="text-slate-300">-</span>}
-                            </td>
-                            <td className="px-6 py-3">
-                                <span className={`text-xs font-bold px-2 py-1 rounded ${
-                                    order.fulfillment_status === 'fulfilled' ? 'bg-green-100 text-green-700' : 
-                                    order.fulfillment_status === 'partial' ? 'bg-yellow-100 text-yellow-700' : 'bg-slate-100 text-slate-500'
-                                }`}>
-                                    {order.fulfillment_status || 'Unfulfilled'}
-                                </span>
-                            </td>
-                            <td className="px-6 py-3 text-red-600 font-medium text-xs">
-                                {reason}
-                            </td>
-                        </tr>
-                    )) : (
-                        <tr>
-                            <td colSpan={5} className="px-6 py-8 text-center text-slate-400">
-                                No missed orders detected. All potential TCS orders seem to be syncing correctly.
-                            </td>
-                        </tr>
-                    )}
-                </tbody>
-            </table>
-        </div>
-      </div>
-
-      {/* RAW DATA INSPECTOR */}
-      <div className="border-t border-slate-200 pt-8 mt-8">
-          <button 
-            onClick={() => setShowRaw(!showRaw)}
-            className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-md hover:bg-slate-800 transition-colors mx-auto"
-          >
-              <Code size={16} />
-              {showRaw ? 'Hide Raw Data Inspector' : 'Show Raw Data Inspector'}
-              {showRaw ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          </button>
-
-          {showRaw && (
-              <div className="mt-6 bg-slate-100 p-4 rounded-xl border border-slate-300">
-                  <h3 className="font-bold text-slate-900 mb-2">Raw Shopify Data Inspector (Last 20 Fulfilled Orders)</h3>
-                  <p className="text-xs text-slate-500 mb-4">
-                      This table shows the raw data coming from Shopify WITHOUT any filtering. Use this to verify if Tags or Tracking Company names are matching what you expect.
+    <div className="space-y-6 pb-12">
+      {/* Header & Health Check */}
+      <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+              <div>
+                  <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                      <Radio className="text-red-600" /> TCS Integration Monitor
+                  </h2>
+                  <p className="text-slate-500 text-sm mt-1">
+                      Diagnose why orders are appearing (or missing) from the tracker.
                   </p>
-                  
-                  {shopifyOrders.length === 0 ? (
-                      <div className="bg-red-100 text-red-700 p-4 rounded-lg font-bold text-center border border-red-200">
-                          CRITICAL: No Shopify Orders found in memory. Please check the Integrations page and ensure Shopify is connected and syncing.
-                      </div>
-                  ) : (
-                      <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-x-auto">
-                          <table className="w-full text-left text-xs font-mono">
-                              <thead className="bg-slate-200 text-slate-700 border-b border-slate-300">
-                                  <tr>
-                                      <th className="px-4 py-2">Order</th>
-                                      <th className="px-4 py-2">Date</th>
-                                      <th className="px-4 py-2">Tags (Raw)</th>
-                                      <th className="px-4 py-2">Fulfillment Data</th>
-                                  </tr>
-                              </thead>
-                              <tbody className="divide-y divide-slate-100">
-                                  {shopifyOrders
-                                    .filter(o => o.fulfillment_status === 'fulfilled' || o.fulfillment_status === 'partial')
-                                    .slice(0, 20)
-                                    .map(o => (
-                                      <tr key={o.id} className="hover:bg-slate-50">
-                                          <td className="px-4 py-2 font-bold">{o.name}</td>
-                                          <td className="px-4 py-2">{new Date(o.created_at).toLocaleDateString()}</td>
-                                          <td className="px-4 py-2 text-blue-600 break-words max-w-xs">
-                                              {o.tags ? o.tags : <span className="text-slate-300">No Tags</span>}
-                                          </td>
-                                          <td className="px-4 py-2 text-slate-600">
-                                              {o.fulfillments && o.fulfillments.length > 0 ? (
-                                                  o.fulfillments.map((f, i) => (
-                                                      <div key={i} className="mb-1 p-1 bg-slate-50 rounded border border-slate-100">
-                                                          <span className="block font-bold">Company: "{f.tracking_company}"</span>
-                                                          <span className="block">Track #: {f.tracking_number}</span>
-                                                      </div>
-                                                  ))
-                                              ) : (
-                                                  <span className="text-red-500">Empty Fulfillments Array</span>
-                                              )}
-                                          </td>
-                                      </tr>
-                                  ))}
-                              </tbody>
-                          </table>
-                      </div>
-                  )}
+              </div>
+              <div className="flex items-center gap-4 bg-slate-50 px-4 py-2 rounded-lg border border-slate-100">
+                  <div className="text-center">
+                      <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Total Fetched</p>
+                      <p className={`text-xl font-bold ${shopifyOrders.length === 0 ? 'text-red-600' : 'text-slate-900'}`}>
+                          {shopifyOrders.length}
+                      </p>
+                  </div>
+                  <div className="w-px h-8 bg-slate-200"></div>
+                  <div className="text-center">
+                      <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Matched TCS</p>
+                      <p className="text-xl font-bold text-blue-600">
+                          {trackingOrders.length}
+                      </p>
+                  </div>
+              </div>
+          </div>
+
+          {shopifyOrders.length === 0 && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex gap-3 text-red-800 mb-4">
+                  <AlertCircle className="shrink-0" />
+                  <div>
+                      <h4 className="font-bold text-sm">No Data Received from Shopify</h4>
+                      <p className="text-xs mt-1">
+                          The app has fetched <strong>0 orders</strong>. This means the connection to Shopify is active but returning empty lists, or the connection failed silently.
+                      </p>
+                      <ul className="list-disc list-inside text-xs mt-2 space-y-1">
+                          <li>Check <strong>Integrations</strong> page: Is the Access Token valid?</li>
+                          <li>Are there orders in the last <strong>120 days</strong>?</li>
+                          <li>Does the token have <code>read_orders</code> permission?</li>
+                      </ul>
+                  </div>
               </div>
           )}
+
+          {/* View Toggles */}
+          <div className="flex gap-2 border-b border-slate-200">
+              <button 
+                  onClick={() => setViewMode('raw')}
+                  className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+                      viewMode === 'raw' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-700'
+                  }`}
+              >
+                  <Database size={16} /> All Fetched Orders (Raw)
+              </button>
+              <button 
+                  onClick={() => setViewMode('matched')}
+                  className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+                      viewMode === 'matched' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'
+                  }`}
+              >
+                  <CheckCircle2 size={16} /> Matched TCS Orders
+              </button>
+          </div>
       </div>
+
+      {/* --- VIEW: ALL RAW ORDERS --- */}
+      {viewMode === 'raw' && (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+                  <div className="flex items-center gap-2 text-sm text-slate-600">
+                      <FileQuestion size={16} />
+                      <span>Showing all data from Shopify API (Unfiltered)</span>
+                  </div>
+                  <div className="relative">
+                      <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
+                      <input 
+                          type="text" 
+                          placeholder="Search Order # or Tags..."
+                          value={searchTerm}
+                          onChange={(e) => setSearchTerm(e.target.value)}
+                          className="pl-9 pr-4 py-2 border rounded-lg text-xs w-64 focus:ring-2 focus:ring-slate-500 outline-none"
+                      />
+                  </div>
+              </div>
+              <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs font-mono">
+                      <thead className="bg-slate-100 text-slate-500 uppercase font-bold border-b border-slate-200">
+                          <tr>
+                              <th className="px-4 py-3">Order</th>
+                              <th className="px-4 py-3">Created At</th>
+                              <th className="px-4 py-3">Fulfillment</th>
+                              <th className="px-4 py-3">Tags</th>
+                              <th className="px-4 py-3">Tracking Data</th>
+                              <th className="px-4 py-3">System Analysis</th>
+                          </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                          {filteredRawOrders.slice(0, 100).map(o => {
+                              const hasTcsTag = (o.tags || '').toLowerCase().includes('tcs');
+                              const fulfillment = o.fulfillments?.[0];
+                              const company = fulfillment?.tracking_company?.toLowerCase() || '';
+                              const trackNo = fulfillment?.tracking_number || '';
+                              
+                              let analysis = "Ignored";
+                              let color = "text-slate-400";
+
+                              if (o.fulfillment_status !== 'fulfilled' && o.fulfillment_status !== 'partial') {
+                                  analysis = "Status not Fulfilled";
+                              } else if (hasTcsTag) {
+                                  analysis = "Candidate (Tag Match)";
+                                  color = "text-green-600 font-bold";
+                              } else if (company.includes('tcs')) {
+                                  analysis = "Candidate (Company Match)";
+                                  color = "text-green-600 font-bold";
+                              } else if (trackNo && /^\d{9,16}$/.test(trackNo)) {
+                                  analysis = "Candidate (Format Match)";
+                                  color = "text-blue-600 font-bold";
+                              } else {
+                                  analysis = "No Match Criteria";
+                              }
+
+                              return (
+                                  <tr key={o.id} className="hover:bg-slate-50">
+                                      <td className="px-4 py-3 font-bold text-slate-800">{o.name}</td>
+                                      <td className="px-4 py-3 text-slate-500">{new Date(o.created_at).toLocaleDateString()}</td>
+                                      <td className="px-4 py-3">
+                                          <span className={`px-2 py-1 rounded ${
+                                              o.fulfillment_status === 'fulfilled' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+                                          }`}>
+                                              {o.fulfillment_status || 'Unfulfilled'}
+                                          </span>
+                                      </td>
+                                      <td className="px-4 py-3">
+                                          {o.tags ? (
+                                              <span className="bg-slate-100 px-2 py-1 rounded break-words max-w-[150px] block">
+                                                  {o.tags}
+                                              </span>
+                                          ) : <span className="text-slate-300">-</span>}
+                                      </td>
+                                      <td className="px-4 py-3">
+                                          {fulfillment ? (
+                                              <div className="flex flex-col gap-1">
+                                                  <span className="font-bold">Co: {fulfillment.tracking_company || 'N/A'}</span>
+                                                  <span>#: {fulfillment.tracking_number || 'N/A'}</span>
+                                              </div>
+                                          ) : <span className="text-red-400">No Fulfillment Obj</span>}
+                                      </td>
+                                      <td className={`px-4 py-3 ${color}`}>
+                                          {analysis}
+                                      </td>
+                                  </tr>
+                              );
+                          })}
+                          {filteredRawOrders.length === 0 && (
+                              <tr>
+                                  <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
+                                      {shopifyOrders.length === 0 ? "No orders fetched from Shopify API." : "No orders match search."}
+                                  </td>
+                              </tr>
+                          )}
+                      </tbody>
+                  </table>
+              </div>
+          </div>
+      )}
+
+      {/* --- VIEW: MATCHED ORDERS --- */}
+      {viewMode === 'matched' && (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+              <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 border-b border-slate-200 uppercase text-xs font-bold text-slate-500">
+                      <tr>
+                          <th className="px-6 py-4">Shopify Ref</th>
+                          <th className="px-6 py-4">Tracking Number</th>
+                          <th className="px-6 py-4">Status</th>
+                          <th className="px-6 py-4">Est. COD</th>
+                          <th className="px-6 py-4">Date</th>
+                      </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                      {trackingOrders.length > 0 ? trackingOrders.map(o => (
+                          <tr key={o.id} className="hover:bg-slate-50 transition-colors">
+                              <td className="px-6 py-4 font-medium text-slate-900">
+                                  {o.shopify_order_number}
+                              </td>
+                              <td className="px-6 py-4 text-slate-600 font-mono">
+                                  {o.tracking_number}
+                              </td>
+                              <td className="px-6 py-4">
+                                  <StatusBadge status={o.status} />
+                              </td>
+                              <td className="px-6 py-4 font-medium">
+                                  {formatCurrency(o.cod_amount)}
+                              </td>
+                              <td className="px-6 py-4 text-slate-500">
+                                  {new Date(o.created_at).toLocaleDateString()}
+                              </td>
+                          </tr>
+                      )) : (
+                          <tr>
+                              <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
+                                  No orders currently matched. Check the Raw Data Inspector tab to see why.
+                              </td>
+                          </tr>
+                      )}
+                  </tbody>
+              </table>
+          </div>
+      )}
     </div>
   );
 };
