@@ -85,21 +85,16 @@ export class TcsAdapter implements CourierAdapter {
   async testConnection(config: IntegrationConfig): Promise<boolean> {
       try {
           const token = config.api_token;
-          const accountNo = config.merchant_id?.trim();
 
           if (!token) throw new Error("API Token is required.");
-          // NOTE: Account Number is now Optional based on user feedback
 
           const today = new Date().toISOString().split('T')[0];
           
           for (const baseUrl of this.BASE_URLS) {
               const endpoint = `${baseUrl}/ecom/api/Payment/detail`;
-              let query = `?accesstoken=${encodeURIComponent(token)}&fromdate=${today}&todate=${today}`;
+              // NOTE: Removed customerno as it's not for account auth
+              const query = `?accesstoken=${encodeURIComponent(token)}&fromdate=${today}&todate=${today}`;
               
-              if (accountNo) {
-                  query += `&customerno=${accountNo}`;
-              }
-
               const url = endpoint + query;
 
               try {
@@ -131,7 +126,6 @@ export class TcsAdapter implements CourierAdapter {
    */
   async fetchRecentOrders(config: IntegrationConfig): Promise<Order[]> {
       const token = config.api_token;
-      const accountNo = config.merchant_id?.trim();
       
       if (!token) {
           console.error("Critical: Missing TCS Token.");
@@ -152,12 +146,8 @@ export class TcsAdapter implements CourierAdapter {
           // Endpoint from PDF Page 22
           const endpoint = `${baseUrl}/ecom/api/Payment/detail`;
           
-          // Construct Query Params
-          let query = `?accesstoken=${encodeURIComponent(token)}&fromdate=${fromDate}&todate=${toDate}`;
-          
-          if (accountNo) {
-              query += `&customerno=${accountNo}`;
-          }
+          // Construct Query Params (No customerno)
+          const query = `?accesstoken=${encodeURIComponent(token)}&fromdate=${fromDate}&todate=${toDate}`;
           
           try {
               const res = await this.fetchUniversal(endpoint + query, { method: 'GET' });
