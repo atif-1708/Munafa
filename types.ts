@@ -115,6 +115,7 @@ export interface ShopifyOrder {
   total_price: string;
   line_items: ShopifyLineItem[];
   fulfillments?: ShopifyFulfillment[]; // Added for Tracking Sync
+  tags?: string; // Comma separated tags
   customer?: {
       first_name: string;
       city: string;

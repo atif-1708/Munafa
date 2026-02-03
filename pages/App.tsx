@@ -258,7 +258,7 @@ const App: React.FC = () => {
             }
         }
 
-        // G. Backfill TCS Orders from Shopify (ROBUST: Works without TCS Token)
+        // G. Backfill TCS Orders from Shopify (ROBUST: Works without TCS Token & Checks Tags)
         if (rawShopifyOrders.length > 0) {
              // 1. Define window (Last 60 Days)
              const cutoffDate = new Date();
@@ -278,7 +278,12 @@ const App: React.FC = () => {
                  
                  if (!isUnmapped || !isFulfilled) return false;
 
-                 // Robust TCS Detection
+                 // --- Robust TCS Detection Logic ---
+                 // A. Check Tags
+                 const tags = (s.tags || '').toLowerCase();
+                 if (tags.includes('tcs')) return true;
+
+                 // B. Check Fulfillments
                  return s.fulfillments?.some(f => {
                      const company = f.tracking_company?.toLowerCase() || '';
                      const num = (f.tracking_number || '').replace(/[^a-zA-Z0-9]/g, '');
@@ -298,11 +303,18 @@ const App: React.FC = () => {
                  
                  // 3. Process Candidates
                  const results = await Promise.all(candidates.map(async (sOrder) => {
-                     // Find the exact fulfillment that triggered the inclusion
+                     // Check if Tag implies TCS
+                     const hasTcsTag = (sOrder.tags || '').toLowerCase().includes('tcs');
+
+                     // Find the most likely TCS fulfillment
                      const ff = sOrder.fulfillments?.find(f => {
                          const company = f.tracking_company?.toLowerCase() || '';
                          const num = (f.tracking_number || '').replace(/[^a-zA-Z0-9]/g, '');
                          const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('callcourier') || company.includes('mnp');
+                         
+                         // If tagged as TCS, accept any non-other fulfillment that has a tracking number
+                         if (hasTcsTag && !isOther && f.tracking_number) return true;
+
                          return !isOther && (company.includes('tcs') || /^\d{9,16}$/.test(num));
                      });
 

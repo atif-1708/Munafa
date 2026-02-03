@@ -19,8 +19,8 @@ export class ShopifyAdapter {
     const historyWindow = new Date();
     historyWindow.setDate(historyWindow.getDate() - 120);
     
-    // Added 'fulfillments' to fields
-    const fields = "id,name,created_at,financial_status,fulfillment_status,cancel_reason,total_price,line_items,customer,fulfillments";
+    // Added 'fulfillments' and 'tags' to fields
+    const fields = "id,name,created_at,financial_status,fulfillment_status,cancel_reason,total_price,line_items,customer,fulfillments,tags";
     let nextUrl = `https://${domain}/admin/api/2023-10/orders.json?status=any&limit=250&created_at_min=${historyWindow.toISOString()}&fields=${fields}`;
 
     let allOrders: ShopifyOrder[] = [];
@@ -169,6 +169,7 @@ export class ShopifyAdapter {
               fulfillment_status: i % 4 === 0 ? 'fulfilled' : null,
               cancel_reason: i === 5 ? 'customer' : null,
               total_price: '2500.00',
+              tags: i % 2 === 0 ? 'Shipped by TCS Courier' : '', // Add some mock tags
               line_items: [{
                   id: 999000 + i, title: 'Demo Product', quantity: 1, sku: 'DEMO-001', price: '2500.00', variant_id: 1, product_id: 101
               }],
