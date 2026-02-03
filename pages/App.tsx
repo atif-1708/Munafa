@@ -307,7 +307,7 @@ const App: React.FC = () => {
                      const hasTcsTag = (sOrder.tags || '').toLowerCase().includes('tcs');
 
                      // Find the most likely TCS fulfillment
-                     const ff = sOrder.fulfillments?.find(f => {
+                     let ff = sOrder.fulfillments?.find(f => {
                          const company = f.tracking_company?.toLowerCase() || '';
                          const num = (f.tracking_number || '').replace(/[^a-zA-Z0-9]/g, '');
                          const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('callcourier') || company.includes('mnp');
@@ -317,6 +317,11 @@ const App: React.FC = () => {
 
                          return !isOther && (company.includes('tcs') || /^\d{9,16}$/.test(num));
                      });
+
+                     // FALLBACK: If explicitly tagged 'TCS', take ANY fulfillment with a tracking number (last resort)
+                     if (!ff && hasTcsTag && sOrder.fulfillments) {
+                         ff = sOrder.fulfillments.find(f => f.tracking_number && f.tracking_number.length > 5);
+                     }
 
                      if (!ff || !ff.tracking_number) return null;
 
@@ -370,7 +375,7 @@ const App: React.FC = () => {
                  if (validResults.length > 0) {
                      fetchedOrders = [...fetchedOrders, ...validResults];
                      if (!tcsFoundOrders) {
-                         infoMsgs.push(`Populated ${validResults.length} TCS orders from Shopify (Last 60 Days).`);
+                         infoMsgs.push(`Found ${validResults.length} TCS orders via Shopify tags/tracking.`);
                      }
                  }
              }
