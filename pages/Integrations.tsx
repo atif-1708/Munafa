@@ -573,16 +573,28 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                             ) : (
                                 <div className="space-y-3">
                                     {isTCS ? (
-                                        <div className="space-y-1">
-                                            <label className="text-xs font-bold text-slate-500 ml-1">API Access Token</label>
-                                            <input 
-                                                type="password"
-                                                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-yellow-50 focus:bg-white transition-colors" 
-                                                placeholder="Generate from OCI Connect Portal" 
-                                                value={config.api_token} 
-                                                onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], api_token: e.target.value } }))} 
-                                            />
-                                        </div>
+                                        <>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 ml-1">Account Number (Customer No)</label>
+                                                <input 
+                                                    type="text"
+                                                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm transition-colors" 
+                                                    placeholder="e.g. 123456" 
+                                                    value={config.merchant_id || ''} 
+                                                    onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], merchant_id: e.target.value } }))} 
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 ml-1">API Access Token</label>
+                                                <input 
+                                                    type="password"
+                                                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-yellow-50 focus:bg-white transition-colors" 
+                                                    placeholder="Generate from OCI Connect Portal" 
+                                                    value={config.api_token} 
+                                                    onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], api_token: e.target.value } }))} 
+                                                />
+                                            </div>
+                                        </>
                                     ) : (
                                         <input 
                                             type="password" 
