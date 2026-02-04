@@ -397,15 +397,23 @@ const App: React.FC = () => {
                                 tax_amount: 0,
                                 data_source: 'tracking', 
                                 courier_raw_status: rawStatusText, // Save the auto-fetched status
-                                items: safeItems.map(li => ({
-                                    product_id: 'unknown',
-                                    quantity: li.quantity,
-                                    sale_price: parseFloat(li.price || '0'),
-                                    product_name: li.title || 'Unknown Product',
-                                    sku: li.sku || 'unknown',
-                                    variant_fingerprint: li.sku || 'unknown',
-                                    cogs_at_time_of_order: 0
-                                }))
+                                items: safeItems.map(li => {
+                                    // Extract variant name if present in title (common in some Shopify setups) OR explicitly from variant_title if we had it mapped
+                                    // Note: ShopifyLineItem interface has 'title' and 'sku'.
+                                    // Often title includes variant or it's separate. 
+                                    // Ideally, we should concatenate title + variant_title if available in future, but current types.ts only has title.
+                                    // We will stick to title, but ensure we use it fully.
+                                    
+                                    return {
+                                        product_id: 'unknown',
+                                        quantity: li.quantity,
+                                        sale_price: parseFloat(li.price || '0'),
+                                        product_name: li.title || 'Unknown Product',
+                                        sku: li.sku || 'unknown',
+                                        variant_fingerprint: li.sku || 'unknown',
+                                        cogs_at_time_of_order: 0
+                                    }
+                                })
                             };
                             return newOrder;
                          } catch (err) {
@@ -452,7 +460,7 @@ const App: React.FC = () => {
                         id: uniqueId,
                         shopify_id: 'unknown',
                         title: item.product_name,
-                        sku: fingerprint, 
+                        sku: item.sku !== 'unknown' ? item.sku : fingerprint, 
                         variant_fingerprint: fingerprint,
                         image_url: '',
                         current_cogs: 0,

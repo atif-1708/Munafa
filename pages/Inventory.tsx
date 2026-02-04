@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Product, Order, ShopifyOrder, OrderStatus } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { Edit2, X, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, Folder, Calendar, Search, History as HistoryIcon, TrendingUp, Save } from 'lucide-react';
+import { Edit2, X, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, Folder, Calendar, Search, History as HistoryIcon, TrendingUp, Save, Plus, Trash2, Tag, AlertCircle } from 'lucide-react';
 
 interface InventoryProps {
   products: Product[];
@@ -18,6 +18,10 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
   const [selectedAliasToAdd, setSelectedAliasToAdd] = useState('');
+  
+  // Cost History State (Local to Modal)
+  const [newRuleDate, setNewRuleDate] = useState('');
+  const [newRuleCost, setNewRuleCost] = useState('');
   
   // Group Logic State
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
@@ -80,24 +84,58 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
   const isGroupEdit = !!selectedGroup;
 
   // --- Handlers ---
-  const handleSaveCost = async (newCost: number) => {
+  const handleUpdateBaseCost = async (newCost: number) => {
     if (selectedProduct) {
-        // Add to history
-        const now = new Date().toISOString();
-        const history = selectedProduct.cost_history || [];
-        const newHistory = [...history, { date: now, cogs: selectedProduct.current_cogs || 0 }]; // Save previous cost to history
-
-        const updated = { ...selectedProduct, current_cogs: newCost, cost_history: newHistory };
+        const updated = { ...selectedProduct, current_cogs: newCost };
         await handleUpdateAndSave([updated]);
     } else if (selectedGroup) {
-        const now = new Date().toISOString();
-        const updatedItems = selectedGroup.items.map(item => {
-            const history = item.cost_history || [];
-            const newHistory = [...history, { date: now, cogs: item.current_cogs || 0 }];
-            return { ...item, current_cogs: newCost, cost_history: newHistory };
-        });
+        const updatedItems = selectedGroup.items.map(item => ({ ...item, current_cogs: newCost }));
         await handleUpdateAndSave(updatedItems);
     }
+  };
+
+  const handleAddHistoryRule = async () => {
+      if (!newRuleDate || !newRuleCost || !editTarget) return;
+      const cost = parseFloat(newRuleCost);
+      if (isNaN(cost)) return;
+
+      const newEntry = { date: newRuleDate, cogs: cost };
+
+      if (selectedProduct) {
+          const currentHistory = selectedProduct.cost_history || [];
+          // Add new entry and sort
+          const updatedHistory = [...currentHistory, newEntry].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+          
+          const updated = { ...selectedProduct, cost_history: updatedHistory };
+          await handleUpdateAndSave([updated]);
+      } else if (selectedGroup) {
+          const updatedItems = selectedGroup.items.map(item => {
+              const currentHistory = item.cost_history || [];
+              const updatedHistory = [...currentHistory, newEntry].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+              return { ...item, cost_history: updatedHistory };
+          });
+          await handleUpdateAndSave(updatedItems);
+      }
+      
+      setNewRuleDate('');
+      setNewRuleCost('');
+  };
+
+  const handleDeleteHistoryRule = async (index: number) => {
+      if (selectedProduct) {
+          const updatedHistory = [...(selectedProduct.cost_history || [])];
+          updatedHistory.splice(index, 1);
+          const updated = { ...selectedProduct, cost_history: updatedHistory };
+          await handleUpdateAndSave([updated]);
+      } else if (selectedGroup) {
+          // For groups, we remove the index from ALL items (assuming sync)
+          const updatedItems = selectedGroup.items.map(item => {
+              const hist = [...(item.cost_history || [])];
+              if(index < hist.length) hist.splice(index, 1);
+              return { ...item, cost_history: hist };
+          });
+          await handleUpdateAndSave(updatedItems);
+      }
   };
 
   const handleUpdateAndSave = async (updatedProducts: Product[]) => {
@@ -195,7 +233,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
       {/* Toolbar */}
       <div className="flex flex-col sm:flex-row gap-4 justify-between items-center bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
           <div className="relative w-full sm:w-96">
-              <input type="text" placeholder="Search products..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-brand-500 outline-none" />
+              <input type="text" placeholder="Search product title or SKU..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-brand-500 outline-none" />
               <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
           </div>
           {selectedIds.size > 0 && (
@@ -211,7 +249,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
               <thead className="bg-slate-50 border-b border-slate-200 text-xs uppercase font-bold text-slate-500">
                   <tr>
                       <th className="px-4 py-3 w-10"></th>
-                      <th className="px-4 py-3 w-[60%]">Product</th>
+                      <th className="px-4 py-3 w-[60%]">Product Details</th>
                       <th className="px-4 py-3 text-right">Current Cost (COGS)</th>
                       <th className="px-4 py-3 w-16 text-center">Edit</th>
                   </tr>
@@ -241,7 +279,10 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                   return (
                                   <tr key={item.id} className="hover:bg-slate-50">
                                       <td className="px-4 py-3 pl-8"><button onClick={(e) => toggleSelect(item.id, e)}>{selectedIds.has(item.id) ? <CheckSquare size={16} className="text-brand-600" /> : <Square size={16} className="text-slate-300" />}</button></td>
-                                      <td className="px-4 py-3 pl-12 text-slate-600 text-sm truncate max-w-[300px]">{item.title}</td>
+                                      <td className="px-4 py-3 pl-12">
+                                          <div className="text-slate-700 text-sm font-medium">{item.title}</div>
+                                          {item.sku && item.sku !== 'unknown' && <div className="text-xs text-slate-400 font-mono mt-0.5 flex items-center gap-1"><Tag size={10}/> {item.sku}</div>}
+                                      </td>
                                       <td className="px-4 py-3 text-right">
                                           {item.current_cogs === 0 ? <span className="text-red-500 font-bold text-xs">Set Cost</span> : <span className="font-medium">{formatCurrency(item.current_cogs)}</span>}
                                       </td>
@@ -257,9 +298,16 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                       <tr key={item.id} className="hover:bg-slate-50 transition-colors">
                           <td className="px-4 py-3"><button onClick={(e) => toggleSelect(item.id, e)}>{selectedIds.has(item.id) ? <CheckSquare size={18} className="text-brand-600" /> : <Square size={18} className="text-slate-300" />}</button></td>
                           <td className="px-4 py-3">
-                              <div className="flex items-center gap-2">
-                                  <Package size={16} className="text-slate-400" />
-                                  <span className="font-medium text-slate-700 truncate max-w-[450px]">{item.title}</span>
+                              <div className="flex items-start gap-3">
+                                  <div className="mt-1"><Package size={16} className="text-slate-400" /></div>
+                                  <div>
+                                      <div className="font-medium text-slate-700">{item.title}</div>
+                                      {item.sku && item.sku !== 'unknown' && (
+                                          <div className="text-xs text-slate-400 font-mono mt-0.5 flex items-center gap-1">
+                                              <Tag size={10}/> {item.sku}
+                                          </div>
+                                      )}
+                                  </div>
                               </div>
                           </td>
                           <td className="px-4 py-3 text-right">
@@ -300,63 +348,110 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                               {isGroupEdit ? <Folder size={20} className="text-indigo-600"/> : <Package size={20} className="text-slate-600"/>}
                               <h3 className="text-xl font-bold text-slate-900">{isGroupEdit ? selectedGroup?.name : selectedProduct?.title}</h3>
                           </div>
-                          <p className="text-sm text-slate-500 font-mono">{isGroupEdit ? `${selectedGroup?.items.length} Variants` : selectedProduct?.sku}</p>
+                          <p className="text-sm text-slate-500 font-mono flex items-center gap-2">
+                              {isGroupEdit ? `${selectedGroup?.items.length} Variants` : (selectedProduct?.sku || 'No SKU')}
+                          </p>
                       </div>
                       <button onClick={() => { setSelectedProduct(null); setSelectedGroup(null); }} className="text-slate-400 hover:text-slate-600"><X size={24} /></button>
                   </div>
 
                   {/* Modal Content */}
                   <div className="flex-1 overflow-y-auto p-6 space-y-8">
-                      {/* Section 1: Cost Management */}
-                      <section className="bg-white rounded-xl border border-slate-100 p-5 shadow-sm">
-                          <h4 className="text-sm font-bold text-slate-800 uppercase tracking-wide mb-4 flex items-center gap-2">
-                              <TrendingUp size={16} className="text-brand-600" /> Current Unit Cost (COGS)
+                      {/* Section 1: Base Cost */}
+                      <section className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm relative overflow-hidden">
+                          <div className="absolute top-0 right-0 p-2 opacity-10"><TrendingUp size={100} className="text-brand-600"/></div>
+                          <h4 className="text-sm font-bold text-slate-800 uppercase tracking-wide mb-4 flex items-center gap-2 relative z-10">
+                              Current General Price
                           </h4>
-                          <div className="flex gap-4 items-end">
+                          <div className="flex gap-4 items-end relative z-10">
                               <div className="flex-1">
-                                  <label className="block text-xs font-medium text-slate-500 mb-1">Cost Price (PKR)</label>
+                                  <label className="block text-xs font-medium text-slate-500 mb-1">Default Cost (PKR)</label>
                                   <div className="relative">
                                       <input 
                                         type="number" 
                                         className="w-full px-4 py-3 border rounded-lg text-xl font-bold text-slate-900 focus:ring-2 focus:ring-brand-500 outline-none" 
                                         value={editTarget.current_cogs || ''} 
-                                        onChange={(e) => handleSaveCost(parseFloat(e.target.value) || 0)} 
+                                        onChange={(e) => handleUpdateBaseCost(parseFloat(e.target.value) || 0)} 
                                         placeholder="0"
                                       />
                                       <div className="absolute right-3 top-3.5 text-slate-400 text-sm font-medium">PKR</div>
                                   </div>
                               </div>
-                              <div className="pb-2 text-xs text-slate-400 max-w-[200px] leading-tight">
-                                  Updated cost will apply to future orders and profit calculations.
+                              <div className="pb-2 text-xs text-slate-500 max-w-[250px] leading-tight">
+                                  This price is used for all orders <strong>unless</strong> a specific date rule below overrides it.
                               </div>
                           </div>
                       </section>
 
-                      {/* Section 2: Cost History */}
+                      {/* Section 2: Date-Based History Rules */}
                       <section>
-                          <h4 className="text-sm font-bold text-slate-800 uppercase tracking-wide mb-4 flex items-center gap-2">
-                              <HistoryIcon size={16} className="text-slate-500" /> Cost History
-                          </h4>
-                          <div className="bg-slate-50 rounded-lg border border-slate-200 overflow-hidden">
+                          <div className="flex justify-between items-center mb-4">
+                              <h4 className="text-sm font-bold text-slate-800 uppercase tracking-wide flex items-center gap-2">
+                                  <HistoryIcon size={16} className="text-slate-500" /> Historical Cost Rules
+                              </h4>
+                          </div>
+                          
+                          {/* Add Rule Form */}
+                          <div className="flex gap-3 items-end mb-4 bg-slate-50 p-4 rounded-lg border border-slate-200">
+                              <div className="flex-1">
+                                  <label className="block text-xs font-bold text-slate-500 mb-1">Start Date</label>
+                                  <input 
+                                      type="date" 
+                                      className="w-full px-3 py-2 border rounded-lg text-sm"
+                                      value={newRuleDate}
+                                      onChange={(e) => setNewRuleDate(e.target.value)}
+                                  />
+                              </div>
+                              <div className="flex-1">
+                                  <label className="block text-xs font-bold text-slate-500 mb-1">Cost (PKR)</label>
+                                  <input 
+                                      type="number" 
+                                      className="w-full px-3 py-2 border rounded-lg text-sm"
+                                      placeholder="e.g. 1200"
+                                      value={newRuleCost}
+                                      onChange={(e) => setNewRuleCost(e.target.value)}
+                                  />
+                              </div>
+                              <button 
+                                  onClick={handleAddHistoryRule}
+                                  disabled={!newRuleDate || !newRuleCost}
+                                  className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800 disabled:opacity-50 flex items-center gap-2"
+                              >
+                                  <Plus size={16} /> Add Rule
+                              </button>
+                          </div>
+
+                          {/* Rule List */}
+                          <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
                               <table className="w-full text-left text-sm">
                                   <thead className="bg-slate-100 text-xs font-bold text-slate-500">
                                       <tr>
-                                          <th className="px-4 py-2">Date Changed</th>
-                                          <th className="px-4 py-2 text-right">Cost Recorded</th>
+                                          <th className="px-4 py-2">Effective Date</th>
+                                          <th className="px-4 py-2">Cost (COGS)</th>
+                                          <th className="px-4 py-2 text-right">Action</th>
                                       </tr>
                                   </thead>
-                                  <tbody className="divide-y divide-slate-200">
+                                  <tbody className="divide-y divide-slate-100">
                                       {editTarget.cost_history && editTarget.cost_history.length > 0 ? (
-                                          [...editTarget.cost_history].reverse().map((h, idx) => (
-                                              <tr key={idx}>
-                                                  <td className="px-4 py-2 text-slate-600">{new Date(h.date).toLocaleDateString()}</td>
-                                                  <td className="px-4 py-2 text-right font-medium text-slate-800">{formatCurrency(h.cogs)}</td>
+                                          // Display sorted by date descending (newest first)
+                                          [...editTarget.cost_history].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((h, idx) => (
+                                              <tr key={idx} className="hover:bg-slate-50">
+                                                  <td className="px-4 py-2 text-slate-700">From <strong>{new Date(h.date).toLocaleDateString()}</strong></td>
+                                                  <td className="px-4 py-2 font-medium text-slate-900">{formatCurrency(h.cogs)}</td>
+                                                  <td className="px-4 py-2 text-right">
+                                                      <button 
+                                                          onClick={() => handleDeleteHistoryRule(idx)}
+                                                          className="text-red-400 hover:text-red-600 p-1"
+                                                      >
+                                                          <Trash2 size={14} />
+                                                      </button>
+                                                  </td>
                                               </tr>
                                           ))
                                       ) : (
                                           <tr>
-                                              <td colSpan={2} className="px-4 py-4 text-center text-slate-400 text-xs italic">
-                                                  No history available.
+                                              <td colSpan={3} className="px-4 py-6 text-center text-slate-400 text-xs italic">
+                                                  No history rules set. Uses default cost for all dates.
                                               </td>
                                           </tr>
                                       )}
