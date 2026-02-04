@@ -190,18 +190,26 @@ export class TcsAdapter implements CourierAdapter {
       }
       
       // Explicit In Transit Checks (to distinguish from Unknown/Booked)
+      // Expanded to capture all movement variations
       if (
           s.includes('transit') || 
           s.includes('departed') || 
           s.includes('arrived') || 
           s.includes('out for delivery') ||
           s.includes('received at') ||
-          s.includes('forwarded')
+          s.includes('forwarded') ||
+          s.includes('picked') || 
+          s.includes('collect') ||
+          s.includes('processing') ||
+          s.includes('warehouse') ||
+          s.includes('dispatch') ||
+          s.includes('hub') ||
+          s.includes('station')
       ) {
           return OrderStatus.IN_TRANSIT;
       }
       
-      // Default fallback for Unknown / Booked
+      // Default fallback for "Unknown", "Booked", "Manifested" or empty status
       return OrderStatus.BOOKED;
   }
 
