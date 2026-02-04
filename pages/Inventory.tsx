@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Product, Order, ShopifyOrder } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { PackageSearch, History, Edit2, Plus, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, Link as LinkIcon, Sparkles, Check, Settings, AlertCircle } from 'lucide-react';
+import { PackageSearch, History, Edit2, Plus, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, Link as LinkIcon, Sparkles, Check, Settings, AlertCircle, TrendingUp, ShoppingBag } from 'lucide-react';
 
 interface InventoryProps {
   products: Product[];
@@ -23,7 +23,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
   const [dateRange, setDateRange] = useState(() => {
     const end = new Date();
     const start = new Date();
-    start.setDate(end.getDate() - 60);
+    start.setDate(end.getDate() - 30); // Default 30 days for relevance
     return {
       start: start.toISOString().split('T')[0],
       end: end.toISOString().split('T')[0]
@@ -61,57 +61,72 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
       }
   }, [products, selectedProduct, selectedGroup]); 
 
-  const filteredProducts = useMemo(() => {
-      // 1. Identify active product IDs based on Date Range
-      const start = new Date(dateRange.start); 
-      start.setHours(0,0,0,0);
-      const end = new Date(dateRange.end);
-      end.setHours(23,59,59,999);
-      
-      const activeIds = new Set<string>();
+  // --- CALCULATE SALES VOLUME ---
+  const salesStats = useMemo(() => {
+      const stats = new Map<string, { units: number, orders: number }>();
+      const start = new Date(dateRange.start); start.setHours(0,0,0,0);
+      const end = new Date(dateRange.end); end.setHours(23,59,59,999);
+
       orders.forEach(o => {
           const d = new Date(o.created_at);
-          if (d >= start && d <= end) {
+          if (d >= start && d <= end && o.status !== 'CANCELLED') {
               o.items.forEach(i => {
-                  activeIds.add(i.product_id);
-                  if (i.sku) activeIds.add(i.sku);
-                  if (i.variant_fingerprint) activeIds.add(i.variant_fingerprint);
+                  const pid = i.product_id;
+                  if (!stats.has(pid)) stats.set(pid, { units: 0, orders: 0 });
+                  const s = stats.get(pid)!;
+                  s.units += i.quantity;
+                  s.orders += 1;
               });
           }
       });
+      return stats;
+  }, [orders, dateRange]);
 
+  const filteredProducts = useMemo(() => {
       return products.filter(p => {
-          // 2. Text Search - PRIORITY OVER DATE FILTER
+          // Text Search
           if (search) {
              const term = search.toLowerCase();
              return p.title.toLowerCase().includes(term) || 
-                    p.sku.toLowerCase().includes(term);
+                    p.sku.toLowerCase().includes(term) ||
+                    (p.aliases && p.aliases.some(a => a.toLowerCase().includes(term)));
           }
-          
-          // 3. Date Active Filter (Only applied when NOT searching)
-          const fingerprint = p.variant_fingerprint || p.sku;
-          const isActive = activeIds.has(p.id) || activeIds.has(p.sku) || activeIds.has(fingerprint || '');
-          return isActive;
+          return true;
       });
-  }, [products, search, dateRange, orders]);
+  }, [products, search]);
 
   // Organize Data into Groups and Singles
   const inventoryTree = useMemo(() => {
-      const groups = new Map<string, { id: string, name: string, items: Product[] }>();
+      const groups = new Map<string, { id: string, name: string, items: Product[], totalSold: number }>();
       const singles: Product[] = [];
 
       filteredProducts.forEach(p => {
+          const sold = salesStats.get(p.id)?.units || 0;
+
           if (p.group_id && p.group_name) {
               if (!groups.has(p.group_id)) {
-                  groups.set(p.group_id, { id: p.group_id, name: p.group_name, items: [] });
+                  groups.set(p.group_id, { id: p.group_id, name: p.group_name, items: [], totalSold: 0 });
               }
-              groups.get(p.group_id)!.items.push(p);
+              const g = groups.get(p.group_id)!;
+              g.items.push(p);
+              g.totalSold += sold;
           } else {
               singles.push(p);
           }
       });
-      return { groups: Array.from(groups.values()), singles };
-  }, [filteredProducts]);
+      
+      // Sort Groups by Volume
+      const sortedGroups = Array.from(groups.values()).sort((a, b) => b.totalSold - a.totalSold);
+      
+      // Sort Singles by Volume
+      const sortedSingles = singles.sort((a, b) => {
+          const soldA = salesStats.get(a.id)?.units || 0;
+          const soldB = salesStats.get(b.id)?.units || 0;
+          return soldB - soldA;
+      });
+
+      return { groups: sortedGroups, singles: sortedSingles };
+  }, [filteredProducts, salesStats]);
 
   // --- IMPROVED Auto-Suggestion Logic (Token Matching) ---
   const suggestions = useMemo(() => {
@@ -389,7 +404,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Inventory & Costing</h2>
-          <p className="text-slate-500 text-sm">Manage Product Costs (COGS) and Grouping for accurate profit analysis.</p>
+          <p className="text-slate-500 text-sm">Manage Product Costs (COGS) and Grouping. Sales shown for selected period.</p>
         </div>
         
         <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm">
@@ -465,7 +480,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                         setNewGroupName(s.name);
                                         setGroupAction('create');
                                         setIsGroupModalOpen(true);
-                                        // Remove from suggestions locally by ignoring key
                                         setIgnoredSuggestionKeys(prev => new Set(prev).add(s.key));
                                     }}
                                     className="p-1 bg-indigo-100 text-indigo-600 rounded hover:bg-indigo-200" title="Apply"
@@ -496,14 +510,13 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
       {/* Main Table */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <table className="w-full text-left text-sm">
-              <thead className="bg-slate-50 border-b border-slate-200">
+              <thead className="bg-slate-50 border-b border-slate-200 text-xs uppercase font-bold text-slate-500">
                   <tr>
-                      <th className="px-4 py-3 w-10">
-                         {/* Header Checkbox logic could be complex, omitting for simplicity or adding Select All Visible */}
-                      </th>
-                      <th className="px-4 py-3 font-semibold text-slate-700">Product / Group</th>
-                      <th className="px-4 py-3 font-semibold text-slate-700">Current Cost (COGS)</th>
-                      <th className="px-4 py-3 text-right font-semibold text-slate-700">Actions</th>
+                      <th className="px-4 py-3 w-10"></th>
+                      <th className="px-4 py-3 w-[45%]">Product / Group Details</th>
+                      <th className="px-4 py-3 text-center w-[20%]">Units Sold</th>
+                      <th className="px-4 py-3 w-[25%]">Current COGS</th>
+                      <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -511,10 +524,11 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                       const isExpanded = expandedGroups.has(group.id);
                       const allSelected = group.items.every(i => selectedIds.has(i.id));
                       const someSelected = group.items.some(i => selectedIds.has(i.id));
+                      const groupSold = group.totalSold;
                       
                       return (
                           <React.Fragment key={group.id}>
-                              <tr className="bg-slate-50/50 hover:bg-slate-50 cursor-pointer" onClick={(e) => toggleGroupExpand(group.id, e)}>
+                              <tr className="bg-slate-50/70 hover:bg-slate-50 cursor-pointer transition-colors" onClick={(e) => toggleGroupExpand(group.id, e)}>
                                   <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                                       <button onClick={(e) => toggleGroupSelection(group.id, group.items, e)} className="text-slate-400 hover:text-indigo-600">
                                           {allSelected ? <CheckSquare size={18} className="text-indigo-600" /> : someSelected ? <CheckSquare size={18} className="text-indigo-400 opacity-50" /> : <Square size={18} />}
@@ -522,23 +536,28 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                   </td>
                                   <td className="px-4 py-3">
                                       <div className="flex items-center gap-2">
-                                          {isExpanded ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
+                                          {isExpanded ? <ChevronDown size={16} className="text-indigo-500" /> : <ChevronRight size={16} className="text-slate-400" />}
                                           <Folder size={16} className="text-indigo-500" />
-                                          <span className="font-bold text-slate-800">{group.name}</span>
-                                          <span className="bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">{group.items.length}</span>
+                                          <span className="font-bold text-slate-800 text-sm">{group.name}</span>
+                                          <span className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-bold">{group.items.length} Variants</span>
                                       </div>
                                   </td>
-                                  <td className="px-4 py-3 text-slate-400">-</td>
+                                  <td className="px-4 py-3 text-center">
+                                      <span className={`font-bold ${groupSold > 0 ? 'text-indigo-700' : 'text-slate-400'}`}>{groupSold}</span>
+                                  </td>
+                                  <td className="px-4 py-3 text-slate-400 text-xs italic">See variants</td>
                                   <td className="px-4 py-3 text-right">
                                       <button 
                                         onClick={(e) => { e.stopPropagation(); setSelectedGroup(group); }}
-                                        className="text-indigo-600 hover:text-indigo-800 text-xs font-medium px-2 py-1 bg-indigo-50 rounded border border-indigo-100"
+                                        className="text-indigo-600 hover:text-indigo-800 text-xs font-bold px-2 py-1 bg-indigo-50 rounded border border-indigo-100"
                                       >
                                           Edit Group
                                       </button>
                                   </td>
                               </tr>
-                              {isExpanded && group.items.map(item => (
+                              {isExpanded && group.items.map(item => {
+                                  const sold = salesStats.get(item.id)?.units || 0;
+                                  return (
                                   <tr key={item.id} className="hover:bg-slate-50">
                                       <td className="px-4 py-3 pl-8">
                                           <button onClick={(e) => toggleSelect(item.id, e)} className="text-slate-400 hover:text-brand-600">
@@ -546,15 +565,19 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                           </button>
                                       </td>
                                       <td className="px-4 py-3">
-                                          <div className="flex items-center gap-2 pl-6 border-l-2 border-slate-100 ml-3">
-                                              <span className="truncate max-w-[300px]" title={item.title}>{item.title}</span>
+                                          <div className="flex items-center gap-2 pl-6 border-l-2 border-slate-200 ml-3">
+                                              <CornerDownRight size={14} className="text-slate-300" />
+                                              <span className="truncate max-w-[300px] text-slate-600 text-sm" title={item.title}>{item.title}</span>
                                           </div>
+                                      </td>
+                                      <td className="px-4 py-3 text-center">
+                                          <span className={`font-medium ${sold > 0 ? 'text-slate-800' : 'text-slate-300'}`}>{sold}</span>
                                       </td>
                                       <td className="px-4 py-3">
                                           {item.current_cogs === 0 ? (
-                                              <span className="text-red-500 font-bold flex items-center gap-1"><AlertCircle size={12}/> Set Cost</span>
+                                              <span className="text-red-600 font-bold flex items-center gap-1 text-xs px-2 py-1 bg-red-50 rounded-full w-fit"><AlertCircle size={12}/> Set Cost</span>
                                           ) : (
-                                              <span className="font-medium text-slate-700">{formatCurrency(item.current_cogs)}</span>
+                                              <span className="font-medium text-slate-700 bg-slate-50 px-2 py-1 rounded border border-slate-200">{formatCurrency(item.current_cogs)}</span>
                                           )}
                                       </td>
                                       <td className="px-4 py-3 text-right">
@@ -563,13 +586,15 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                           </button>
                                       </td>
                                   </tr>
-                              ))}
+                              )})}
                           </React.Fragment>
                       );
                   })}
                   
-                  {inventoryTree.singles.map(item => (
-                      <tr key={item.id} className="hover:bg-slate-50">
+                  {inventoryTree.singles.map(item => {
+                      const sold = salesStats.get(item.id)?.units || 0;
+                      return (
+                      <tr key={item.id} className="hover:bg-slate-50 transition-colors">
                           <td className="px-4 py-3">
                               <button onClick={(e) => toggleSelect(item.id, e)} className="text-slate-400 hover:text-brand-600">
                                   {selectedIds.has(item.id) ? <CheckSquare size={18} className="text-brand-600" /> : <Square size={18} />}
@@ -578,23 +603,39 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                           <td className="px-4 py-3">
                               <div className="flex items-center gap-2">
                                   <Package size={16} className="text-slate-400" />
-                                  <span className="truncate max-w-[300px] font-medium text-slate-700" title={item.title}>{item.title}</span>
+                                  <div className="flex flex-col">
+                                      <span className="truncate max-w-[350px] font-medium text-slate-700 leading-tight" title={item.title}>{item.title}</span>
+                                      {item.aliases && item.aliases.length > 0 && (
+                                          <span className="text-[10px] text-slate-400 mt-0.5">{item.aliases.length} mapped alias(es)</span>
+                                      )}
+                                  </div>
                               </div>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                              {sold > 0 ? (
+                                  <div className="inline-flex flex-col items-center">
+                                      <span className="font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded text-sm">{sold} Units</span>
+                                  </div>
+                              ) : (
+                                  <span className="text-slate-300">-</span>
+                              )}
                           </td>
                           <td className="px-4 py-3">
                               {item.current_cogs === 0 ? (
-                                  <span className="text-red-500 font-bold flex items-center gap-1 text-xs px-2 py-1 bg-red-50 rounded-full w-fit"><AlertCircle size={12}/> Missing Cost</span>
+                                  <span className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full w-fit font-bold ${sold > 0 ? 'bg-red-100 text-red-700 animate-pulse' : 'bg-slate-100 text-slate-500'}`}>
+                                      <AlertCircle size={12}/> {sold > 0 ? 'MISSING COST' : 'No Cost'}
+                                  </span>
                               ) : (
-                                  <span className="font-medium text-slate-700">{formatCurrency(item.current_cogs)}</span>
+                                  <span className="font-bold text-slate-700">{formatCurrency(item.current_cogs)}</span>
                               )}
                           </td>
                           <td className="px-4 py-3 text-right">
-                              <button onClick={() => setSelectedProduct(item)} className="p-1.5 hover:bg-slate-200 rounded text-slate-500 transition-colors">
+                              <button onClick={() => setSelectedProduct(item)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-800 transition-colors">
                                   <Edit2 size={16} />
                               </button>
                           </td>
                       </tr>
-                  ))}
+                  )})}
                   
                   {inventoryTree.groups.length === 0 && inventoryTree.singles.length === 0 && (
                       <tr><td colSpan={5} className="px-6 py-12 text-center text-slate-400">No products found matching filters.</td></tr>
