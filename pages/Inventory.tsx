@@ -77,8 +77,43 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
       return stats;
   }, [orders, dateRange]);
 
+  // --- VISIBILITY FILTER (STRICT) ---
+  // Logic: Only show item if it is in a "Real" order (Dispatched+) OR has Cost set OR is Grouped.
+  const visibleItemIds = useMemo(() => {
+      const visibleIds = new Set<string>();
+      
+      // 1. Always show items with Cost or Group (User explicitly manages these)
+      products.forEach(p => {
+          if (p.current_cogs > 0 || p.group_id) visibleIds.add(p.id);
+      });
+
+      // 2. Show items from "Real" Orders (Exclude Unbooked/Booked/Cancelled)
+      orders.forEach(o => {
+          const isRelevant = o.status !== 'PENDING' && o.status !== 'BOOKED' && o.status !== 'CANCELLED';
+          if (isRelevant) {
+              o.items.forEach(i => {
+                  // Find the matching product definition
+                  const product = products.find(p => 
+                      (p.variant_fingerprint && p.variant_fingerprint === i.variant_fingerprint) || 
+                      p.sku === i.sku || 
+                      p.id === i.product_id ||
+                      p.title === i.product_name
+                  );
+                  
+                  if (product) visibleIds.add(product.id);
+              });
+          }
+      });
+      
+      return visibleIds;
+  }, [products, orders]);
+
   const filteredProducts = useMemo(() => {
       return products.filter(p => {
+          // 1. Visibility Check
+          if (!visibleItemIds.has(p.id)) return false;
+
+          // 2. Search Check
           if (search) {
              const term = search.toLowerCase();
              return p.title.toLowerCase().includes(term) || 
@@ -87,7 +122,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
           }
           return true;
       });
-  }, [products, search]);
+  }, [products, search, visibleItemIds]);
 
   const inventoryTree = useMemo(() => {
       const groups = new Map<string, { id: string, name: string, items: Product[], totalSold: number }>();
@@ -352,6 +387,15 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                           </td>
                       </tr>
                   )})}
+                  
+                  {filteredProducts.length === 0 && (
+                      <tr>
+                          <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
+                              <p className="mb-2">No active items found.</p>
+                              <p className="text-xs">Items only appear here once they are dispatched or you manually set a cost.</p>
+                          </td>
+                      </tr>
+                  )}
               </tbody>
           </table>
       </div>
