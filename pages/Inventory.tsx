@@ -1,8 +1,8 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { Product, Order, ShopifyOrder } from '../types';
+import { Product, Order, ShopifyOrder, OrderStatus } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { PackageSearch, History, Edit2, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, Link as LinkIcon, Sparkles, Check, AlertCircle, ShoppingBag, DollarSign, Search, ListFilter } from 'lucide-react';
+import { PackageSearch, History, Edit2, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, Link as LinkIcon, Sparkles, Check, AlertCircle, ShoppingBag, DollarSign, Search, ListFilter, Truck, ArrowRightLeft, CheckCircle2 } from 'lucide-react';
 
 interface InventoryProps {
   products: Product[];
@@ -33,8 +33,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
 
   // Group Logic State
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [ignoredSuggestionKeys, setIgnoredSuggestionKeys] = useState<Set<string>>(new Set());
   
   // Group Creation/Edit State
   const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
@@ -56,52 +54,69 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
       }
   }, [products, selectedProduct, selectedGroup]); 
 
-  // --- CALCULATE SALES VOLUME ---
-  const salesStats = useMemo(() => {
-      const stats = new Map<string, { units: number, orders: number }>();
+  // --- CALCULATE SALES VOLUME (Detailed Breakdown) ---
+  const itemStats = useMemo(() => {
+      const stats = new Map<string, { sold: number, transit: number, returned: number, revenue: number }>();
       const start = new Date(dateRange.start); start.setHours(0,0,0,0);
       const end = new Date(dateRange.end); end.setHours(23,59,59,999);
 
       orders.forEach(o => {
           const d = new Date(o.created_at);
+          // Only count stats for selected date range
           if (d >= start && d <= end && o.status !== 'CANCELLED') {
               o.items.forEach(i => {
                   const pid = i.product_id;
-                  if (!stats.has(pid)) stats.set(pid, { units: 0, orders: 0 });
+                  if (!stats.has(pid)) stats.set(pid, { sold: 0, transit: 0, returned: 0, revenue: 0 });
                   const s = stats.get(pid)!;
-                  s.units += i.quantity;
-                  s.orders += 1;
+                  
+                  if (o.status === OrderStatus.DELIVERED) {
+                      s.sold += i.quantity;
+                      s.revenue += (i.sale_price * i.quantity);
+                  } else if (o.status === OrderStatus.IN_TRANSIT) {
+                      s.transit += i.quantity;
+                  } else if (o.status === OrderStatus.RETURNED || o.status === OrderStatus.RTO_INITIATED) {
+                      s.returned += i.quantity;
+                  }
               });
           }
       });
       return stats;
   }, [orders, dateRange]);
 
-  // --- VISIBILITY FILTER (STRICT) ---
-  // Logic: Only show item if it is in a "Real" order (Dispatched+) OR has Cost set OR is Grouped.
+  // --- VISIBILITY FILTER (STRICT BUT INCLUSIVE) ---
+  // Show item if:
+  // 1. It has Cost > 0 OR is Grouped (User Managed)
+  // 2. OR It is part of ANY active order (In Transit/Delivered/Returned), regardless of date range.
+  //    (We want to show the item row even if stats are 0 for the selected period, so user can edit cost)
   const visibleItemIds = useMemo(() => {
       const visibleIds = new Set<string>();
       
-      // 1. Always show items with Cost or Group (User explicitly manages these)
+      // 1. User Managed
       products.forEach(p => {
           if (p.current_cogs > 0 || p.group_id) visibleIds.add(p.id);
       });
 
-      // 2. Show items from "Real" Orders (Exclude Unbooked/Booked/Cancelled)
+      // 2. Active Orders (Scan ALL orders to ensure no missing items)
       orders.forEach(o => {
-          const isRelevant = o.status !== 'PENDING' && o.status !== 'BOOKED' && o.status !== 'CANCELLED';
+          const isRelevant = 
+              o.status === OrderStatus.IN_TRANSIT || 
+              o.status === OrderStatus.DELIVERED || 
+              o.status === OrderStatus.RETURNED || 
+              o.status === OrderStatus.RTO_INITIATED;
+
           if (isRelevant) {
               o.items.forEach(i => {
-                  // Find the matching product definition
-                  const product = products.find(p => 
-                      (p.variant_fingerprint && p.variant_fingerprint === i.variant_fingerprint) || 
-                      p.sku === i.sku || 
-                      p.id === i.product_id ||
-                      p.title === i.product_name ||
-                      (p.aliases && p.aliases.includes(i.product_name))
-                  );
-                  
-                  if (product) visibleIds.add(product.id);
+                  // Direct ID Match
+                  if (i.product_id && i.product_id !== 'unknown') {
+                      visibleIds.add(i.product_id);
+                  } else {
+                      // Fallback: Name Match
+                      const product = products.find(p => 
+                          p.title === i.product_name || 
+                          (p.aliases && p.aliases.includes(i.product_name))
+                      );
+                      if (product) visibleIds.add(product.id);
+                  }
               });
           }
       });
@@ -130,7 +145,8 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
       const singles: Product[] = [];
 
       filteredProducts.forEach(p => {
-          const sold = salesStats.get(p.id)?.units || 0;
+          const s = itemStats.get(p.id);
+          const totalActivity = (s?.sold || 0) + (s?.transit || 0) + (s?.returned || 0);
 
           if (p.group_id && p.group_name) {
               if (!groups.has(p.group_id)) {
@@ -138,7 +154,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
               }
               const g = groups.get(p.group_id)!;
               g.items.push(p);
-              g.totalSold += sold;
+              g.totalSold += (s?.sold || 0);
           } else {
               singles.push(p);
           }
@@ -146,13 +162,13 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
       
       const sortedGroups = Array.from(groups.values()).sort((a, b) => b.totalSold - a.totalSold);
       const sortedSingles = singles.sort((a, b) => {
-          const soldA = salesStats.get(a.id)?.units || 0;
-          const soldB = salesStats.get(b.id)?.units || 0;
-          return soldB - soldA;
+          const sA = itemStats.get(a.id)?.sold || 0;
+          const sB = itemStats.get(b.id)?.sold || 0;
+          return sB - sA;
       });
 
       return { groups: sortedGroups, singles: sortedSingles };
-  }, [filteredProducts, salesStats]);
+  }, [filteredProducts, itemStats]);
 
   // Determine what is currently being edited
   const editTarget = selectedProduct || (selectedGroup ? selectedGroup.items[0] : null);
@@ -162,23 +178,17 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
   const relatedOrders = useMemo(() => {
       if (!editTarget) return [];
       
-      // Target IDs (Single or Group)
       const targetIds = isGroupEdit && selectedGroup 
           ? new Set(selectedGroup.items.map(i => i.id))
           : new Set([editTarget.id]);
 
-      // Target Names (for unmapped orders)
-      const targetNames = isGroupEdit && selectedGroup
-          ? new Set(selectedGroup.items.map(i => i.title))
-          : new Set([editTarget.title]);
-
-      // Target Aliases
       const targetAliases = new Set(editTarget.aliases || []);
 
+      // Filter ANY order that contains this item
       return orders.filter(o => 
           o.items.some(item => 
               targetIds.has(item.product_id) || 
-              targetNames.has(item.product_name) || 
+              (isGroupEdit ? false : item.product_name === editTarget.title) || 
               targetAliases.has(item.product_name)
           )
       ).sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -284,7 +294,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Inventory Management</h2>
-          <p className="text-slate-500 text-sm">Track product costs and view detailed sales history.</p>
+          <p className="text-slate-500 text-sm">Track costs and view detailed stock movement (Sold, Transit, RTO).</p>
         </div>
         
         <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm">
@@ -314,8 +324,10 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
               <thead className="bg-slate-50 border-b border-slate-200 text-xs uppercase font-bold text-slate-500">
                   <tr>
                       <th className="px-4 py-3 w-10"></th>
-                      <th className="px-4 py-3 w-[40%]">Product</th>
-                      <th className="px-4 py-3 text-center">Units Sold</th>
+                      <th className="px-4 py-3 w-[35%]">Product</th>
+                      <th className="px-4 py-3 text-center text-green-700 bg-green-50/50">Sold</th>
+                      <th className="px-4 py-3 text-center text-blue-700 bg-blue-50/50">In Transit</th>
+                      <th className="px-4 py-3 text-center text-red-700 bg-red-50/50">Returned</th>
                       <th className="px-4 py-3">Cost (COGS)</th>
                       <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
@@ -336,19 +348,30 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                           <span className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-bold">{group.items.length} Variants</span>
                                       </div>
                                   </td>
-                                  <td className="px-4 py-3 text-center font-bold text-indigo-700">{group.totalSold}</td>
+                                  {/* Group Summary: Sum of all items stats */}
+                                  <td className="px-4 py-3 text-center font-bold text-green-700">
+                                      {group.items.reduce((sum, i) => sum + (itemStats.get(i.id)?.sold || 0), 0)}
+                                  </td>
+                                  <td className="px-4 py-3 text-center font-medium text-blue-600">
+                                      {group.items.reduce((sum, i) => sum + (itemStats.get(i.id)?.transit || 0), 0)}
+                                  </td>
+                                  <td className="px-4 py-3 text-center font-medium text-red-600">
+                                      {group.items.reduce((sum, i) => sum + (itemStats.get(i.id)?.returned || 0), 0)}
+                                  </td>
                                   <td className="px-4 py-3 text-slate-400 text-xs italic">See variants</td>
                                   <td className="px-4 py-3 text-right">
                                       <button onClick={(e) => { e.stopPropagation(); setSelectedGroup(group); setModalTab('costing'); }} className="text-indigo-600 font-bold text-xs bg-indigo-50 px-2 py-1 rounded border border-indigo-100">Edit Group</button>
                                   </td>
                               </tr>
                               {isExpanded && group.items.map(item => {
-                                  const sold = salesStats.get(item.id)?.units || 0;
+                                  const s = itemStats.get(item.id);
                                   return (
                                   <tr key={item.id} className="hover:bg-slate-50">
                                       <td className="px-4 py-3 pl-8"><button onClick={(e) => toggleSelect(item.id, e)}>{selectedIds.has(item.id) ? <CheckSquare size={16} className="text-brand-600" /> : <Square size={16} className="text-slate-300" />}</button></td>
                                       <td className="px-4 py-3 pl-12 text-slate-600 text-sm truncate max-w-[300px]">{item.title}</td>
-                                      <td className="px-4 py-3 text-center font-medium">{sold}</td>
+                                      <td className="px-4 py-3 text-center font-medium text-slate-700">{s?.sold || 0}</td>
+                                      <td className="px-4 py-3 text-center font-medium text-slate-500">{s?.transit || 0}</td>
+                                      <td className="px-4 py-3 text-center font-medium text-slate-500">{s?.returned || 0}</td>
                                       <td className="px-4 py-3">{item.current_cogs === 0 ? <span className="text-red-500 font-bold text-xs bg-red-50 px-2 py-1 rounded">Set Cost</span> : formatCurrency(item.current_cogs)}</td>
                                       <td className="px-4 py-3 text-right"><button onClick={() => { setSelectedProduct(item); setModalTab('costing'); }} className="text-slate-400 hover:text-slate-600"><Edit2 size={16} /></button></td>
                                   </tr>
@@ -358,7 +381,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                   })}
                   {/* SINGLES */}
                   {inventoryTree.singles.map(item => {
-                      const sold = salesStats.get(item.id)?.units || 0;
+                      const s = itemStats.get(item.id);
                       return (
                       <tr key={item.id} className="hover:bg-slate-50 transition-colors">
                           <td className="px-4 py-3"><button onClick={(e) => toggleSelect(item.id, e)}>{selectedIds.has(item.id) ? <CheckSquare size={18} className="text-brand-600" /> : <Square size={18} className="text-slate-300" />}</button></td>
@@ -368,11 +391,19 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                   <span className="font-medium text-slate-700 truncate max-w-[350px]">{item.title}</span>
                               </div>
                           </td>
-                          <td className="px-4 py-3 text-center font-bold text-slate-800">{sold > 0 ? sold : <span className="text-slate-300">-</span>}</td>
+                          <td className="px-4 py-3 text-center font-bold text-slate-800 bg-green-50/30">
+                              {s?.sold || <span className="text-slate-300">-</span>}
+                          </td>
+                          <td className="px-4 py-3 text-center font-medium text-slate-600 bg-blue-50/30">
+                              {s?.transit || <span className="text-slate-300">-</span>}
+                          </td>
+                          <td className="px-4 py-3 text-center font-medium text-slate-600 bg-red-50/30">
+                              {s?.returned || <span className="text-slate-300">-</span>}
+                          </td>
                           <td className="px-4 py-3">
                               {item.current_cogs === 0 ? (
-                                  <span className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full w-fit font-bold ${sold > 0 ? 'bg-red-100 text-red-700 animate-pulse' : 'bg-slate-100 text-slate-500'}`}>
-                                      <AlertCircle size={12}/> {sold > 0 ? 'MISSING COST' : 'No Cost'}
+                                  <span className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full w-fit font-bold ${s?.sold ? 'bg-red-100 text-red-700 animate-pulse' : 'bg-slate-100 text-slate-500'}`}>
+                                      <AlertCircle size={12}/> {s?.sold ? 'MISSING COST' : 'No Cost'}
                                   </span>
                               ) : (
                                   <span className="font-bold text-slate-700">{formatCurrency(item.current_cogs)}</span>
@@ -380,7 +411,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                           </td>
                           <td className="px-4 py-3 text-right">
                               <button onClick={() => { setSelectedProduct(item); setModalTab('history'); }} className="mr-2 text-brand-600 hover:text-brand-700 font-bold text-xs bg-brand-50 px-3 py-1.5 rounded border border-brand-100">
-                                  View Orders
+                                  History
                               </button>
                               <button onClick={() => { setSelectedProduct(item); setModalTab('costing'); }} className="p-1.5 hover:bg-slate-100 rounded text-slate-400">
                                   <Edit2 size={16} />
@@ -391,9 +422,9 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                   
                   {filteredProducts.length === 0 && (
                       <tr>
-                          <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
+                          <td colSpan={7} className="px-6 py-12 text-center text-slate-400">
                               <p className="mb-2">No active items found.</p>
-                              <p className="text-xs">Items only appear here once they are dispatched or you manually set a cost.</p>
+                              <p className="text-xs">Items appear here when they are in an active order (Transit/Delivered/Returned).</p>
                           </td>
                       </tr>
                   )}
@@ -468,7 +499,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                               {relatedOrders.length === 0 ? (
                                   <div className="text-center py-12 text-slate-400">
                                       <PackageSearch size={48} className="mx-auto mb-3 opacity-20" />
-                                      <p>No orders found for this product in the selected period.</p>
+                                      <p>No orders found for this product.</p>
                                   </div>
                               ) : (
                                   <table className="w-full text-left text-sm">
@@ -476,54 +507,37 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                           <tr>
                                               <th className="px-4 py-3">Order Date</th>
                                               <th className="px-4 py-3">Order #</th>
-                                              <th className="px-4 py-3 text-center">Qty (This Item)</th>
-                                              <th className="px-4 py-3">Bundled With (Other Items)</th>
-                                              <th className="px-4 py-3 text-right">Status</th>
+                                              <th className="px-4 py-3 text-center">Qty</th>
+                                              <th className="px-4 py-3">Status</th>
+                                              <th className="px-4 py-3">Courier</th>
                                           </tr>
                                       </thead>
                                       <tbody className="divide-y divide-slate-100">
                                           {relatedOrders.map(order => {
-                                              // Find relevant item(s) in this order (handle single or group items)
+                                              // Calculate quantity specific to this item
                                               const targetIds = isGroupEdit && selectedGroup 
                                                   ? new Set(selectedGroup.items.map(i => i.id))
                                                   : new Set([editTarget.id]);
-                                                  
                                               const targetAliases = new Set(editTarget.aliases || []);
 
-                                              const myItems = order.items.filter(i => 
-                                                  targetIds.has(i.product_id) || 
-                                                  (isGroupEdit ? false : i.product_name === editTarget.title) ||
-                                                  targetAliases.has(i.product_name)
-                                              );
-                                              
-                                              // Other items are anything NOT in myItems list
-                                              const otherItems = order.items.filter(i => !myItems.includes(i));
-                                              
-                                              const qty = myItems.reduce((sum, i) => sum + i.quantity, 0);
-                                              
+                                              const itemQty = order.items
+                                                  .filter(i => targetIds.has(i.product_id) || (isGroupEdit ? false : i.product_name === editTarget.title) || targetAliases.has(i.product_name))
+                                                  .reduce((sum, i) => sum + i.quantity, 0);
+
                                               return (
                                                   <tr key={order.id} className="hover:bg-slate-50">
                                                       <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{new Date(order.created_at).toLocaleDateString()}</td>
                                                       <td className="px-4 py-3 font-medium text-slate-900">{order.shopify_order_number}</td>
-                                                      <td className="px-4 py-3 text-center font-bold">{qty}</td>
-                                                      <td className="px-4 py-3 text-slate-500 text-xs">
-                                                          {otherItems.length > 0 ? (
-                                                              <div className="flex flex-wrap gap-1">
-                                                                  {otherItems.map((oi, idx) => (
-                                                                      <span key={idx} className="bg-slate-100 px-2 py-0.5 rounded text-slate-600 border border-slate-200">
-                                                                          {oi.quantity}x {oi.product_name}
-                                                                      </span>
-                                                                  ))}
-                                                              </div>
-                                                          ) : <span className="text-slate-300 italic">Single Item Order</span>}
-                                                      </td>
-                                                      <td className="px-4 py-3 text-right">
+                                                      <td className="px-4 py-3 text-center font-bold">{itemQty}</td>
+                                                      <td className="px-4 py-3">
                                                           <span className={`px-2 py-1 rounded text-xs font-bold ${
                                                               order.status === 'DELIVERED' ? 'bg-green-100 text-green-700' :
                                                               order.status === 'RETURNED' ? 'bg-red-100 text-red-700' :
-                                                              'bg-blue-50 text-blue-600'
-                                                          }`}>{order.status}</span>
+                                                              order.status === 'IN_TRANSIT' ? 'bg-blue-100 text-blue-700' :
+                                                              'bg-slate-100 text-slate-600'
+                                                          }`}>{order.status.replace('_', ' ')}</span>
                                                       </td>
+                                                      <td className="px-4 py-3 text-xs text-slate-500">{order.courier}</td>
                                                   </tr>
                                               );
                                           })}

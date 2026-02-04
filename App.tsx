@@ -92,7 +92,8 @@ const App: React.FC = () => {
             const productDef = 
                 currentProducts.find(p => p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) ||
                 currentProducts.find(p => p.sku === item.sku) || 
-                currentProducts.find(p => p.id === item.product_id);
+                currentProducts.find(p => p.id === item.product_id) ||
+                currentProducts.find(p => p.aliases && p.aliases.includes(item.product_name)); // Improved Aliasing
             
             let correctCogs = item.cogs_at_time_of_order;
             
@@ -100,7 +101,11 @@ const App: React.FC = () => {
                 correctCogs = getCostAtDate(productDef, order.created_at);
             }
 
-            return { ...item, cogs_at_time_of_order: correctCogs };
+            return { 
+                ...item, 
+                cogs_at_time_of_order: correctCogs,
+                product_id: productDef ? productDef.id : item.product_id 
+            };
         });
         return { ...order, items: updatedItems };
     });
@@ -433,7 +438,8 @@ const App: React.FC = () => {
 
                 const exists = finalProducts.some(p => 
                     p.sku === item.sku || 
-                    (p.variant_fingerprint && p.variant_fingerprint === fingerprint)
+                    (p.variant_fingerprint && p.variant_fingerprint === fingerprint) ||
+                    (p.aliases && p.aliases.includes(item.product_name))
                 );
 
                 if (!exists && !seenFingerprints.has(fingerprint)) {
@@ -458,7 +464,7 @@ const App: React.FC = () => {
             const rateCard = fetchedSettings.rates[order.courier] || fetchedSettings.rates[CourierName.POSTEX];
             const isRto = order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED;
             const updatedItems = order.items.map(item => {
-                const productDef = finalProducts.find(p => (p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) || p.sku === item.sku || p.title === item.product_name);
+                const productDef = finalProducts.find(p => (p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) || p.sku === item.sku || p.title === item.product_name || (p.aliases && p.aliases.includes(item.product_name)));
                 const historicalCogs = productDef ? getCostAtDate(productDef, order.created_at) : 0;
                 
                 return { 
