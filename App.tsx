@@ -91,7 +91,7 @@ const App: React.FC = () => {
         const updatedItems = order.items.map(item => {
             const productDef = 
                 currentProducts.find(p => p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) ||
-                currentProducts.find(p => p.sku === item.sku) || 
+                currentProducts.find(p => (p.sku !== 'unknown' && p.sku === item.sku)) || 
                 currentProducts.find(p => p.id === item.product_id) ||
                 currentProducts.find(p => p.aliases && p.aliases.includes(item.product_name)); // Improved Aliasing
             
@@ -398,17 +398,16 @@ const App: React.FC = () => {
                                 data_source: 'tracking', 
                                 courier_raw_status: rawStatusText, // Save the auto-fetched status
                                 items: safeItems.map(li => {
-                                    // Extract variant name if present in title (common in some Shopify setups) OR explicitly from variant_title if we had it mapped
-                                    // Note: ShopifyLineItem interface has 'title' and 'sku'.
-                                    // Often title includes variant or it's separate. 
-                                    // Ideally, we should concatenate title + variant_title if available in future, but current types.ts only has title.
-                                    // We will stick to title, but ensure we use it fully.
-                                    
+                                    // Use 'name' if available (Full Product + Variant Name), else construct it.
+                                    // This fixes the issue of generic names appearing in Inventory.
+                                    const variantPart = li.variant_title && li.variant_title !== 'Default Title' ? ` - ${li.variant_title}` : '';
+                                    const fullName = li.name || `${li.title}${variantPart}`;
+
                                     return {
                                         product_id: 'unknown',
                                         quantity: li.quantity,
                                         sale_price: parseFloat(li.price || '0'),
-                                        product_name: li.title || 'Unknown Product',
+                                        product_name: fullName,
                                         sku: li.sku || 'unknown',
                                         variant_fingerprint: li.sku || 'unknown',
                                         cogs_at_time_of_order: 0
@@ -446,8 +445,10 @@ const App: React.FC = () => {
                 const fingerprint = item.variant_fingerprint || item.sku || 
                                     item.product_name.toLowerCase().replace(/[^a-z0-9]/g, '-');
 
+                // Check for existence. 
+                // CRITICAL FIX: Do NOT merge 'unknown' SKUs together. If SKU is unknown, rely on Fingerprint (Name) match.
                 const exists = finalProducts.some(p => 
-                    p.sku === item.sku || 
+                    (item.sku !== 'unknown' && p.sku === item.sku) || 
                     (p.variant_fingerprint && p.variant_fingerprint === fingerprint) ||
                     (p.aliases && p.aliases.includes(item.product_name)) ||
                     p.title === item.product_name // Direct title match fallback
@@ -459,7 +460,7 @@ const App: React.FC = () => {
                     finalProducts.push({
                         id: uniqueId,
                         shopify_id: 'unknown',
-                        title: item.product_name,
+                        title: item.product_name, // This now contains Full Name + Variant
                         sku: item.sku !== 'unknown' ? item.sku : fingerprint, 
                         variant_fingerprint: fingerprint,
                         image_url: '',
@@ -475,7 +476,7 @@ const App: React.FC = () => {
             const rateCard = fetchedSettings.rates[order.courier] || fetchedSettings.rates[CourierName.POSTEX];
             const isRto = order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED;
             const updatedItems = order.items.map(item => {
-                const productDef = finalProducts.find(p => (p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) || p.sku === item.sku || p.title === item.product_name || (p.aliases && p.aliases.includes(item.product_name)));
+                const productDef = finalProducts.find(p => (p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) || (p.sku !== 'unknown' && p.sku === item.sku) || p.title === item.product_name || (p.aliases && p.aliases.includes(item.product_name)));
                 const historicalCogs = productDef ? getCostAtDate(productDef, order.created_at) : 0;
                 
                 return { 

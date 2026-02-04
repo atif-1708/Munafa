@@ -96,6 +96,9 @@ export interface ShopifyLineItem {
   price: string;
   variant_id: number;
   product_id: number;
+  // Added for better name resolution
+  name?: string; 
+  variant_title?: string;
 }
 
 export interface ShopifyFulfillment {
