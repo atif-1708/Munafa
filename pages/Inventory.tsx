@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Product, Order, ShopifyOrder, OrderStatus } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { PackageSearch, History, Edit2, X, Trash2, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, CornerDownRight, Folder, Calendar, Link as LinkIcon, Sparkles, Check, AlertCircle, ShoppingBag, DollarSign, Search, ListFilter, Truck, ArrowRightLeft, CheckCircle2 } from 'lucide-react';
+import { Edit2, X, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, Folder, Calendar, Search, History as HistoryIcon, TrendingUp, Save } from 'lucide-react';
 
 interface InventoryProps {
   products: Product[];
@@ -14,23 +14,11 @@ interface InventoryProps {
 const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, onUpdateProducts }) => {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<{id: string, name: string, items: Product[]} | null>(null);
-  const [modalTab, setModalTab] = useState<'costing' | 'history'>('costing');
   
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
   const [selectedAliasToAdd, setSelectedAliasToAdd] = useState('');
   
-  // Date Filtering State
-  const [dateRange, setDateRange] = useState(() => {
-    const end = new Date();
-    const start = new Date();
-    start.setDate(end.getDate() - 30); // Default 30 days for relevance
-    return {
-      start: start.toISOString().split('T')[0],
-      end: end.toISOString().split('T')[0]
-    };
-  });
-
   // Group Logic State
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   
@@ -40,8 +28,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
   const [newGroupName, setNewGroupName] = useState('');
   const [selectedGroupId, setSelectedGroupId] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-
+  
   // --- SYNC EFFECT ---
   useEffect(() => {
       if (selectedProduct) {
@@ -54,82 +41,8 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
       }
   }, [products, selectedProduct, selectedGroup]); 
 
-  // --- CALCULATE SALES VOLUME (Detailed Breakdown) ---
-  const itemStats = useMemo(() => {
-      const stats = new Map<string, { sold: number, transit: number, returned: number, revenue: number }>();
-      const start = new Date(dateRange.start); start.setHours(0,0,0,0);
-      const end = new Date(dateRange.end); end.setHours(23,59,59,999);
-
-      orders.forEach(o => {
-          const d = new Date(o.created_at);
-          // Only count stats for selected date range
-          if (d >= start && d <= end && o.status !== 'CANCELLED') {
-              o.items.forEach(i => {
-                  const pid = i.product_id;
-                  if (!stats.has(pid)) stats.set(pid, { sold: 0, transit: 0, returned: 0, revenue: 0 });
-                  const s = stats.get(pid)!;
-                  
-                  if (o.status === OrderStatus.DELIVERED) {
-                      s.sold += i.quantity;
-                      s.revenue += (i.sale_price * i.quantity);
-                  } else if (o.status === OrderStatus.IN_TRANSIT) {
-                      s.transit += i.quantity;
-                  } else if (o.status === OrderStatus.RETURNED || o.status === OrderStatus.RTO_INITIATED) {
-                      s.returned += i.quantity;
-                  }
-              });
-          }
-      });
-      return stats;
-  }, [orders, dateRange]);
-
-  // --- VISIBILITY FILTER (STRICT BUT INCLUSIVE) ---
-  // Show item if:
-  // 1. It has Cost > 0 OR is Grouped (User Managed)
-  // 2. OR It is part of ANY active order (In Transit/Delivered/Returned), regardless of date range.
-  //    (We want to show the item row even if stats are 0 for the selected period, so user can edit cost)
-  const visibleItemIds = useMemo(() => {
-      const visibleIds = new Set<string>();
-      
-      // 1. User Managed
-      products.forEach(p => {
-          if (p.current_cogs > 0 || p.group_id) visibleIds.add(p.id);
-      });
-
-      // 2. Active Orders (Scan ALL orders to ensure no missing items)
-      orders.forEach(o => {
-          const isRelevant = 
-              o.status === OrderStatus.IN_TRANSIT || 
-              o.status === OrderStatus.DELIVERED || 
-              o.status === OrderStatus.RETURNED || 
-              o.status === OrderStatus.RTO_INITIATED;
-
-          if (isRelevant) {
-              o.items.forEach(i => {
-                  // Direct ID Match
-                  if (i.product_id && i.product_id !== 'unknown') {
-                      visibleIds.add(i.product_id);
-                  } else {
-                      // Fallback: Name Match
-                      const product = products.find(p => 
-                          p.title === i.product_name || 
-                          (p.aliases && p.aliases.includes(i.product_name))
-                      );
-                      if (product) visibleIds.add(product.id);
-                  }
-              });
-          }
-      });
-      
-      return visibleIds;
-  }, [products, orders]);
-
   const filteredProducts = useMemo(() => {
       return products.filter(p => {
-          // 1. Visibility Check
-          if (!visibleItemIds.has(p.id)) return false;
-
-          // 2. Search Check
           if (search) {
              const term = search.toLowerCase();
              return p.title.toLowerCase().includes(term) || 
@@ -138,80 +51,61 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
           }
           return true;
       });
-  }, [products, search, visibleItemIds]);
+  }, [products, search]);
 
   const inventoryTree = useMemo(() => {
-      const groups = new Map<string, { id: string, name: string, items: Product[], totalSold: number }>();
+      const groups = new Map<string, { id: string, name: string, items: Product[] }>();
       const singles: Product[] = [];
 
       filteredProducts.forEach(p => {
-          const s = itemStats.get(p.id);
-          const totalActivity = (s?.sold || 0) + (s?.transit || 0) + (s?.returned || 0);
-
           if (p.group_id && p.group_name) {
               if (!groups.has(p.group_id)) {
-                  groups.set(p.group_id, { id: p.group_id, name: p.group_name, items: [], totalSold: 0 });
+                  groups.set(p.group_id, { id: p.group_id, name: p.group_name, items: [] });
               }
               const g = groups.get(p.group_id)!;
               g.items.push(p);
-              g.totalSold += (s?.sold || 0);
           } else {
               singles.push(p);
           }
       });
       
-      const sortedGroups = Array.from(groups.values()).sort((a, b) => b.totalSold - a.totalSold);
-      const sortedSingles = singles.sort((a, b) => {
-          const sA = itemStats.get(a.id)?.sold || 0;
-          const sB = itemStats.get(b.id)?.sold || 0;
-          return sB - sA;
-      });
+      const sortedGroups = Array.from(groups.values()).sort((a, b) => a.name.localeCompare(b.name));
+      const sortedSingles = singles.sort((a, b) => a.title.localeCompare(b.title));
 
       return { groups: sortedGroups, singles: sortedSingles };
-  }, [filteredProducts, itemStats]);
+  }, [filteredProducts]);
 
   // Determine what is currently being edited
   const editTarget = selectedProduct || (selectedGroup ? selectedGroup.items[0] : null);
   const isGroupEdit = !!selectedGroup;
 
-  // --- FETCH RELATED ORDERS FOR HISTORY ---
-  const relatedOrders = useMemo(() => {
-      if (!editTarget) return [];
-      
-      const targetIds = isGroupEdit && selectedGroup 
-          ? new Set(selectedGroup.items.map(i => i.id))
-          : new Set([editTarget.id]);
-
-      const targetAliases = new Set(editTarget.aliases || []);
-
-      // Filter ANY order that contains this item
-      return orders.filter(o => 
-          o.items.some(item => 
-              targetIds.has(item.product_id) || 
-              (isGroupEdit ? false : item.product_name === editTarget.title) || 
-              targetAliases.has(item.product_name)
-          )
-      ).sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  }, [editTarget, selectedGroup, isGroupEdit, orders]);
-
   // --- Handlers ---
   const handleSaveCost = async (newCost: number) => {
     if (selectedProduct) {
-        const updated = { ...selectedProduct, current_cogs: newCost };
+        // Add to history
+        const now = new Date().toISOString();
+        const history = selectedProduct.cost_history || [];
+        const newHistory = [...history, { date: now, cogs: selectedProduct.current_cogs || 0 }]; // Save previous cost to history
+
+        const updated = { ...selectedProduct, current_cogs: newCost, cost_history: newHistory };
         await handleUpdateAndSave([updated]);
     } else if (selectedGroup) {
-        const updatedItems = selectedGroup.items.map(item => ({ ...item, current_cogs: newCost }));
+        const now = new Date().toISOString();
+        const updatedItems = selectedGroup.items.map(item => {
+            const history = item.cost_history || [];
+            const newHistory = [...history, { date: now, cogs: item.current_cogs || 0 }];
+            return { ...item, current_cogs: newCost, cost_history: newHistory };
+        });
         await handleUpdateAndSave(updatedItems);
     }
   };
 
   const handleUpdateAndSave = async (updatedProducts: Product[]) => {
-      setSaveError(null);
       setIsSaving(true);
       try {
           await onUpdateProducts(updatedProducts);
       } catch (e: any) {
-          setSaveError("Failed to save changes.");
+          console.error("Save failed", e);
       } finally {
           setIsSaving(false);
       }
@@ -294,14 +188,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Inventory Management</h2>
-          <p className="text-slate-500 text-sm">Track costs and view detailed stock movement (Sold, Transit, RTO).</p>
-        </div>
-        
-        <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm">
-            <Calendar size={16} className="text-slate-500" />
-            <input type="date" value={dateRange.start} onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))} className="text-sm bg-transparent border-none outline-none w-28 font-medium" />
-            <span className="text-slate-400">to</span>
-            <input type="date" value={dateRange.end} onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))} className="text-sm bg-transparent border-none outline-none w-28 font-medium" />
+          <p className="text-slate-500 text-sm">Manage product costs and view history.</p>
         </div>
       </div>
 
@@ -324,12 +211,9 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
               <thead className="bg-slate-50 border-b border-slate-200 text-xs uppercase font-bold text-slate-500">
                   <tr>
                       <th className="px-4 py-3 w-10"></th>
-                      <th className="px-4 py-3 w-[35%]">Product</th>
-                      <th className="px-4 py-3 text-center text-green-700 bg-green-50/50">Sold</th>
-                      <th className="px-4 py-3 text-center text-blue-700 bg-blue-50/50">In Transit</th>
-                      <th className="px-4 py-3 text-center text-red-700 bg-red-50/50">Returned</th>
-                      <th className="px-4 py-3">Cost (COGS)</th>
-                      <th className="px-4 py-3 text-right">Actions</th>
+                      <th className="px-4 py-3 w-[60%]">Product</th>
+                      <th className="px-4 py-3 text-right">Current Cost (COGS)</th>
+                      <th className="px-4 py-3 w-16 text-center">Edit</th>
                   </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -348,32 +232,20 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                           <span className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-bold">{group.items.length} Variants</span>
                                       </div>
                                   </td>
-                                  {/* Group Summary: Sum of all items stats */}
-                                  <td className="px-4 py-3 text-center font-bold text-green-700">
-                                      {group.items.reduce((sum, i) => sum + (itemStats.get(i.id)?.sold || 0), 0)}
-                                  </td>
-                                  <td className="px-4 py-3 text-center font-medium text-blue-600">
-                                      {group.items.reduce((sum, i) => sum + (itemStats.get(i.id)?.transit || 0), 0)}
-                                  </td>
-                                  <td className="px-4 py-3 text-center font-medium text-red-600">
-                                      {group.items.reduce((sum, i) => sum + (itemStats.get(i.id)?.returned || 0), 0)}
-                                  </td>
-                                  <td className="px-4 py-3 text-slate-400 text-xs italic">See variants</td>
                                   <td className="px-4 py-3 text-right">
-                                      <button onClick={(e) => { e.stopPropagation(); setSelectedGroup(group); setModalTab('costing'); }} className="text-indigo-600 font-bold text-xs bg-indigo-50 px-2 py-1 rounded border border-indigo-100">Edit Group</button>
+                                      <button onClick={(e) => { e.stopPropagation(); setSelectedGroup(group); }} className="text-indigo-600 font-bold text-xs bg-indigo-50 px-2 py-1 rounded border border-indigo-100">Edit Group Cost</button>
                                   </td>
+                                  <td className="px-4 py-3 text-center"></td>
                               </tr>
                               {isExpanded && group.items.map(item => {
-                                  const s = itemStats.get(item.id);
                                   return (
                                   <tr key={item.id} className="hover:bg-slate-50">
                                       <td className="px-4 py-3 pl-8"><button onClick={(e) => toggleSelect(item.id, e)}>{selectedIds.has(item.id) ? <CheckSquare size={16} className="text-brand-600" /> : <Square size={16} className="text-slate-300" />}</button></td>
                                       <td className="px-4 py-3 pl-12 text-slate-600 text-sm truncate max-w-[300px]">{item.title}</td>
-                                      <td className="px-4 py-3 text-center font-medium text-slate-700">{s?.sold || 0}</td>
-                                      <td className="px-4 py-3 text-center font-medium text-slate-500">{s?.transit || 0}</td>
-                                      <td className="px-4 py-3 text-center font-medium text-slate-500">{s?.returned || 0}</td>
-                                      <td className="px-4 py-3">{item.current_cogs === 0 ? <span className="text-red-500 font-bold text-xs bg-red-50 px-2 py-1 rounded">Set Cost</span> : formatCurrency(item.current_cogs)}</td>
-                                      <td className="px-4 py-3 text-right"><button onClick={() => { setSelectedProduct(item); setModalTab('costing'); }} className="text-slate-400 hover:text-slate-600"><Edit2 size={16} /></button></td>
+                                      <td className="px-4 py-3 text-right">
+                                          {item.current_cogs === 0 ? <span className="text-red-500 font-bold text-xs">Set Cost</span> : <span className="font-medium">{formatCurrency(item.current_cogs)}</span>}
+                                      </td>
+                                      <td className="px-4 py-3 text-center"><button onClick={() => { setSelectedProduct(item); }} className="text-slate-400 hover:text-slate-600"><Edit2 size={16} /></button></td>
                                   </tr>
                               )})}
                           </React.Fragment>
@@ -381,39 +253,24 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                   })}
                   {/* SINGLES */}
                   {inventoryTree.singles.map(item => {
-                      const s = itemStats.get(item.id);
                       return (
                       <tr key={item.id} className="hover:bg-slate-50 transition-colors">
                           <td className="px-4 py-3"><button onClick={(e) => toggleSelect(item.id, e)}>{selectedIds.has(item.id) ? <CheckSquare size={18} className="text-brand-600" /> : <Square size={18} className="text-slate-300" />}</button></td>
                           <td className="px-4 py-3">
                               <div className="flex items-center gap-2">
                                   <Package size={16} className="text-slate-400" />
-                                  <span className="font-medium text-slate-700 truncate max-w-[350px]">{item.title}</span>
+                                  <span className="font-medium text-slate-700 truncate max-w-[450px]">{item.title}</span>
                               </div>
                           </td>
-                          <td className="px-4 py-3 text-center font-bold text-slate-800 bg-green-50/30">
-                              {s?.sold || <span className="text-slate-300">-</span>}
-                          </td>
-                          <td className="px-4 py-3 text-center font-medium text-slate-600 bg-blue-50/30">
-                              {s?.transit || <span className="text-slate-300">-</span>}
-                          </td>
-                          <td className="px-4 py-3 text-center font-medium text-slate-600 bg-red-50/30">
-                              {s?.returned || <span className="text-slate-300">-</span>}
-                          </td>
-                          <td className="px-4 py-3">
+                          <td className="px-4 py-3 text-right">
                               {item.current_cogs === 0 ? (
-                                  <span className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full w-fit font-bold ${s?.sold ? 'bg-red-100 text-red-700 animate-pulse' : 'bg-slate-100 text-slate-500'}`}>
-                                      <AlertCircle size={12}/> {s?.sold ? 'MISSING COST' : 'No Cost'}
-                                  </span>
+                                  <span className="text-red-500 font-bold text-xs bg-red-50 px-2 py-1 rounded">No Cost Set</span>
                               ) : (
                                   <span className="font-bold text-slate-700">{formatCurrency(item.current_cogs)}</span>
                               )}
                           </td>
-                          <td className="px-4 py-3 text-right">
-                              <button onClick={() => { setSelectedProduct(item); setModalTab('history'); }} className="mr-2 text-brand-600 hover:text-brand-700 font-bold text-xs bg-brand-50 px-3 py-1.5 rounded border border-brand-100">
-                                  History
-                              </button>
-                              <button onClick={() => { setSelectedProduct(item); setModalTab('costing'); }} className="p-1.5 hover:bg-slate-100 rounded text-slate-400">
+                          <td className="px-4 py-3 text-center">
+                              <button onClick={() => { setSelectedProduct(item); }} className="p-1.5 hover:bg-slate-100 rounded text-slate-400">
                                   <Edit2 size={16} />
                               </button>
                           </td>
@@ -422,9 +279,9 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                   
                   {filteredProducts.length === 0 && (
                       <tr>
-                          <td colSpan={7} className="px-6 py-12 text-center text-slate-400">
-                              <p className="mb-2">No active items found.</p>
-                              <p className="text-xs">Items appear here when they are in an active order (Transit/Delivered/Returned).</p>
+                          <td colSpan={4} className="px-6 py-12 text-center text-slate-400">
+                              <p className="mb-2">No items found.</p>
+                              <p className="text-xs">Import orders from Shopify or sync couriers to see items.</p>
                           </td>
                       </tr>
                   )}
@@ -432,10 +289,10 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
           </table>
       </div>
 
-      {/* DETAIL MODAL (Redesigned with Tabs) */}
+      {/* DETAIL MODAL */}
       {(selectedProduct || selectedGroup) && editTarget && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-              <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
                   {/* Modal Header */}
                   <div className="p-6 border-b border-slate-200 bg-slate-50 flex justify-between items-start">
                       <div>
@@ -448,110 +305,88 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                       <button onClick={() => { setSelectedProduct(null); setSelectedGroup(null); }} className="text-slate-400 hover:text-slate-600"><X size={24} /></button>
                   </div>
 
-                  {/* Modal Tabs */}
-                  <div className="flex border-b border-slate-200">
-                      <button 
-                        onClick={() => setModalTab('costing')}
-                        className={`flex-1 py-3 text-sm font-bold border-b-2 transition-colors ${modalTab === 'costing' ? 'border-brand-600 text-brand-600 bg-brand-50/50' : 'border-transparent text-slate-500 hover:bg-slate-50'}`}
-                      >
-                          <div className="flex items-center justify-center gap-2"><DollarSign size={16} /> Cost & Mapping</div>
-                      </button>
-                      <button 
-                        onClick={() => setModalTab('history')}
-                        className={`flex-1 py-3 text-sm font-bold border-b-2 transition-colors ${modalTab === 'history' ? 'border-brand-600 text-brand-600 bg-brand-50/50' : 'border-transparent text-slate-500 hover:bg-slate-50'}`}
-                      >
-                          <div className="flex items-center justify-center gap-2"><ShoppingBag size={16} /> Order History <span className="bg-slate-200 text-slate-700 px-1.5 rounded-full text-[10px]">{relatedOrders.length}</span></div>
-                      </button>
-                  </div>
-                  
                   {/* Modal Content */}
-                  <div className="flex-1 overflow-y-auto p-6">
-                      {modalTab === 'costing' ? (
-                          <div className="space-y-8">
-                              <section>
-                                  <h4 className="text-sm font-bold text-slate-800 uppercase tracking-wide mb-4">Cost of Goods Sold (COGS)</h4>
-                                  <div className="flex gap-4 items-end mb-4">
-                                      <div className="flex-1">
-                                          <label className="block text-xs font-medium text-slate-500 mb-1">Current Unit Cost (PKR)</label>
-                                          <input type="number" className="w-full px-4 py-2 border rounded-lg text-lg font-bold" value={editTarget.current_cogs || ''} onChange={(e) => handleSaveCost(parseFloat(e.target.value) || 0)} />
-                                      </div>
-                                      <div className="text-xs text-slate-400 pb-2">Applies to new orders.</div>
+                  <div className="flex-1 overflow-y-auto p-6 space-y-8">
+                      {/* Section 1: Cost Management */}
+                      <section className="bg-white rounded-xl border border-slate-100 p-5 shadow-sm">
+                          <h4 className="text-sm font-bold text-slate-800 uppercase tracking-wide mb-4 flex items-center gap-2">
+                              <TrendingUp size={16} className="text-brand-600" /> Current Unit Cost (COGS)
+                          </h4>
+                          <div className="flex gap-4 items-end">
+                              <div className="flex-1">
+                                  <label className="block text-xs font-medium text-slate-500 mb-1">Cost Price (PKR)</label>
+                                  <div className="relative">
+                                      <input 
+                                        type="number" 
+                                        className="w-full px-4 py-3 border rounded-lg text-xl font-bold text-slate-900 focus:ring-2 focus:ring-brand-500 outline-none" 
+                                        value={editTarget.current_cogs || ''} 
+                                        onChange={(e) => handleSaveCost(parseFloat(e.target.value) || 0)} 
+                                        placeholder="0"
+                                      />
+                                      <div className="absolute right-3 top-3.5 text-slate-400 text-sm font-medium">PKR</div>
                                   </div>
-                              </section>
-                              <section>
-                                  <h4 className="text-sm font-bold text-slate-800 uppercase tracking-wide mb-4">Shopify Mapping (Aliases)</h4>
-                                  <div className="flex flex-wrap gap-2 mb-4">
-                                      {editTarget.aliases?.map(alias => (
-                                          <span key={alias} className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-xs font-medium flex items-center gap-2 border border-blue-100">{alias} <button onClick={() => handleRemoveAlias(alias)}><X size={12}/></button></span>
-                                      ))}
-                                  </div>
-                                  <div className="flex gap-2">
-                                      <select className="flex-1 px-3 py-2 border rounded-lg text-sm" value={selectedAliasToAdd} onChange={(e) => setSelectedAliasToAdd(e.target.value)}>
-                                          <option value="">Select unmapped title...</option>
-                                          {unmappedShopifyTitles.map(t => <option key={t} value={t}>{t}</option>)}
-                                      </select>
-                                      <button onClick={() => { if(selectedAliasToAdd) { handleAddAlias(selectedAliasToAdd); setSelectedAliasToAdd(''); }}} disabled={!selectedAliasToAdd} className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold">Link</button>
-                                  </div>
-                              </section>
+                              </div>
+                              <div className="pb-2 text-xs text-slate-400 max-w-[200px] leading-tight">
+                                  Updated cost will apply to future orders and profit calculations.
+                              </div>
                           </div>
-                      ) : (
-                          <div className="space-y-4">
-                              {relatedOrders.length === 0 ? (
-                                  <div className="text-center py-12 text-slate-400">
-                                      <PackageSearch size={48} className="mx-auto mb-3 opacity-20" />
-                                      <p>No orders found for this product.</p>
-                                  </div>
-                              ) : (
-                                  <table className="w-full text-left text-sm">
-                                      <thead className="bg-slate-50 text-xs uppercase font-bold text-slate-500 sticky top-0">
+                      </section>
+
+                      {/* Section 2: Cost History */}
+                      <section>
+                          <h4 className="text-sm font-bold text-slate-800 uppercase tracking-wide mb-4 flex items-center gap-2">
+                              <HistoryIcon size={16} className="text-slate-500" /> Cost History
+                          </h4>
+                          <div className="bg-slate-50 rounded-lg border border-slate-200 overflow-hidden">
+                              <table className="w-full text-left text-sm">
+                                  <thead className="bg-slate-100 text-xs font-bold text-slate-500">
+                                      <tr>
+                                          <th className="px-4 py-2">Date Changed</th>
+                                          <th className="px-4 py-2 text-right">Cost Recorded</th>
+                                      </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-200">
+                                      {editTarget.cost_history && editTarget.cost_history.length > 0 ? (
+                                          [...editTarget.cost_history].reverse().map((h, idx) => (
+                                              <tr key={idx}>
+                                                  <td className="px-4 py-2 text-slate-600">{new Date(h.date).toLocaleDateString()}</td>
+                                                  <td className="px-4 py-2 text-right font-medium text-slate-800">{formatCurrency(h.cogs)}</td>
+                                              </tr>
+                                          ))
+                                      ) : (
                                           <tr>
-                                              <th className="px-4 py-3">Order Date</th>
-                                              <th className="px-4 py-3">Order #</th>
-                                              <th className="px-4 py-3 text-center">Qty</th>
-                                              <th className="px-4 py-3">Status</th>
-                                              <th className="px-4 py-3">Courier</th>
+                                              <td colSpan={2} className="px-4 py-4 text-center text-slate-400 text-xs italic">
+                                                  No history available.
+                                              </td>
                                           </tr>
-                                      </thead>
-                                      <tbody className="divide-y divide-slate-100">
-                                          {relatedOrders.map(order => {
-                                              // Calculate quantity specific to this item
-                                              const targetIds = isGroupEdit && selectedGroup 
-                                                  ? new Set(selectedGroup.items.map(i => i.id))
-                                                  : new Set([editTarget.id]);
-                                              const targetAliases = new Set(editTarget.aliases || []);
-
-                                              const itemQty = order.items
-                                                  .filter(i => targetIds.has(i.product_id) || (isGroupEdit ? false : i.product_name === editTarget.title) || targetAliases.has(i.product_name))
-                                                  .reduce((sum, i) => sum + i.quantity, 0);
-
-                                              return (
-                                                  <tr key={order.id} className="hover:bg-slate-50">
-                                                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{new Date(order.created_at).toLocaleDateString()}</td>
-                                                      <td className="px-4 py-3 font-medium text-slate-900">{order.shopify_order_number}</td>
-                                                      <td className="px-4 py-3 text-center font-bold">{itemQty}</td>
-                                                      <td className="px-4 py-3">
-                                                          <span className={`px-2 py-1 rounded text-xs font-bold ${
-                                                              order.status === 'DELIVERED' ? 'bg-green-100 text-green-700' :
-                                                              order.status === 'RETURNED' ? 'bg-red-100 text-red-700' :
-                                                              order.status === 'IN_TRANSIT' ? 'bg-blue-100 text-blue-700' :
-                                                              'bg-slate-100 text-slate-600'
-                                                          }`}>{order.status.replace('_', ' ')}</span>
-                                                      </td>
-                                                      <td className="px-4 py-3 text-xs text-slate-500">{order.courier}</td>
-                                                  </tr>
-                                              );
-                                          })}
-                                      </tbody>
-                                  </table>
-                              )}
+                                      )}
+                                  </tbody>
+                              </table>
                           </div>
-                      )}
+                      </section>
+
+                      {/* Section 3: Mapping */}
+                      <section className="pt-4 border-t border-slate-100">
+                          <h4 className="text-sm font-bold text-slate-800 uppercase tracking-wide mb-4">Shopify Aliases</h4>
+                          <div className="flex flex-wrap gap-2 mb-4">
+                              {editTarget.aliases?.map(alias => (
+                                  <span key={alias} className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-xs font-medium flex items-center gap-2 border border-blue-100">{alias} <button onClick={() => handleRemoveAlias(alias)}><X size={12}/></button></span>
+                              ))}
+                          </div>
+                          <div className="flex gap-2">
+                              <select className="flex-1 px-3 py-2 border rounded-lg text-sm bg-white" value={selectedAliasToAdd} onChange={(e) => setSelectedAliasToAdd(e.target.value)}>
+                                  <option value="">Link unmapped Shopify title...</option>
+                                  {unmappedShopifyTitles.map(t => <option key={t} value={t}>{t}</option>)}
+                              </select>
+                              <button onClick={() => { if(selectedAliasToAdd) { handleAddAlias(selectedAliasToAdd); setSelectedAliasToAdd(''); }}} disabled={!selectedAliasToAdd} className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800 transition-colors">Link</button>
+                          </div>
+                      </section>
                   </div>
               </div>
           </div>
       )}
 
-      {/* Group Creation Modal (Same as before) */}
+      {/* Group Creation Modal */}
       {isGroupModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
                <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">

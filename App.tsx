@@ -434,12 +434,15 @@ const App: React.FC = () => {
         fetchedOrders.forEach(o => {
             if (!o.items) return;
             o.items.forEach(item => {
-                const fingerprint = item.variant_fingerprint || item.sku || 'unknown';
+                // IMPORTANT: Generate fingerprint even if SKU is missing
+                const fingerprint = item.variant_fingerprint || item.sku || 
+                                    item.product_name.toLowerCase().replace(/[^a-z0-9]/g, '-');
 
                 const exists = finalProducts.some(p => 
                     p.sku === item.sku || 
                     (p.variant_fingerprint && p.variant_fingerprint === fingerprint) ||
-                    (p.aliases && p.aliases.includes(item.product_name))
+                    (p.aliases && p.aliases.includes(item.product_name)) ||
+                    p.title === item.product_name // Direct title match fallback
                 );
 
                 if (!exists && !seenFingerprints.has(fingerprint)) {
@@ -786,6 +789,7 @@ const App: React.FC = () => {
                 {currentPage === 'dashboard' && <Dashboard orders={orders} shopifyOrders={shopifyOrders} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} storeName={storeName} />}
                 {currentPage === 'orders' && <Orders orders={orders} onTrackOrder={handleManualTrack} />}
                 {currentPage === 'couriers' && <Couriers orders={orders} />}
+                {/* Updated to pass tcsConfig for manual tracking */}
                 {currentPage === 'tcs-debug' && <TcsDebug orders={orders} shopifyOrders={shopifyOrders} onTrackOrder={handleManualTrack} tcsConfig={configs.tcs} />}
                 {currentPage === 'profitability' && <Profitability orders={orders} shopifyOrders={shopifyOrders} products={products} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} storeName={storeName} />}
                 {currentPage === 'inventory' && <Inventory products={products} orders={orders} shopifyOrders={shopifyOrders} onUpdateProducts={handleUpdateProducts} />}
