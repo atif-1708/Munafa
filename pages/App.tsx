@@ -349,8 +349,8 @@ const App: React.FC = () => {
                             if (ff && ff.tracking_number) {
                                 trackingNo = ff.tracking_number;
                                 orderId = ff.tracking_number; // Prefer Tracking Number as ID if available
-                                status = OrderStatus.IN_TRANSIT; // Default assumption if tracking fails
-                                rawStatusText = 'Shipped / In Transit';
+                                status = OrderStatus.BOOKED; // Default to BOOKED until status is confirmed via Live API
+                                rawStatusText = 'Booked / Pending Scan';
                                 
                                 // *** AUTOMATIC LIVE TRACKING ***
                                 if (tcsConfig && tcsConfig.api_token) {
@@ -360,7 +360,7 @@ const App: React.FC = () => {
                                         status = update.status;
                                         rawStatusText = update.raw_status_text;
                                     } catch (e) {
-                                        // Silent fail - will remain IN_TRANSIT
+                                        // Silent fail - remains BOOKED
                                     }
                                 }
                             } else {
