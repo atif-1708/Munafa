@@ -10,7 +10,7 @@ import Settings from './pages/Settings';
 import Inventory from './pages/Inventory';
 import Marketing from './pages/Marketing';
 import Reconciliation from './pages/Reconciliation'; 
-import TcsDebug from './pages/TcsDebug'; // New Import
+import TcsDebug from './pages/TcsDebug'; 
 import Auth from './pages/Auth'; 
 import { PostExAdapter } from './services/couriers/postex';
 import { TcsAdapter } from './services/couriers/tcs';
@@ -282,26 +282,29 @@ const App: React.FC = () => {
                  const isUnmapped = !existingRefNos.has(safeName);
                  const isFulfilled = s.fulfillment_status === 'fulfilled' || s.fulfillment_status === 'partial';
                  
-                 if (!isUnmapped || !isFulfilled) return false;
-
                  // --- Robust TCS Detection Logic ---
-                 // A. Check Tags
+                 // A. Check Tags (Include even if unfulfilled if tagged TCS)
                  const tags = (s.tags || '').toLowerCase();
-                 if (tags.includes('tcs')) return true;
+                 const hasTcsTag = tags.includes('tcs');
 
-                 // B. Check Fulfillments
-                 return s.fulfillments?.some(f => {
-                     const company = f.tracking_company ? String(f.tracking_company).toLowerCase() : '';
-                     const num = (f.tracking_number ? String(f.tracking_number) : '').replace(/[^a-zA-Z0-9]/g, '');
-                     
-                     // Negative check: Not other common couriers
-                     const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('mnp') || company.includes('callcourier');
-                     
-                     if (isOther) return false;
+                 if (isUnmapped && hasTcsTag) return true;
 
-                     // Positive check: Name includes TCS OR Number format is 9-16 digits (TCS standard)
-                     return company.includes('tcs') || /^\d{9,16}$/.test(num);
-                 });
+                 // If already fulfilled but not mapped, check if it's TCS fulfillment
+                 if (isUnmapped && isFulfilled) {
+                     return s.fulfillments?.some(f => {
+                         const company = f.tracking_company ? String(f.tracking_company).toLowerCase() : '';
+                         const num = (f.tracking_number ? String(f.tracking_number) : '').replace(/[^a-zA-Z0-9]/g, '');
+                         
+                         // Negative check: Not other common couriers
+                         const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('mnp') || company.includes('callcourier');
+                         
+                         if (isOther) return false;
+
+                         // Positive check: Name includes TCS OR Number format is 9-16 digits (TCS standard)
+                         return company.includes('tcs') || /^\d{9,16}$/.test(num);
+                     });
+                 }
+                 return false;
              });
 
              if (candidates.length > 0) {
@@ -310,7 +313,7 @@ const App: React.FC = () => {
                  infoMsgs.push(`Found ${tcsBatchCount} TCS orders via Shopify tags/tracking.`);
 
                  // --- BATCH PROCESSING FOR TCS AUTOMATIC TRACKING ---
-                 // TCS API only allows single tracking. We must process in small batches to not freeze the app or get blocked.
+                 // TCS API only allows single tracking. We must process in small batches.
                  
                  const BATCH_SIZE = 5;
                  const TCS_DELAY_MS = 1000;
@@ -337,33 +340,47 @@ const App: React.FC = () => {
                                 ff = sOrder.fulfillments.find(f => f.tracking_number && String(f.tracking_number).length > 5);
                             }
 
-                            if (!ff || !ff.tracking_number) return null;
+                            // --- KEY LOGIC UPDATE: Handle Unfulfilled TCS Orders ---
+                            let trackingNo = 'Pending';
+                            let status = OrderStatus.PENDING;
+                            let rawStatusText = 'Order Placed';
+                            let orderId = String(sOrder.id);
 
-                            let status = OrderStatus.IN_TRANSIT;
-                            let rawStatusText = 'Pending Check';
-                            
-                            // *** AUTOMATIC LIVE TRACKING ***
-                            if (tcsConfig && tcsConfig.api_token) {
-                                try {
-                                    const tcsAdapter = new TcsAdapter();
-                                    const update = await tcsAdapter.track(ff.tracking_number, tcsConfig);
-                                    status = update.status;
-                                    rawStatusText = update.raw_status_text;
-                                } catch (e) {
-                                    // Silent fail - will remain IN_TRANSIT
+                            if (ff && ff.tracking_number) {
+                                trackingNo = ff.tracking_number;
+                                orderId = ff.tracking_number; // Prefer Tracking Number as ID if available
+                                status = OrderStatus.BOOKED; // Default to BOOKED until status is confirmed via Live API
+                                rawStatusText = 'Booked / Pending Scan';
+                                
+                                // *** AUTOMATIC LIVE TRACKING ***
+                                if (tcsConfig && tcsConfig.api_token) {
+                                    try {
+                                        const tcsAdapter = new TcsAdapter();
+                                        const update = await tcsAdapter.track(trackingNo, tcsConfig);
+                                        status = update.status;
+                                        rawStatusText = update.raw_status_text;
+                                    } catch (e) {
+                                        // Silent fail - remains BOOKED
+                                    }
                                 }
+                            } else {
+                                // If unfulfilled but tagged TCS
+                                rawStatusText = 'Waiting for Fulfillment';
                             }
 
                             const cod = parseFloat(sOrder.total_price || '0');
                             const safeItems = Array.isArray(sOrder.line_items) ? sOrder.line_items : [];
+                            
+                            // Use Shipping Address City if available, else Customer City
+                            const customerCity = sOrder.shipping_address?.city || sOrder.customer?.city || 'Unknown';
 
                             const newOrder: Order = {
-                                id: ff.tracking_number,
+                                id: orderId,
                                 shopify_order_number: sOrder.name || 'Unknown',
                                 created_at: sOrder.created_at,
-                                customer_city: sOrder.customer?.city || 'Unknown',
+                                customer_city: customerCity,
                                 courier: CourierName.TCS,
-                                tracking_number: ff.tracking_number,
+                                tracking_number: trackingNo,
                                 status: status,
                                 payment_status: PaymentStatus.UNPAID,
                                 cod_amount: cod,
@@ -441,9 +458,15 @@ const App: React.FC = () => {
             const rateCard = fetchedSettings.rates[order.courier] || fetchedSettings.rates[CourierName.POSTEX];
             const isRto = order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED;
             const updatedItems = order.items.map(item => {
-                const productDef = finalProducts.find(p => (p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) || p.sku === item.sku);
+                const productDef = finalProducts.find(p => (p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) || p.sku === item.sku || p.title === item.product_name);
                 const historicalCogs = productDef ? getCostAtDate(productDef, order.created_at) : 0;
-                return { ...item, cogs_at_time_of_order: historicalCogs };
+                
+                return { 
+                    ...item, 
+                    cogs_at_time_of_order: historicalCogs,
+                    // LINKING FIX: Ensure product_id is set to the valid one from our list, not 'unknown'
+                    product_id: productDef ? productDef.id : item.product_id 
+                };
             });
             
             const taxAmount = order.status === OrderStatus.DELIVERED ? (order.cod_amount * (fetchedSettings.taxRate / 100)) : 0;
@@ -755,9 +778,9 @@ const App: React.FC = () => {
         ) : (
             <>
                 {currentPage === 'dashboard' && <Dashboard orders={orders} shopifyOrders={shopifyOrders} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} storeName={storeName} />}
-                {currentPage === 'orders' && <Orders orders={orders} />}
+                {currentPage === 'orders' && <Orders orders={orders} onTrackOrder={handleManualTrack} />}
                 {currentPage === 'couriers' && <Couriers orders={orders} />}
-                {currentPage === 'tcs-debug' && <TcsDebug orders={orders} shopifyOrders={shopifyOrders} onTrackOrder={handleManualTrack} />}
+                {currentPage === 'tcs-debug' && <TcsDebug orders={orders} shopifyOrders={shopifyOrders} onTrackOrder={handleManualTrack} tcsConfig={configs.tcs} />}
                 {currentPage === 'profitability' && <Profitability orders={orders} shopifyOrders={shopifyOrders} products={products} adSpend={adSpend} adsTaxRate={settings.adsTaxRate} storeName={storeName} />}
                 {currentPage === 'inventory' && <Inventory products={products} orders={orders} shopifyOrders={shopifyOrders} onUpdateProducts={handleUpdateProducts} />}
                 {currentPage === 'marketing' && <Marketing adSpend={adSpend} products={products} orders={orders} onAddAdSpend={handleUpdateAdSpend} onDeleteAdSpend={handleDeleteAdSpend} onSyncAdSpend={handleSyncAdSpend} onNavigate={setCurrentPage} />}

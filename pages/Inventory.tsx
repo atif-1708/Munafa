@@ -97,7 +97,8 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                       (p.variant_fingerprint && p.variant_fingerprint === i.variant_fingerprint) || 
                       p.sku === i.sku || 
                       p.id === i.product_id ||
-                      p.title === i.product_name
+                      p.title === i.product_name ||
+                      (p.aliases && p.aliases.includes(i.product_name))
                   );
                   
                   if (product) visibleIds.add(product.id);
