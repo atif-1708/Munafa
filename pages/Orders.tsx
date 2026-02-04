@@ -180,12 +180,14 @@ const Orders: React.FC<OrdersProps> = ({ orders, onTrackOrder }) => {
                                   order.status !== OrderStatus.BOOKED && 
                                   order.status !== OrderStatus.CANCELLED;
 
+                const itemSummary = order.items.map(i => `${i.quantity}x ${i.product_name}`).join(', ');
+
                 return (
                 <tr key={order.id} className="hover:bg-slate-50 transition-colors">
                   <td className="px-6 py-4">
                     <div className="font-medium text-slate-900">{order.shopify_order_number}</div>
-                    <div className="text-xs text-slate-500 mt-1 truncate max-w-[200px]" title={order.items.map(i => i.product_name).join(', ')}>
-                      {order.items.map(i => i.product_name).join(', ')}
+                    <div className="text-xs text-slate-500 mt-1 truncate max-w-[250px] font-medium" title={itemSummary}>
+                      {itemSummary}
                     </div>
                   </td>
                   <td className="px-6 py-4 text-slate-600">

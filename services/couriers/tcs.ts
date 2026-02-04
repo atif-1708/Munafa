@@ -56,13 +56,14 @@ export class TcsAdapter implements CourierAdapter {
       let rawStatus = "Unknown";
       let statusDate = new Date().toISOString();
       let foundData = false;
+      const cleanCN = trackingNumber.trim().replace(/\s/g, '');
 
       // 1. Try Live Tracking (GetDynamicTrackDetail) - Page 32 of Guide
       try {
           const data = await this.request(
               `${this.TRACKING_URL}/GetDynamicTrackDetail`, 
               config, 
-              { consignee: trackingNumber }
+              { consignee: cleanCN }
           );
           
           if (data) {
@@ -89,13 +90,13 @@ export class TcsAdapter implements CourierAdapter {
           }
       } catch (e: any) {
           if (e.message.includes("Authentication Failed")) throw e;
-          console.warn(`TCS Live Track failed for ${trackingNumber}:`, e.message);
+          console.warn(`TCS Live Track failed for ${cleanCN}:`, e.message);
       }
 
       // 2. Fallback to Shipment Info (Booking Data) if Live Tracking failed
       if ((!foundData || rawStatus === "Unknown") && !rawStatus.includes("Invalid Token")) {
            try {
-               const data = await this.request(`${this.ECOM_URL}/shipmentinfo`, config, { consignmentNo: trackingNumber });
+               const data = await this.request(`${this.ECOM_URL}/shipmentinfo`, config, { consignmentNo: cleanCN });
                
                let item = null;
                if (Array.isArray(data) && data.length > 0) item = data[0];
@@ -110,7 +111,7 @@ export class TcsAdapter implements CourierAdapter {
                    }
                }
            } catch (e) {
-               console.warn(`TCS Fallback failed for ${trackingNumber}`);
+               console.warn(`TCS Fallback failed for ${cleanCN}`);
            }
       }
 
@@ -122,7 +123,7 @@ export class TcsAdapter implements CourierAdapter {
       if (displayStatus.includes('\n')) displayStatus = displayStatus.split('\n')[0]; 
 
       return {
-          tracking_number: trackingNumber,
+          tracking_number: cleanCN,
           status: status,
           raw_status_text: displayStatus, 
           courier_timestamp: statusDate
@@ -137,16 +138,10 @@ export class TcsAdapter implements CourierAdapter {
       // Step 1: Check if token exists
       if (!config.api_token) throw new Error("Access Token is required");
 
-      // Step 2: Test Data Access
-      const end = new Date();
-      const start = new Date();
-      start.setDate(start.getDate() - 7); 
-      
-      const customerNo = config.merchant_id || "";
-
       try {
            // We use a dummy tracking number just to check if the API rejects the token
-           const res = await this.request(`${this.TRACKING_URL}/GetDynamicTrackDetail`, config, { consignee: '123456789' });
+           // "779412326902" is from the PDF examples
+           const res = await this.request(`${this.TRACKING_URL}/GetDynamicTrackDetail`, config, { consignee: '779412326902' });
            
            if (res.message === 'Invalid access token' || res.code === '401' || res.status === 401) {
                throw new Error("Invalid Access Token");
@@ -162,7 +157,8 @@ export class TcsAdapter implements CourierAdapter {
   }
 
   async fetchRecentOrders(config: IntegrationConfig): Promise<Order[]> {
-      // ... existing implementation remains same ...
+      // TCS doesn't have a simple "list all recent orders" API in the public docs easily accessible
+      // without customer number and complex setup. We rely on Shopify Backfill + Live Tracking.
       return []; 
   }
 
@@ -171,6 +167,7 @@ export class TcsAdapter implements CourierAdapter {
       
       // Success Check
       if (s === 'ok' || s.includes('delivered') || s === 'shipment delivered') {
+          // Careful: "Returned to Shipper" sometimes contains "Delivered" text
           if (s.includes('shipper') || s.includes('origin')) {
               return OrderStatus.RETURNED;
           }
@@ -192,7 +189,20 @@ export class TcsAdapter implements CourierAdapter {
           return OrderStatus.RTO_INITIATED;
       }
       
-      return OrderStatus.IN_TRANSIT;
+      // Explicit In Transit Checks (to distinguish from Unknown/Booked)
+      if (
+          s.includes('transit') || 
+          s.includes('departed') || 
+          s.includes('arrived') || 
+          s.includes('out for delivery') ||
+          s.includes('received at') ||
+          s.includes('forwarded')
+      ) {
+          return OrderStatus.IN_TRANSIT;
+      }
+      
+      // Default fallback for Unknown / Booked
+      return OrderStatus.BOOKED;
   }
 
   private parseDate(str: string): string {

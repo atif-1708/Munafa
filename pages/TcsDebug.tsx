@@ -104,7 +104,7 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
               log(">> SUCCESS: Connected and retrieved tracking data.");
               setConnectionStatus('success');
           } else {
-              log(">> WARNING: Connected but response format is unexpected.");
+              log(">> WARNING: Connected but response format is unexpected. (Check Raw Body)");
               setConnectionStatus('success'); // Still technically connected
           }
 
@@ -227,6 +227,7 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
                   <thead className="bg-slate-50 text-xs uppercase font-bold text-slate-500">
                       <tr>
                           <th className="px-4 py-2">Tracking #</th>
+                          <th className="px-4 py-2">Order Details (Qty & Product)</th>
                           <th className="px-4 py-2">System Status</th>
                           <th className="px-4 py-2">Raw Courier Message</th>
                       </tr>
@@ -235,6 +236,15 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
                       {trackingOrders.slice(0, 10).map(o => (
                           <tr key={o.id}>
                               <td className="px-4 py-2 font-mono">{o.tracking_number}</td>
+                              <td className="px-4 py-2">
+                                  <div className="flex flex-col gap-1">
+                                      {o.items.map((item, idx) => (
+                                          <div key={idx} className="text-xs font-medium text-slate-700">
+                                              {item.quantity}x {item.product_name}
+                                          </div>
+                                      ))}
+                                  </div>
+                              </td>
                               <td className="px-4 py-2">
                                   <span className={`px-2 py-0.5 rounded text-xs ${o.status === 'DELIVERED' ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
                                       {o.status}
@@ -245,7 +255,7 @@ const TcsDebug: React.FC<TcsDebugProps> = ({ orders = [], shopifyOrders = [], on
                               </td>
                           </tr>
                       ))}
-                      {trackingOrders.length === 0 && <tr><td colSpan={3} className="px-4 py-4 text-center text-slate-400">No TCS orders found.</td></tr>}
+                      {trackingOrders.length === 0 && <tr><td colSpan={4} className="px-4 py-4 text-center text-slate-400">No TCS orders found.</td></tr>}
                   </tbody>
               </table>
           </div>
