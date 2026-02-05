@@ -220,8 +220,8 @@ const App: React.FC = () => {
 
         setIsConfigured(true);
         const finalProducts = [...savedProducts];
-        // Track seen titles to prevent duplicates
-        const seenTitles = new Set(savedProducts.map(p => p.title.trim()));
+        // Track seen titles to prevent duplicates (using lower case for strictness)
+        const seenTitles = new Set(savedProducts.map(p => p.title.trim().toLowerCase()));
 
         // E. Fetch Shopify Data 
         let rawShopifyOrders: ShopifyOrder[] = [];
@@ -383,16 +383,22 @@ const App: React.FC = () => {
                             const customerCity = sOrder.shipping_address?.city || sOrder.customer?.city || 'Unknown';
 
                             // --- CONSOLIDATE ITEMS (User Requirement: Single line for the whole order) ---
-                            // Construct a combined name like "2x Shirt (Red) + 1x Pant (Blue)"
+                            // We construct a combined name like "1x Pant (Blue) + 2x Shirt (Red)"
+                            // CRITICAL: Sort items alphabetically by name to ensure "A + B" matches "B + A" if order differs.
                             let combinedName = '';
                             let totalItemPrice = 0;
                             
                             if (safeItems.length > 0) {
-                                combinedName = safeItems.map(li => {
-                                    const qty = li.quantity || 1;
-                                    const name = li.name || li.title || 'Item';
-                                    return `${qty}x ${name}`;
-                                }).join(' + ');
+                                combinedName = safeItems
+                                    .map(li => {
+                                        const qty = li.quantity || 1;
+                                        const name = (li.name || li.title || 'Item').trim();
+                                        return { name, qty, str: `${qty}x ${name}` };
+                                    })
+                                    .sort((a, b) => a.name.localeCompare(b.name)) // ALPHABETICAL SORT to prevent duplicates
+                                    .map(i => i.str)
+                                    .join(' + ');
+
                                 // Calculate total item price
                                 totalItemPrice = safeItems.reduce((acc, curr) => acc + (parseFloat(curr.price || '0') * (curr.quantity || 1)), 0);
                             } else {
@@ -458,15 +464,16 @@ const App: React.FC = () => {
             o.items.forEach(item => {
                 // FORCE: Use Product Name as the unique fingerprint.
                 const fingerprint = item.product_name.trim();
+                const fingerprintLower = fingerprint.toLowerCase();
 
-                // Check against existing products by Title (exact match)
+                // Check against existing products by Title (exact match, case insensitive check)
                 const exists = finalProducts.some(p => 
-                    p.title.trim() === fingerprint ||
-                    (p.aliases && p.aliases.includes(fingerprint))
+                    p.title.trim().toLowerCase() === fingerprintLower ||
+                    (p.aliases && p.aliases.some(a => a.toLowerCase() === fingerprintLower))
                 );
 
-                if (!exists && !seenTitles.has(fingerprint)) {
-                    seenTitles.add(fingerprint);
+                if (!exists && !seenTitles.has(fingerprintLower)) {
+                    seenTitles.add(fingerprintLower);
                     
                     // Generate new ID for this specific variant name
                     const uniqueId = (item.product_id && item.product_id !== 'unknown') ? item.product_id : generateUUID();
