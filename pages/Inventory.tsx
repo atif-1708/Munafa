@@ -374,7 +374,10 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                   <tr key={item.id} className="hover:bg-slate-50">
                                       <td className="px-4 py-3 pl-8"><button onClick={(e) => toggleSelect(item.id, e)}>{selectedIds.has(item.id) ? <CheckSquare size={16} className="text-brand-600" /> : <Square size={16} className="text-slate-300" />}</button></td>
                                       <td className="px-4 py-3 pl-12">
-                                          <div className="text-slate-700 text-sm font-medium">{item.title}</div>
+                                          <div className="text-xs text-slate-600 flex items-center gap-1.5">
+                                              <span className="font-bold bg-slate-100 px-1.5 rounded text-slate-700">1x</span> 
+                                              <span className="truncate max-w-[350px] font-medium text-slate-700" title={item.title}>{item.title}</span>
+                                          </div>
                                       </td>
                                       <td className="px-4 py-3 text-right">
                                           {item.current_cogs === 0 ? <span className="text-red-500 font-bold text-xs">Set Cost</span> : <span className="font-medium">{formatCurrency(item.current_cogs)}</span>}
@@ -391,11 +394,9 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                       <tr key={item.id} className="hover:bg-slate-50 transition-colors">
                           <td className="px-4 py-3"><button onClick={(e) => toggleSelect(item.id, e)}>{selectedIds.has(item.id) ? <CheckSquare size={18} className="text-brand-600" /> : <Square size={18} className="text-slate-300" />}</button></td>
                           <td className="px-4 py-3">
-                              <div className="flex items-start gap-3">
-                                  <div className="mt-1"><Package size={16} className="text-slate-400" /></div>
-                                  <div>
-                                      <div className="font-medium text-slate-700">{item.title}</div>
-                                  </div>
+                              <div className="text-xs text-slate-600 flex items-center gap-1.5">
+                                  <span className="font-bold bg-slate-100 px-1.5 rounded text-slate-700">1x</span> 
+                                  <span className="truncate max-w-[400px] font-medium text-slate-700" title={item.title}>{item.title}</span>
                               </div>
                           </td>
                           <td className="px-4 py-3 text-right">
@@ -424,41 +425,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
               </tbody>
           </table>
       </div>
-
-      {/* AUTO GROUP MODAL */}
-      {showAutoGroups && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-              <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
-                  <div className="p-6 border-b border-slate-200 flex justify-between items-center">
-                      <h3 className="font-bold text-xl text-slate-900 flex items-center gap-2">
-                          <Sparkles className="text-brand-600" size={20} /> Suggested Groups
-                      </h3>
-                      <button onClick={() => setShowAutoGroups(false)} className="text-slate-400 hover:text-slate-600"><X size={20}/></button>
-                  </div>
-                  <div className="p-6 overflow-y-auto flex-1 space-y-4">
-                      {suggestedGroups.map((sg, idx) => (
-                          <div key={idx} className="border border-slate-200 rounded-xl p-4 bg-slate-50 flex flex-col sm:flex-row justify-between items-center gap-4">
-                              <div className="flex-1">
-                                  <h4 className="font-bold text-slate-800">{sg.name}</h4>
-                                  <div className="text-xs text-slate-500 mt-1 flex flex-wrap gap-2">
-                                      {sg.items.map(i => (
-                                          <span key={i.id} className="bg-white border px-2 py-0.5 rounded">{i.title}</span>
-                                      ))}
-                                  </div>
-                              </div>
-                              <button 
-                                  onClick={() => handleApplyAutoGroup(sg.name, sg.items)}
-                                  className="bg-slate-900 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-slate-800 flex items-center gap-2 shrink-0"
-                              >
-                                  Create Group <ArrowRight size={14}/>
-                              </button>
-                          </div>
-                      ))}
-                      {suggestedGroups.length === 0 && <p className="text-center text-slate-500">No suggestions found currently.</p>}
-                  </div>
-              </div>
-          </div>
-      )}
 
       {/* DETAIL MODAL */}
       {(selectedProduct || selectedGroup) && editTarget && (
