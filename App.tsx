@@ -90,12 +90,12 @@ const App: React.FC = () => {
     return currentOrders.map(order => {
         const updatedItems = order.items.map(item => {
             // STRICT MATCHING: Use exact name fingerprint first
-            const fingerprint = item.product_name; // Full Name (e.g. "Shirt (Red)")
+            // We strip leading/trailing spaces but keep the exact string otherwise
+            const matchName = item.product_name.trim(); 
             
             const productDef = 
-                currentProducts.find(p => p.variant_fingerprint === fingerprint) ||
-                currentProducts.find(p => p.title === item.product_name) ||
-                currentProducts.find(p => p.aliases && p.aliases.includes(item.product_name));
+                currentProducts.find(p => p.title.trim() === matchName) ||
+                currentProducts.find(p => p.aliases && p.aliases.includes(matchName));
             
             let correctCogs = item.cogs_at_time_of_order;
             
@@ -164,8 +164,8 @@ const App: React.FC = () => {
                     id: p.id,
                     shopify_id: p.shopify_id || '',
                     title: p.title,
-                    sku: p.sku,
-                    variant_fingerprint: p.sku, // Will map to title in new logic if sku absent
+                    sku: '', // IGNORE SKU
+                    variant_fingerprint: p.title, 
                     image_url: p.image_url || '',
                     current_cogs: p.current_cogs,
                     cost_history: p.cost_history || [],
@@ -220,8 +220,8 @@ const App: React.FC = () => {
 
         setIsConfigured(true);
         const finalProducts = [...savedProducts];
-        // Use fingerprint set to track seen names
-        const seenFingerprints = new Set(savedProducts.map(p => p.variant_fingerprint || p.title));
+        // Track seen titles to prevent duplicates
+        const seenTitles = new Set(savedProducts.map(p => p.title.trim()));
 
         // E. Fetch Shopify Data 
         let rawShopifyOrders: ShopifyOrder[] = [];
@@ -401,20 +401,18 @@ const App: React.FC = () => {
                                 data_source: 'tracking', 
                                 courier_raw_status: rawStatusText, // Save the auto-fetched status
                                 items: safeItems.map(li => {
-                                    // Use 'name' (Full Title + Variant) to match User's request
-                                    // FORCE inclusion of Variant Title if it exists
-                                    let fullName = li.title;
-                                    if (li.variant_title && li.variant_title !== 'Default Title') {
-                                        fullName = `${li.title} (${li.variant_title})`;
-                                    }
+                                    // CRITICAL UPDATE: Use 'name' strictly. This usually includes "Title - Variant".
+                                    // If 'name' is missing, fallback to title.
+                                    // This ensures the Order Detail and Inventory Item match 100%.
+                                    const fullName = li.name || li.title;
 
                                     return {
                                         product_id: 'unknown',
                                         quantity: li.quantity,
                                         sale_price: parseFloat(li.price || '0'),
-                                        product_name: fullName,
-                                        sku: li.sku || 'unknown',
-                                        variant_fingerprint: fullName, // Use Name as fingerprint to separate variants
+                                        product_name: fullName, // Store strict Name
+                                        sku: '', // IGNORE SKU
+                                        variant_fingerprint: fullName, // Use Name as fingerprint
                                         cogs_at_time_of_order: 0
                                     }
                                 })
@@ -442,33 +440,32 @@ const App: React.FC = () => {
             setInfoMessage(infoMsgs.join(' '));
         }
 
-        // Process discovered items from Courier Orders
-        // IMPORTANT: This loop ensures every unique variant seen in orders creates a product entry
+        // Process discovered items from Courier Orders to build INVENTORY
+        // IMPORTANT: This creates inventory items based on unique names found in orders.
         fetchedOrders.forEach(o => {
             if (!o.items) return;
             o.items.forEach(item => {
-                // FORCE: Use Product Name as the unique fingerprint. Ignore SKU.
-                // This guarantees that "Item A (Red)" and "Item A (Blue)" are separate inventory items.
-                const fingerprint = item.product_name;
+                // FORCE: Use Product Name as the unique fingerprint.
+                // This guarantees that "Shirt - Red" and "Shirt - Blue" are separate items.
+                const fingerprint = item.product_name.trim();
 
-                // Check for existence. 
+                // Check against existing products by Title (exact match)
                 const exists = finalProducts.some(p => 
-                    p.variant_fingerprint === fingerprint ||
-                    p.title === item.product_name ||
-                    (p.aliases && p.aliases.includes(item.product_name))
+                    p.title.trim() === fingerprint ||
+                    (p.aliases && p.aliases.includes(fingerprint))
                 );
 
-                if (!exists && !seenFingerprints.has(fingerprint)) {
-                    seenFingerprints.add(fingerprint);
+                if (!exists && !seenTitles.has(fingerprint)) {
+                    seenTitles.add(fingerprint);
                     
-                    // Use a random ID or fingerprint if product_id is missing/unknown
+                    // Generate new ID for this specific variant name
                     const uniqueId = (item.product_id && item.product_id !== 'unknown') ? item.product_id : generateUUID();
                     
                     finalProducts.push({
                         id: uniqueId,
                         shopify_id: 'unknown',
-                        title: item.product_name, // This now contains Full Name + Variant
-                        sku: '', // User requested NO SKUs.
+                        title: fingerprint, // Exact string from Order (e.g. "T-Shirt - Red")
+                        sku: '', 
                         variant_fingerprint: fingerprint,
                         image_url: '',
                         current_cogs: 0,
@@ -483,8 +480,10 @@ const App: React.FC = () => {
             const rateCard = fetchedSettings.rates[order.courier] || fetchedSettings.rates[CourierName.POSTEX];
             const isRto = order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED;
             const updatedItems = order.items.map(item => {
-                // Match primarily by fingerprint (Full Name)
-                const productDef = finalProducts.find(p => p.variant_fingerprint === item.product_name || p.title === item.product_name || (p.aliases && p.aliases.includes(item.product_name)));
+                // Match primarily by Name (exact string)
+                const matchName = item.product_name.trim();
+                const productDef = finalProducts.find(p => p.title.trim() === matchName || (p.aliases && p.aliases.includes(matchName)));
+                
                 const historicalCogs = productDef ? getCostAtDate(productDef, order.created_at) : 0;
                 
                 return { 
@@ -519,7 +518,7 @@ const App: React.FC = () => {
                      id: p.id,
                      shopify_id: p.shopify_id,
                      title: p.title,
-                     sku: p.sku,
+                     sku: '',
                      image_url: p.image_url,
                      current_cogs: p.current_cogs
                  }));
@@ -559,7 +558,7 @@ const App: React.FC = () => {
               id: p.id,
               shopify_id: p.shopify_id,
               title: p.title,
-              sku: p.sku,
+              sku: '', // Ensure no SKU saved
               image_url: p.image_url,
               current_cogs: p.current_cogs,
               cost_history: p.cost_history,
