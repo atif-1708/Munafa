@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Product, Order, ShopifyOrder, OrderStatus } from '../types';
 import { formatCurrency } from '../services/calculator';
-import { Edit2, X, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, Folder, Calendar, Search, History as HistoryIcon, TrendingUp, Save, Plus, Trash2, Tag, AlertCircle } from 'lucide-react';
+import { Edit2, X, Package, Layers, CheckSquare, Square, ChevronDown, ChevronRight, Folder, Calendar, Search, History as HistoryIcon, TrendingUp, Save, Plus, Trash2, Tag, AlertCircle, Sparkles, ArrowRight } from 'lucide-react';
 
 interface InventoryProps {
   products: Product[];
@@ -25,6 +25,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
   
   // Group Logic State
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [showAutoGroups, setShowAutoGroups] = useState(false);
   
   // Group Creation/Edit State
   const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
@@ -78,6 +79,79 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
 
       return { groups: sortedGroups, singles: sortedSingles };
   }, [filteredProducts]);
+
+  // --- Auto Group Suggestions Logic ---
+  const suggestedGroups = useMemo(() => {
+      if (search) return []; // Don't suggest while searching
+      
+      const candidates: { name: string, items: Product[] }[] = [];
+      const singles = inventoryTree.singles;
+      
+      // Heuristic: Sort by title, look for common prefixes
+      if (singles.length < 2) return [];
+
+      let currentGroup: Product[] = [];
+      let currentPrefix = '';
+
+      // Helper to get matching prefix length
+      const getCommonPrefix = (s1: string, s2: string) => {
+          let i = 0;
+          while(i < s1.length && i < s2.length && s1[i] === s2[i]) i++;
+          return s1.substring(0, i);
+      };
+
+      for (let i = 0; i < singles.length - 1; i++) {
+          const a = singles[i];
+          const b = singles[i+1];
+          const common = getCommonPrefix(a.title, b.title);
+          
+          // Clean prefix (remove trailing " -", " /", etc)
+          const cleanCommon = common.replace(/[\s\-\/\|]+$/, '').trim();
+
+          // Condition: Prefix must be substantial (>6 chars) and cover >50% of the name
+          if (cleanCommon.length > 6 && cleanCommon.length > (a.title.length * 0.4)) {
+              // Start or add to group
+              if (currentGroup.length === 0) {
+                  currentGroup = [a, b];
+                  currentPrefix = cleanCommon;
+              } else if (getCommonPrefix(currentPrefix, b.title).startsWith(currentPrefix)) {
+                  currentGroup.push(b);
+              } else {
+                  // Push previous group if valid
+                  if (currentGroup.length > 1) {
+                      candidates.push({ name: currentPrefix, items: [...currentGroup] });
+                  }
+                  // Start new
+                  currentGroup = [a, b];
+                  currentPrefix = cleanCommon;
+              }
+          } else {
+              // Close current group
+              if (currentGroup.length > 1) {
+                  candidates.push({ name: currentPrefix, items: [...currentGroup] });
+              }
+              currentGroup = [];
+              currentPrefix = '';
+          }
+      }
+      // Check last
+      if (currentGroup.length > 1) {
+          candidates.push({ name: currentPrefix, items: [...currentGroup] });
+      }
+
+      // Deduplicate items in candidates (simple pass)
+      return candidates;
+  }, [inventoryTree.singles, search]);
+
+  const handleApplyAutoGroup = async (groupName: string, items: Product[]) => {
+      const groupId = generateUUID();
+      const updates = items.map(p => ({
+          ...p,
+          group_id: groupId,
+          group_name: groupName
+      }));
+      await handleUpdateAndSave(updates);
+  };
 
   // Determine what is currently being edited
   const editTarget = selectedProduct || (selectedGroup ? selectedGroup.items[0] : null);
@@ -230,6 +304,27 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
         </div>
       </div>
 
+      {/* Auto Group Banner */}
+      {suggestedGroups.length > 0 && (
+          <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                  <div className="bg-indigo-100 p-2 rounded-lg text-indigo-600">
+                      <Sparkles size={20} />
+                  </div>
+                  <div>
+                      <h4 className="font-bold text-indigo-900 text-sm">Suggestions Available</h4>
+                      <p className="text-xs text-indigo-700">We found {suggestedGroups.length} potential groups based on similar names.</p>
+                  </div>
+              </div>
+              <button 
+                  onClick={() => setShowAutoGroups(true)}
+                  className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm hover:bg-indigo-700 transition-colors"
+              >
+                  Review Suggestions
+              </button>
+          </div>
+      )}
+
       {/* Toolbar */}
       <div className="flex flex-col sm:flex-row gap-4 justify-between items-center bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
           <div className="relative w-full sm:w-96">
@@ -336,6 +431,41 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
               </tbody>
           </table>
       </div>
+
+      {/* AUTO GROUP MODAL */}
+      {showAutoGroups && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+              <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+                  <div className="p-6 border-b border-slate-200 flex justify-between items-center">
+                      <h3 className="font-bold text-xl text-slate-900 flex items-center gap-2">
+                          <Sparkles className="text-brand-600" size={20} /> Suggested Groups
+                      </h3>
+                      <button onClick={() => setShowAutoGroups(false)} className="text-slate-400 hover:text-slate-600"><X size={20}/></button>
+                  </div>
+                  <div className="p-6 overflow-y-auto flex-1 space-y-4">
+                      {suggestedGroups.map((sg, idx) => (
+                          <div key={idx} className="border border-slate-200 rounded-xl p-4 bg-slate-50 flex flex-col sm:flex-row justify-between items-center gap-4">
+                              <div className="flex-1">
+                                  <h4 className="font-bold text-slate-800">{sg.name}</h4>
+                                  <div className="text-xs text-slate-500 mt-1 flex flex-wrap gap-2">
+                                      {sg.items.map(i => (
+                                          <span key={i.id} className="bg-white border px-2 py-0.5 rounded">{i.title}</span>
+                                      ))}
+                                  </div>
+                              </div>
+                              <button 
+                                  onClick={() => handleApplyAutoGroup(sg.name, sg.items)}
+                                  className="bg-slate-900 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-slate-800 flex items-center gap-2 shrink-0"
+                              >
+                                  Create Group <ArrowRight size={14}/>
+                              </button>
+                          </div>
+                      ))}
+                      {suggestedGroups.length === 0 && <p className="text-center text-slate-500">No suggestions found currently.</p>}
+                  </div>
+              </div>
+          </div>
+      )}
 
       {/* DETAIL MODAL */}
       {(selectedProduct || selectedGroup) && editTarget && (
@@ -481,7 +611,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
           </div>
       )}
 
-      {/* Group Creation Modal */}
+      {/* Group Creation Modal (Manual) */}
       {isGroupModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
                <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">

@@ -398,8 +398,8 @@ const App: React.FC = () => {
                                 data_source: 'tracking', 
                                 courier_raw_status: rawStatusText, // Save the auto-fetched status
                                 items: safeItems.map(li => {
-                                    // Use 'name' if available (Full Product + Variant Name), else construct it.
-                                    // This fixes the issue of generic names appearing in Inventory.
+                                    // Use 'name' (Full Title + Variant) to match User's request
+                                    // Fallback: Construct it manually if 'name' is missing
                                     const variantPart = li.variant_title && li.variant_title !== 'Default Title' ? ` - ${li.variant_title}` : '';
                                     const fullName = li.name || `${li.title}${variantPart}`;
 
@@ -438,15 +438,16 @@ const App: React.FC = () => {
         }
 
         // Process discovered items from Courier Orders
+        // IMPORTANT: This loop ensures every unique variant seen in orders creates a product entry
         fetchedOrders.forEach(o => {
             if (!o.items) return;
             o.items.forEach(item => {
-                // IMPORTANT: Generate fingerprint even if SKU is missing
+                // Generate a consistent ID based on the FULL name if SKU is missing
                 const fingerprint = item.variant_fingerprint || item.sku || 
                                     item.product_name.toLowerCase().replace(/[^a-z0-9]/g, '-');
 
                 // Check for existence. 
-                // CRITICAL FIX: Do NOT merge 'unknown' SKUs together. If SKU is unknown, rely on Fingerprint (Name) match.
+                // CRITICAL FIX: Match against name/alias/sku to avoid duplicates, but create new if distinct name found.
                 const exists = finalProducts.some(p => 
                     (item.sku !== 'unknown' && p.sku === item.sku) || 
                     (p.variant_fingerprint && p.variant_fingerprint === fingerprint) ||
@@ -456,7 +457,9 @@ const App: React.FC = () => {
 
                 if (!exists && !seenFingerprints.has(fingerprint)) {
                     seenFingerprints.add(fingerprint);
+                    // Use fingerprint as ID if product_id is missing/unknown
                     const uniqueId = (item.product_id && item.product_id !== 'unknown') ? item.product_id : fingerprint;
+                    
                     finalProducts.push({
                         id: uniqueId,
                         shopify_id: 'unknown',
