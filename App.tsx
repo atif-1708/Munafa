@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
@@ -275,7 +274,9 @@ const App: React.FC = () => {
              const cutoffDate = new Date();
              cutoffDate.setDate(cutoffDate.getDate() - 120);
 
-             const existingRefNos = new Set(fetchedOrders.map(o => String(o.shopify_order_number || '').replace('#','')));
+             // Create sets of already fetched IDs (Order Numbers AND Tracking Numbers)
+             const existingRefNos = new Set(fetchedOrders.map(o => String(o.shopify_order_number || '').replace('#','').toLowerCase()));
+             const existingTrackingNos = new Set(fetchedOrders.map(o => String(o.tracking_number || '').toLowerCase()));
              
              // 2. Filter Candidates from Shopify
              const candidates = rawShopifyOrders.filter(s => {
@@ -285,9 +286,17 @@ const App: React.FC = () => {
                  const d = new Date(s.created_at);
                  if (d < cutoffDate) return false;
 
-                 // Duplication Check
-                 const safeName = String(s.name || '').replace('#','');
-                 const isUnmapped = !existingRefNos.has(safeName);
+                 // Duplication Check (Strict)
+                 const safeName = String(s.name || '').replace('#','').toLowerCase();
+                 const isRefExist = existingRefNos.has(safeName);
+                 if (isRefExist) return false;
+
+                 // Check if any fulfillment tracking number already exists in fetchedOrders
+                 const hasExistingTracking = s.fulfillments?.some(f => 
+                     f.tracking_number && existingTrackingNos.has(String(f.tracking_number).toLowerCase())
+                 );
+                 if (hasExistingTracking) return false;
+
                  const isFulfilled = s.fulfillment_status === 'fulfilled' || s.fulfillment_status === 'partial';
                  
                  // --- Robust TCS Detection Logic ---
@@ -295,10 +304,10 @@ const App: React.FC = () => {
                  const tags = (s.tags || '').toLowerCase();
                  const hasTcsTag = tags.includes('tcs');
 
-                 if (isUnmapped && hasTcsTag) return true;
+                 if (hasTcsTag) return true;
 
                  // If already fulfilled but not mapped, check if it's TCS fulfillment
-                 if (isUnmapped && isFulfilled) {
+                 if (isFulfilled) {
                      return s.fulfillments?.some(f => {
                          const company = f.tracking_company ? String(f.tracking_company).toLowerCase() : '';
                          const num = (f.tracking_number ? String(f.tracking_number) : '').replace(/[^a-zA-Z0-9]/g, '');
@@ -493,7 +502,25 @@ const App: React.FC = () => {
             });
         });
 
-        const processedOrders = fetchedOrders.map(order => {
+        // DEDUPLICATION: Final Check on Orders Array
+        // Ensure no two orders have the exact same Shopify Order Number
+        const uniqueOrdersMap = new Map<string, Order>();
+        fetchedOrders.forEach(order => {
+            const key = order.shopify_order_number.trim().toLowerCase().replace('#', '');
+            // If conflict, prefer the one that is NOT 'tracking' data source (i.e. prefer real API data)
+            // or prefer the one with a valid tracking number
+            if (uniqueOrdersMap.has(key)) {
+                const existing = uniqueOrdersMap.get(key)!;
+                if (existing.data_source === 'tracking' && order.data_source !== 'tracking') {
+                    uniqueOrdersMap.set(key, order);
+                }
+            } else {
+                uniqueOrdersMap.set(key, order);
+            }
+        });
+        const finalUniqueOrders = Array.from(uniqueOrdersMap.values());
+
+        const processedOrders = finalUniqueOrders.map(order => {
             const rateCard = fetchedSettings.rates[order.courier] || fetchedSettings.rates[CourierName.POSTEX];
             const isRto = order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED;
             const updatedItems = order.items.map(item => {
