@@ -399,9 +399,11 @@ const App: React.FC = () => {
                                 courier_raw_status: rawStatusText, // Save the auto-fetched status
                                 items: safeItems.map(li => {
                                     // Use 'name' (Full Title + Variant) to match User's request
-                                    // Fallback: Construct it manually if 'name' is missing
-                                    const variantPart = li.variant_title && li.variant_title !== 'Default Title' ? ` - ${li.variant_title}` : '';
-                                    const fullName = li.name || `${li.title}${variantPart}`;
+                                    // FORCE inclusion of Variant Title if it exists
+                                    let fullName = li.title;
+                                    if (li.variant_title && li.variant_title !== 'Default Title') {
+                                        fullName = `${li.title} (${li.variant_title})`;
+                                    }
 
                                     return {
                                         product_id: 'unknown',
@@ -443,7 +445,8 @@ const App: React.FC = () => {
             if (!o.items) return;
             o.items.forEach(item => {
                 // Generate a consistent ID based on the FULL name if SKU is missing
-                const fingerprint = item.variant_fingerprint || item.sku || 
+                // STRICT MODE: Use Name as fingerprint if no SKU to avoid merging variants
+                const fingerprint = item.sku !== 'unknown' ? item.sku : 
                                     item.product_name.toLowerCase().replace(/[^a-z0-9]/g, '-');
 
                 // Check for existence. 
