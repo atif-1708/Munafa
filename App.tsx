@@ -382,6 +382,23 @@ const App: React.FC = () => {
                             // Use Shipping Address City if available, else Customer City
                             const customerCity = sOrder.shipping_address?.city || sOrder.customer?.city || 'Unknown';
 
+                            // --- CONSOLIDATE ITEMS (User Requirement: Single line for the whole order) ---
+                            // Construct a combined name like "2x Shirt (Red) + 1x Pant (Blue)"
+                            let combinedName = '';
+                            let totalItemPrice = 0;
+                            
+                            if (safeItems.length > 0) {
+                                combinedName = safeItems.map(li => {
+                                    const qty = li.quantity || 1;
+                                    const name = li.name || li.title || 'Item';
+                                    return `${qty}x ${name}`;
+                                }).join(' + ');
+                                // Calculate total item price
+                                totalItemPrice = safeItems.reduce((acc, curr) => acc + (parseFloat(curr.price || '0') * (curr.quantity || 1)), 0);
+                            } else {
+                                combinedName = 'Unknown Item';
+                            }
+
                             const newOrder: Order = {
                                 id: orderId,
                                 shopify_order_number: sOrder.name || 'Unknown',
@@ -400,22 +417,15 @@ const App: React.FC = () => {
                                 tax_amount: 0,
                                 data_source: 'tracking', 
                                 courier_raw_status: rawStatusText, // Save the auto-fetched status
-                                items: safeItems.map(li => {
-                                    // CRITICAL UPDATE: Use 'name' strictly. This usually includes "Title - Variant".
-                                    // If 'name' is missing, fallback to title.
-                                    // This ensures the Order Detail and Inventory Item match 100%.
-                                    const fullName = li.name || li.title;
-
-                                    return {
-                                        product_id: 'unknown',
-                                        quantity: li.quantity,
-                                        sale_price: parseFloat(li.price || '0'),
-                                        product_name: fullName, // Store strict Name
-                                        sku: '', // IGNORE SKU
-                                        variant_fingerprint: fullName, // Use Name as fingerprint
-                                        cogs_at_time_of_order: 0
-                                    }
-                                })
+                                items: [{
+                                    product_id: 'unknown',
+                                    quantity: 1, // Treat the whole bundle as 1 unit
+                                    sale_price: totalItemPrice,
+                                    product_name: combinedName, // "2x Shirt + 1x Pant"
+                                    sku: '', 
+                                    variant_fingerprint: combinedName, // Use the combined string as fingerprint
+                                    cogs_at_time_of_order: 0
+                                }]
                             };
                             return newOrder;
                          } catch (err) {
@@ -442,11 +452,11 @@ const App: React.FC = () => {
 
         // Process discovered items from Courier Orders to build INVENTORY
         // IMPORTANT: This creates inventory items based on unique names found in orders.
+        // With consolidation, unique names are now like "2x Shirt + 1x Pant".
         fetchedOrders.forEach(o => {
             if (!o.items) return;
             o.items.forEach(item => {
                 // FORCE: Use Product Name as the unique fingerprint.
-                // This guarantees that "Shirt - Red" and "Shirt - Blue" are separate items.
                 const fingerprint = item.product_name.trim();
 
                 // Check against existing products by Title (exact match)
@@ -464,7 +474,7 @@ const App: React.FC = () => {
                     finalProducts.push({
                         id: uniqueId,
                         shopify_id: 'unknown',
-                        title: fingerprint, // Exact string from Order (e.g. "T-Shirt - Red")
+                        title: fingerprint, // Exact string from Order (e.g. "2x T-Shirt - Red + 1x Pant")
                         sku: '', 
                         variant_fingerprint: fingerprint,
                         image_url: '',

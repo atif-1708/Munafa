@@ -375,7 +375,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                       <td className="px-4 py-3 pl-8"><button onClick={(e) => toggleSelect(item.id, e)}>{selectedIds.has(item.id) ? <CheckSquare size={16} className="text-brand-600" /> : <Square size={16} className="text-slate-300" />}</button></td>
                                       <td className="px-4 py-3 pl-12">
                                           <div className="text-xs text-slate-600 flex items-center gap-1.5">
-                                              <span className="font-bold bg-slate-100 px-1.5 rounded text-slate-700">1x</span> 
                                               <span className="truncate max-w-[350px] font-medium text-slate-700" title={item.title}>{item.title}</span>
                                           </div>
                                       </td>
@@ -395,7 +394,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                           <td className="px-4 py-3"><button onClick={(e) => toggleSelect(item.id, e)}>{selectedIds.has(item.id) ? <CheckSquare size={18} className="text-brand-600" /> : <Square size={18} className="text-slate-300" />}</button></td>
                           <td className="px-4 py-3">
                               <div className="text-xs text-slate-600 flex items-center gap-1.5">
-                                  <span className="font-bold bg-slate-100 px-1.5 rounded text-slate-700">1x</span> 
                                   <span className="truncate max-w-[400px] font-medium text-slate-700" title={item.title}>{item.title}</span>
                               </div>
                           </td>
