@@ -51,7 +51,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
           if (search) {
              const term = search.toLowerCase();
              return p.title.toLowerCase().includes(term) || 
-                    p.sku.toLowerCase().includes(term) ||
                     (p.aliases && p.aliases.some(a => a.toLowerCase().includes(term)));
           }
           return true;
@@ -328,7 +327,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
       {/* Toolbar */}
       <div className="flex flex-col sm:flex-row gap-4 justify-between items-center bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
           <div className="relative w-full sm:w-96">
-              <input type="text" placeholder="Search product title or SKU..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-brand-500 outline-none" />
+              <input type="text" placeholder="Search product name..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-brand-500 outline-none" />
               <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
           </div>
           {selectedIds.size > 0 && (
@@ -344,7 +343,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
               <thead className="bg-slate-50 border-b border-slate-200 text-xs uppercase font-bold text-slate-500">
                   <tr>
                       <th className="px-4 py-3 w-10"></th>
-                      <th className="px-4 py-3 w-[60%]">Product Details</th>
+                      <th className="px-4 py-3 w-[60%]">Product Name</th>
                       <th className="px-4 py-3 text-right">Current Cost (COGS)</th>
                       <th className="px-4 py-3 w-16 text-center">Edit</th>
                   </tr>
@@ -376,7 +375,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                       <td className="px-4 py-3 pl-8"><button onClick={(e) => toggleSelect(item.id, e)}>{selectedIds.has(item.id) ? <CheckSquare size={16} className="text-brand-600" /> : <Square size={16} className="text-slate-300" />}</button></td>
                                       <td className="px-4 py-3 pl-12">
                                           <div className="text-slate-700 text-sm font-medium">{item.title}</div>
-                                          {item.sku && item.sku !== 'unknown' && <div className="text-xs text-slate-400 font-mono mt-0.5 flex items-center gap-1"><Tag size={10}/> {item.sku}</div>}
                                       </td>
                                       <td className="px-4 py-3 text-right">
                                           {item.current_cogs === 0 ? <span className="text-red-500 font-bold text-xs">Set Cost</span> : <span className="font-medium">{formatCurrency(item.current_cogs)}</span>}
@@ -397,11 +395,6 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                                   <div className="mt-1"><Package size={16} className="text-slate-400" /></div>
                                   <div>
                                       <div className="font-medium text-slate-700">{item.title}</div>
-                                      {item.sku && item.sku !== 'unknown' && (
-                                          <div className="text-xs text-slate-400 font-mono mt-0.5 flex items-center gap-1">
-                                              <Tag size={10}/> {item.sku}
-                                          </div>
-                                      )}
                                   </div>
                               </div>
                           </td>
@@ -479,7 +472,7 @@ const Inventory: React.FC<InventoryProps> = ({ products, orders, shopifyOrders, 
                               <h3 className="text-xl font-bold text-slate-900">{isGroupEdit ? selectedGroup?.name : selectedProduct?.title}</h3>
                           </div>
                           <p className="text-sm text-slate-500 font-mono flex items-center gap-2">
-                              {isGroupEdit ? `${selectedGroup?.items.length} Variants` : (selectedProduct?.sku || 'No SKU')}
+                              {isGroupEdit ? `${selectedGroup?.items.length} Variants` : ''}
                           </p>
                       </div>
                       <button onClick={() => { setSelectedProduct(null); setSelectedGroup(null); }} className="text-slate-400 hover:text-slate-600"><X size={24} /></button>

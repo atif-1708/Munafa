@@ -89,11 +89,13 @@ const App: React.FC = () => {
   const recalculateOrderCosts = useCallback((currentOrders: Order[], currentProducts: Product[]) => {
     return currentOrders.map(order => {
         const updatedItems = order.items.map(item => {
+            // STRICT MATCHING: Use exact name fingerprint first
+            const fingerprint = item.product_name; // Full Name (e.g. "Shirt (Red)")
+            
             const productDef = 
-                currentProducts.find(p => p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) ||
-                currentProducts.find(p => (p.sku !== 'unknown' && p.sku === item.sku)) || 
-                currentProducts.find(p => p.id === item.product_id) ||
-                currentProducts.find(p => p.aliases && p.aliases.includes(item.product_name)); // Improved Aliasing
+                currentProducts.find(p => p.variant_fingerprint === fingerprint) ||
+                currentProducts.find(p => p.title === item.product_name) ||
+                currentProducts.find(p => p.aliases && p.aliases.includes(item.product_name));
             
             let correctCogs = item.cogs_at_time_of_order;
             
@@ -163,7 +165,7 @@ const App: React.FC = () => {
                     shopify_id: p.shopify_id || '',
                     title: p.title,
                     sku: p.sku,
-                    variant_fingerprint: p.sku, 
+                    variant_fingerprint: p.sku, // Will map to title in new logic if sku absent
                     image_url: p.image_url || '',
                     current_cogs: p.current_cogs,
                     cost_history: p.cost_history || [],
@@ -218,7 +220,8 @@ const App: React.FC = () => {
 
         setIsConfigured(true);
         const finalProducts = [...savedProducts];
-        const seenFingerprints = new Set(savedProducts.map(p => p.variant_fingerprint || p.sku));
+        // Use fingerprint set to track seen names
+        const seenFingerprints = new Set(savedProducts.map(p => p.variant_fingerprint || p.title));
 
         // E. Fetch Shopify Data 
         let rawShopifyOrders: ShopifyOrder[] = [];
@@ -411,7 +414,7 @@ const App: React.FC = () => {
                                         sale_price: parseFloat(li.price || '0'),
                                         product_name: fullName,
                                         sku: li.sku || 'unknown',
-                                        variant_fingerprint: li.sku || 'unknown',
+                                        variant_fingerprint: fullName, // Use Name as fingerprint to separate variants
                                         cogs_at_time_of_order: 0
                                     }
                                 })
@@ -444,30 +447,28 @@ const App: React.FC = () => {
         fetchedOrders.forEach(o => {
             if (!o.items) return;
             o.items.forEach(item => {
-                // Generate a consistent ID based on the FULL name if SKU is missing
-                // STRICT MODE: Use Name as fingerprint if no SKU to avoid merging variants
-                const fingerprint = item.sku !== 'unknown' ? item.sku : 
-                                    item.product_name.toLowerCase().replace(/[^a-z0-9]/g, '-');
+                // FORCE: Use Product Name as the unique fingerprint. Ignore SKU.
+                // This guarantees that "Item A (Red)" and "Item A (Blue)" are separate inventory items.
+                const fingerprint = item.product_name;
 
                 // Check for existence. 
-                // CRITICAL FIX: Match against name/alias/sku to avoid duplicates, but create new if distinct name found.
                 const exists = finalProducts.some(p => 
-                    (item.sku !== 'unknown' && p.sku === item.sku) || 
-                    (p.variant_fingerprint && p.variant_fingerprint === fingerprint) ||
-                    (p.aliases && p.aliases.includes(item.product_name)) ||
-                    p.title === item.product_name // Direct title match fallback
+                    p.variant_fingerprint === fingerprint ||
+                    p.title === item.product_name ||
+                    (p.aliases && p.aliases.includes(item.product_name))
                 );
 
                 if (!exists && !seenFingerprints.has(fingerprint)) {
                     seenFingerprints.add(fingerprint);
-                    // Use fingerprint as ID if product_id is missing/unknown
-                    const uniqueId = (item.product_id && item.product_id !== 'unknown') ? item.product_id : fingerprint;
+                    
+                    // Use a random ID or fingerprint if product_id is missing/unknown
+                    const uniqueId = (item.product_id && item.product_id !== 'unknown') ? item.product_id : generateUUID();
                     
                     finalProducts.push({
                         id: uniqueId,
                         shopify_id: 'unknown',
                         title: item.product_name, // This now contains Full Name + Variant
-                        sku: item.sku !== 'unknown' ? item.sku : fingerprint, 
+                        sku: '', // User requested NO SKUs.
                         variant_fingerprint: fingerprint,
                         image_url: '',
                         current_cogs: 0,
@@ -482,13 +483,13 @@ const App: React.FC = () => {
             const rateCard = fetchedSettings.rates[order.courier] || fetchedSettings.rates[CourierName.POSTEX];
             const isRto = order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED;
             const updatedItems = order.items.map(item => {
-                const productDef = finalProducts.find(p => (p.variant_fingerprint && p.variant_fingerprint === item.variant_fingerprint) || (p.sku !== 'unknown' && p.sku === item.sku) || p.title === item.product_name || (p.aliases && p.aliases.includes(item.product_name)));
+                // Match primarily by fingerprint (Full Name)
+                const productDef = finalProducts.find(p => p.variant_fingerprint === item.product_name || p.title === item.product_name || (p.aliases && p.aliases.includes(item.product_name)));
                 const historicalCogs = productDef ? getCostAtDate(productDef, order.created_at) : 0;
                 
                 return { 
                     ...item, 
                     cogs_at_time_of_order: historicalCogs,
-                    // LINKING FIX: Ensure product_id is set to the valid one from our list, not 'unknown'
                     product_id: productDef ? productDef.id : item.product_id 
                 };
             });
@@ -695,6 +696,16 @@ const App: React.FC = () => {
           console.error("Manual Track Error", e);
           throw e;
       }
+  };
+
+  const generateUUID = () => {
+      if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+          return crypto.randomUUID();
+      }
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+          var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+          return v.toString(16);
+      });
   };
 
   const handleLogin = async (e: React.FormEvent) => {
