@@ -7,7 +7,8 @@ export enum CourierName {
   TCS = 'TCS',
   POSTEX = 'PostEx',
   MNP = 'M&P',
-  CALLCOURIER = 'CallCourier'
+  CALLCOURIER = 'CallCourier',
+  DAEWOO = 'Daewoo'
 }
 
 export enum OrderStatus {

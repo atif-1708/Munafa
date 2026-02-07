@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
@@ -13,6 +14,7 @@ import TcsDebug from './pages/TcsDebug';
 import Auth from './pages/Auth'; 
 import { PostExAdapter } from './services/couriers/postex';
 import { TcsAdapter } from './services/couriers/tcs';
+import { DaewooAdapter } from './services/couriers/daewoo';
 import { ShopifyAdapter } from './services/shopify'; 
 import { Order, Product, AdSpend, CourierName, SalesChannel, CourierConfig, OrderStatus, ShopifyOrder, IntegrationConfig, PaymentStatus } from './types';
 import { Loader2, AlertTriangle, X, Info } from 'lucide-react';
@@ -58,7 +60,7 @@ const App: React.FC = () => {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   // Integration Configs Cache (for manual tracking)
-  const [configs, setConfigs] = useState<{ tcs?: IntegrationConfig, postex?: IntegrationConfig }>({});
+  const [configs, setConfigs] = useState<{ tcs?: IntegrationConfig, postex?: IntegrationConfig, daewoo?: IntegrationConfig }>({});
 
   // Inventory Alert Count (Items with 0 COGS)
   const inventoryAlertCount = useMemo(() => {
@@ -194,6 +196,7 @@ const App: React.FC = () => {
         // D. Fetch Integrations
         let postExConfig: IntegrationConfig | undefined;
         let tcsConfig: IntegrationConfig | undefined;
+        let daewooConfig: IntegrationConfig | undefined;
         let shopifyConfig: SalesChannel | undefined;
         
         if (!isDemoMode) {
@@ -204,11 +207,12 @@ const App: React.FC = () => {
              if (courierData) {
                 postExConfig = courierData.find((c: any) => c.provider_id === CourierName.POSTEX);
                 tcsConfig = courierData.find((c: any) => c.provider_id === CourierName.TCS);
-                setConfigs({ tcs: tcsConfig, postex: postExConfig });
+                daewooConfig = courierData.find((c: any) => c.provider_id === CourierName.DAEWOO);
+                setConfigs({ tcs: tcsConfig, postex: postExConfig, daewoo: daewooConfig });
             }
         }
 
-        const anyActiveConfig = !!postExConfig || !!tcsConfig || !!shopifyConfig;
+        const anyActiveConfig = !!postExConfig || !!tcsConfig || !!daewooConfig || !!shopifyConfig;
 
         if (!anyActiveConfig) {
             setLoading(false);
@@ -255,20 +259,17 @@ const App: React.FC = () => {
         }
 
         // 2. TCS (Settlement API Only)
-        let tcsFoundOrders = false;
         if (tcsConfig) {
             try {
                 const tcsAdapter = new TcsAdapter();
                 const tcsOrders = await tcsAdapter.fetchRecentOrders(tcsConfig);
                 fetchedOrders = [...fetchedOrders, ...tcsOrders];
-                if (tcsOrders.length > 0) tcsFoundOrders = true;
             } catch (e: any) {
-                console.error("TCS Sync Error:", e);
                 console.warn("TCS Settlement API Failed: " + e.message);
             }
         }
 
-        // G. Backfill TCS Orders from Shopify (ROBUST: Works without TCS Token & Checks Tags)
+        // G. Backfill TCS & Daewoo Orders from Shopify
         if (rawShopifyOrders.length > 0) {
              // 1. Define window (Last 120 Days to match fetch)
              const cutoffDate = new Date();
@@ -298,15 +299,17 @@ const App: React.FC = () => {
                  if (hasExistingTracking) return false;
 
                  const isFulfilled = s.fulfillment_status === 'fulfilled' || s.fulfillment_status === 'partial';
-                 
-                 // --- Robust TCS Detection Logic ---
-                 // A. Check Tags (Include even if unfulfilled if tagged TCS)
                  const tags = (s.tags || '').toLowerCase();
+                 
+                 // --- TCS Detection ---
                  const hasTcsTag = tags.includes('tcs');
-
                  if (hasTcsTag) return true;
 
-                 // If already fulfilled but not mapped, check if it's TCS fulfillment
+                 // --- Daewoo Detection ---
+                 const hasDaewooTag = tags.includes('daewoo') || tags.includes('fastex');
+                 if (hasDaewooTag) return true;
+
+                 // If already fulfilled but not mapped, check tracking company
                  if (isFulfilled) {
                      return s.fulfillments?.some(f => {
                          const company = f.tracking_company ? String(f.tracking_company).toLowerCase() : '';
@@ -314,27 +317,27 @@ const App: React.FC = () => {
                          
                          // Negative check: Not other common couriers
                          const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('mnp') || company.includes('callcourier');
-                         
                          if (isOther) return false;
 
-                         // Positive check: Name includes TCS OR Number format is 9-16 digits (TCS standard)
-                         return company.includes('tcs') || /^\d{9,16}$/.test(num);
+                         // Positive Checks
+                         const isTcs = company.includes('tcs') || /^\d{9,16}$/.test(num); // TCS often pure numbers
+                         const isDaewoo = company.includes('daewoo') || company.includes('fastex');
+
+                         return isTcs || isDaewoo;
                      });
                  }
                  return false;
              });
 
              if (candidates.length > 0) {
-                 const tcsBatchCount = candidates.length;
-                 console.log(`[TCS Backfill] Found ${tcsBatchCount} candidates from last 120 days.`);
-                 infoMsgs.push(`Found ${tcsBatchCount} TCS orders via Shopify tags/tracking.`);
+                 const batchCount = candidates.length;
+                 console.log(`[Backfill] Found ${batchCount} candidates from last 120 days.`);
+                 infoMsgs.push(`Found ${batchCount} orders via Shopify tags/tracking.`);
 
-                 // --- BATCH PROCESSING FOR TCS AUTOMATIC TRACKING ---
-                 // TCS API only allows single tracking. We must process in small batches.
-                 
+                 // --- BATCH PROCESSING FOR AUTOMATIC TRACKING ---
                  const BATCH_SIZE = 5;
-                 const TCS_DELAY_MS = 1000;
-                 const processedTcsOrders: Order[] = [];
+                 const DELAY_MS = 1000;
+                 const processedBackfillOrders: Order[] = [];
 
                  // Process in chunks
                  for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
@@ -342,58 +345,63 @@ const App: React.FC = () => {
                      
                      const batchResults = await Promise.all(batch.map(async (sOrder) => {
                          try {
-                            // Find the most likely TCS fulfillment
-                            const hasTcsTag = (sOrder.tags || '').toLowerCase().includes('tcs');
-                            let ff = sOrder.fulfillments?.find(f => {
-                                const company = f.tracking_company ? String(f.tracking_company).toLowerCase() : '';
-                                const num = (f.tracking_number ? String(f.tracking_number) : '').replace(/[^a-zA-Z0-9]/g, '');
-                                const isOther = company.includes('trax') || company.includes('leopard') || company.includes('postex') || company.includes('mnp') || company.includes('callcourier');
-                                
-                                if (hasTcsTag && !isOther && f.tracking_number) return true;
-                                return !isOther && (company.includes('tcs') || /^\d{9,16}$/.test(num));
-                            });
+                            const tags = (sOrder.tags || '').toLowerCase();
+                            
+                            // Detect Fulfillment
+                            let ff = sOrder.fulfillments?.find(f => f.tracking_number);
+                            const company = ff?.tracking_company ? String(ff.tracking_company).toLowerCase() : '';
+                            const num = ff?.tracking_number ? String(ff.tracking_number) : '';
 
-                            if (!ff && hasTcsTag && sOrder.fulfillments) {
-                                ff = sOrder.fulfillments.find(f => f.tracking_number && String(f.tracking_number).length > 5);
+                            // Determine Courier Logic
+                            let isTcs = tags.includes('tcs') || company.includes('tcs') || /^\d{9,16}$/.test(num);
+                            let isDaewoo = tags.includes('daewoo') || tags.includes('fastex') || company.includes('daewoo') || company.includes('fastex');
+                            
+                            // If ambiguous and purely numeric, prefer TCS if enabled, else Daewoo if enabled
+                            if (!isTcs && !isDaewoo && /^\d+$/.test(num)) {
+                                if (tcsConfig) isTcs = true;
+                                else if (daewooConfig) isDaewoo = true;
                             }
 
-                            // --- KEY LOGIC UPDATE: Handle Unfulfilled TCS Orders ---
+                            // --- KEY LOGIC UPDATE: Handle Unfulfilled Orders ---
                             let trackingNo = 'Pending';
                             let status = OrderStatus.PENDING;
                             let rawStatusText = 'Order Placed';
                             let orderId = String(sOrder.id);
+                            let courier = isDaewoo ? CourierName.DAEWOO : CourierName.TCS; // Default to TCS if unsure
 
                             if (ff && ff.tracking_number) {
                                 trackingNo = ff.tracking_number;
-                                orderId = ff.tracking_number; // Prefer Tracking Number as ID if available
-                                status = OrderStatus.BOOKED; // Default to BOOKED until status is confirmed via Live API
+                                orderId = ff.tracking_number; // Prefer Tracking Number as ID
+                                status = OrderStatus.BOOKED; // Default to BOOKED
                                 rawStatusText = 'Booked / Pending Scan';
                                 
                                 // *** AUTOMATIC LIVE TRACKING ***
-                                if (tcsConfig && tcsConfig.api_token) {
-                                    try {
+                                try {
+                                    if (isTcs && tcsConfig && tcsConfig.api_token) {
+                                        courier = CourierName.TCS;
                                         const tcsAdapter = new TcsAdapter();
                                         const update = await tcsAdapter.track(trackingNo, tcsConfig);
                                         status = update.status;
                                         rawStatusText = update.raw_status_text;
-                                    } catch (e) {
-                                        // Silent fail - remains BOOKED
+                                    } else if (isDaewoo && daewooConfig && daewooConfig.api_token) {
+                                        courier = CourierName.DAEWOO;
+                                        const dwAdapter = new DaewooAdapter();
+                                        const update = await dwAdapter.track(trackingNo, daewooConfig);
+                                        status = update.status;
+                                        rawStatusText = update.raw_status_text;
                                     }
+                                } catch (e) {
+                                    // Silent fail - remains BOOKED
                                 }
                             } else {
-                                // If unfulfilled but tagged TCS
                                 rawStatusText = 'Waiting for Fulfillment';
                             }
 
                             const cod = parseFloat(sOrder.total_price || '0');
                             const safeItems = Array.isArray(sOrder.line_items) ? sOrder.line_items : [];
-                            
-                            // Use Shipping Address City if available, else Customer City
                             const customerCity = sOrder.shipping_address?.city || sOrder.customer?.city || 'Unknown';
 
-                            // --- CONSOLIDATE ITEMS (User Requirement: Single line for the whole order) ---
-                            // We construct a combined name like "1x Pant (Blue) + 2x Shirt (Red)"
-                            // CRITICAL: Sort items alphabetically by name to ensure "A + B" matches "B + A" if order differs.
+                            // --- CONSOLIDATE ITEMS (Sorted) ---
                             let combinedName = '';
                             let totalItemPrice = 0;
                             
@@ -404,41 +412,42 @@ const App: React.FC = () => {
                                         const name = (li.name || li.title || 'Item').trim();
                                         return { name, qty, str: `${qty}x ${name}` };
                                     })
-                                    .sort((a, b) => a.name.localeCompare(b.name)) // ALPHABETICAL SORT to prevent duplicates
+                                    .sort((a, b) => a.name.localeCompare(b.name)) 
                                     .map(i => i.str)
                                     .join(' + ');
 
-                                // Calculate total item price
                                 totalItemPrice = safeItems.reduce((acc, curr) => acc + (parseFloat(curr.price || '0') * (curr.quantity || 1)), 0);
                             } else {
                                 combinedName = 'Unknown Item';
                             }
+
+                            const rateCard = fetchedSettings.rates[courier] || fetchedSettings.rates[CourierName.TCS];
 
                             const newOrder: Order = {
                                 id: orderId,
                                 shopify_order_number: sOrder.name || 'Unknown',
                                 created_at: sOrder.created_at,
                                 customer_city: customerCity,
-                                courier: CourierName.TCS,
+                                courier: courier,
                                 tracking_number: trackingNo,
                                 status: status,
                                 payment_status: PaymentStatus.UNPAID,
                                 cod_amount: cod,
                                 shipping_fee_paid_by_customer: 0,
-                                courier_fee: fetchedSettings.rates[CourierName.TCS].forward,
+                                courier_fee: rateCard.forward,
                                 rto_penalty: 0, 
                                 packaging_cost: fetchedSettings.packagingCost,
                                 overhead_cost: 0,
                                 tax_amount: 0,
                                 data_source: 'tracking', 
-                                courier_raw_status: rawStatusText, // Save the auto-fetched status
+                                courier_raw_status: rawStatusText,
                                 items: [{
                                     product_id: 'unknown',
-                                    quantity: 1, // Treat the whole bundle as 1 unit
+                                    quantity: 1, 
                                     sale_price: totalItemPrice,
-                                    product_name: combinedName, // "2x Shirt + 1x Pant"
+                                    product_name: combinedName,
                                     sku: '', 
-                                    variant_fingerprint: combinedName, // Use the combined string as fingerprint
+                                    variant_fingerprint: combinedName,
                                     cogs_at_time_of_order: 0
                                 }]
                             };
@@ -449,15 +458,15 @@ const App: React.FC = () => {
                      }));
 
                      const validBatch = batchResults.filter((o): o is Order => o !== null);
-                     processedTcsOrders.push(...validBatch);
+                     processedBackfillOrders.push(...validBatch);
 
-                     // Throttle if we are actually calling the API
-                     if (tcsConfig && tcsConfig.api_token && i + BATCH_SIZE < candidates.length) {
-                         await new Promise(r => setTimeout(r, TCS_DELAY_MS));
+                     // Throttle
+                     if ((tcsConfig || daewooConfig) && i + BATCH_SIZE < candidates.length) {
+                         await new Promise(r => setTimeout(r, DELAY_MS));
                      }
                  }
 
-                 fetchedOrders = [...fetchedOrders, ...processedTcsOrders];
+                 fetchedOrders = [...fetchedOrders, ...processedBackfillOrders];
              }
         }
 
@@ -466,16 +475,12 @@ const App: React.FC = () => {
         }
 
         // Process discovered items from Courier Orders to build INVENTORY
-        // IMPORTANT: This creates inventory items based on unique names found in orders.
-        // With consolidation, unique names are now like "2x Shirt + 1x Pant".
         fetchedOrders.forEach(o => {
             if (!o.items) return;
             o.items.forEach(item => {
-                // FORCE: Use Product Name as the unique fingerprint.
                 const fingerprint = item.product_name.trim();
                 const fingerprintLower = fingerprint.toLowerCase();
 
-                // Check against existing products by Title (exact match, case insensitive check)
                 const exists = finalProducts.some(p => 
                     p.title.trim().toLowerCase() === fingerprintLower ||
                     (p.aliases && p.aliases.some(a => a.toLowerCase() === fingerprintLower))
@@ -484,13 +489,12 @@ const App: React.FC = () => {
                 if (!exists && !seenTitles.has(fingerprintLower)) {
                     seenTitles.add(fingerprintLower);
                     
-                    // Generate new ID for this specific variant name
                     const uniqueId = (item.product_id && item.product_id !== 'unknown') ? item.product_id : generateUUID();
                     
                     finalProducts.push({
                         id: uniqueId,
                         shopify_id: 'unknown',
-                        title: fingerprint, // Exact string from Order (e.g. "2x T-Shirt - Red + 1x Pant")
+                        title: fingerprint, 
                         sku: '', 
                         variant_fingerprint: fingerprint,
                         image_url: '',
@@ -503,12 +507,9 @@ const App: React.FC = () => {
         });
 
         // DEDUPLICATION: Final Check on Orders Array
-        // Ensure no two orders have the exact same Shopify Order Number
         const uniqueOrdersMap = new Map<string, Order>();
         fetchedOrders.forEach(order => {
             const key = order.shopify_order_number.trim().toLowerCase().replace('#', '');
-            // If conflict, prefer the one that is NOT 'tracking' data source (i.e. prefer real API data)
-            // or prefer the one with a valid tracking number
             if (uniqueOrdersMap.has(key)) {
                 const existing = uniqueOrdersMap.get(key)!;
                 if (existing.data_source === 'tracking' && order.data_source !== 'tracking') {
@@ -524,7 +525,6 @@ const App: React.FC = () => {
             const rateCard = fetchedSettings.rates[order.courier] || fetchedSettings.rates[CourierName.POSTEX];
             const isRto = order.status === OrderStatus.RETURNED || order.status === OrderStatus.RTO_INITIATED;
             const updatedItems = order.items.map(item => {
-                // Match primarily by Name (exact string)
                 const matchName = item.product_name.trim();
                 const productDef = finalProducts.find(p => p.title.trim() === matchName || (p.aliases && p.aliases.includes(matchName)));
                 
@@ -722,6 +722,11 @@ const App: React.FC = () => {
           } else if (order.courier === CourierName.POSTEX && configs.postex) {
               const adapter = new PostExAdapter();
               const result = await adapter.track(order.tracking_number, configs.postex);
+              updatedStatus = result.status;
+              rawStatus = result.raw_status_text;
+          } else if (order.courier === CourierName.DAEWOO && configs.daewoo) {
+              const adapter = new DaewooAdapter();
+              const result = await adapter.track(order.tracking_number, configs.daewoo);
               updatedStatus = result.status;
               rawStatus = result.raw_status_text;
           }

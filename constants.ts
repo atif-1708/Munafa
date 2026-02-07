@@ -1,3 +1,4 @@
+
 import { CourierName } from './types';
 
 // Average shipping rates in Pakistan (PKR) used for simulation
@@ -8,6 +9,7 @@ export const COURIER_RATES = {
   [CourierName.POSTEX]: { forward: 170, rto: 85 },
   [CourierName.MNP]: { forward: 190, rto: 95 },
   [CourierName.CALLCOURIER]: { forward: 160, rto: 80 },
+  [CourierName.DAEWOO]: { forward: 220, rto: 0 }, // Daewoo / FastEx default
 };
 
 export const PACKAGING_COST_AVG = 45; // Polybag + Flyer

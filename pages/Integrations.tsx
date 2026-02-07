@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { CourierName, CourierConfig, SalesChannel, MarketingConfig } from '../types';
 import { PostExAdapter } from '../services/couriers/postex';
 import { TcsAdapter } from '../services/couriers/tcs';
+import { DaewooAdapter } from '../services/couriers/daewoo';
 import { ShopifyAdapter } from '../services/shopify';
 import { FacebookService } from '../services/facebook';
 import { TikTokService } from '../services/tiktok';
@@ -29,6 +30,10 @@ const COURIER_META: Record<string, { color: string, bg: string, border: string, 
         color: 'text-red-900', bg: 'bg-red-50', border: 'border-red-200', icon: 'TCS', label: 'TCS',
         desc: 'Official API integration via OCI Connect.'
     },
+    [CourierName.DAEWOO]: { 
+        color: 'text-blue-900', bg: 'bg-blue-50', border: 'border-blue-200', icon: 'DW', label: 'Daewoo',
+        desc: 'FastEx Courier integration via COD API.'
+    },
     [CourierName.MNP]: { 
         color: 'text-blue-700', bg: 'bg-blue-50', border: 'border-blue-200', icon: 'M&P', label: 'M&P',
         desc: 'Muller & Phipps logistics integration.'
@@ -42,7 +47,8 @@ const COURIER_META: Record<string, { color: string, bg: string, border: string, 
 // Defined Order
 const ORDERED_COURIERS = [
     CourierName.POSTEX,
-    CourierName.TCS, // Promoted
+    CourierName.TCS,
+    CourierName.DAEWOO, // Added Daewoo here
     CourierName.TRAX,
     CourierName.LEOPARDS,
     CourierName.MNP,
@@ -311,16 +317,20 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     
     try {
         let success = false;
+        const config = { ...courierConfigs[courierName], is_active: true };
+
         if (courierName === CourierName.POSTEX) {
             const adapter = new PostExAdapter();
-            success = await adapter.testConnection({ ...courierConfigs[courierName], is_active: true } as any);
+            success = await adapter.testConnection(config as any);
         } else if (courierName === CourierName.TCS) {
             const adapter = new TcsAdapter();
-            // Pass full config to testConnection
-            success = await adapter.testConnection({ ...courierConfigs[courierName], is_active: true } as any);
+            success = await adapter.testConnection(config as any);
+        } else if (courierName === CourierName.DAEWOO) {
+            const adapter = new DaewooAdapter();
+            success = await adapter.testConnection(config as any);
         }
 
-        if (!success) throw new Error("Connection check failed"); // Should be caught by specific error in adapter usually
+        if (!success) throw new Error("Connection check failed"); 
         
         await saveCourierConfig(courierName, true);
 
@@ -544,10 +554,11 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                 const config = courierConfigs[courierName];
                 const meta = COURIER_META[courierName];
                 const isActive = config.is_active;
-                const isComingSoon = courierName !== CourierName.POSTEX && courierName !== CourierName.TCS;
+                // Add Daewoo to supported list
+                const isComingSoon = courierName !== CourierName.POSTEX && courierName !== CourierName.TCS && courierName !== CourierName.DAEWOO;
 
-                // Input fields mapping
                 const isTCS = courierName === CourierName.TCS;
+                const isDaewoo = courierName === CourierName.DAEWOO;
 
                 return (
                     <div key={courierName} className={`relative overflow-hidden rounded-xl border transition-all duration-300 flex flex-col ${isActive ? `${meta.bg} ${meta.border} shadow-sm` : 'bg-white border-slate-200 shadow-sm hover:shadow-md'}`}>
@@ -572,7 +583,7 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                 <button onClick={() => saveCourierConfig(courierName, false)} className="w-full py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-bold hover:bg-red-50 hover:text-red-600 transition-colors">Disconnect</button>
                             ) : (
                                 <div className="space-y-3">
-                                    {isTCS ? (
+                                    {isTCS && (
                                         <>
                                             <div className="space-y-1">
                                                 <label className="text-xs font-bold text-slate-500 ml-1">Account Number (Customer No)</label>
@@ -593,12 +604,46 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                                     value={config.api_token || ''} 
                                                     onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], api_token: e.target.value } }))} 
                                                 />
-                                                <p className="text-[10px] text-slate-400 leading-tight">
-                                                    TCS does not provide Client ID/Secret. Use the long-term access token generated from their portal.
-                                                </p>
                                             </div>
                                         </>
-                                    ) : (
+                                    )}
+
+                                    {isDaewoo && (
+                                        <>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 ml-1">API Key</label>
+                                                <input 
+                                                    type="password"
+                                                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
+                                                    placeholder="Your API Key" 
+                                                    value={config.api_token || ''} 
+                                                    onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], api_token: e.target.value } }))} 
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 ml-1">API User (ID)</label>
+                                                <input 
+                                                    type="text"
+                                                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
+                                                    placeholder="Your User ID" 
+                                                    value={config.username || ''} 
+                                                    onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], username: e.target.value } }))} 
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-500 ml-1">API Password</label>
+                                                <input 
+                                                    type="password"
+                                                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
+                                                    placeholder="Your API Password" 
+                                                    value={config.password || ''} 
+                                                    onChange={(e) => setCourierConfigs(prev => ({ ...prev, [courierName]: { ...prev[courierName], password: e.target.value } }))} 
+                                                />
+                                            </div>
+                                        </>
+                                    )}
+
+                                    {!isTCS && !isDaewoo && (
                                         <input 
                                             type="password" 
                                             disabled={isComingSoon}
