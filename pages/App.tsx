@@ -280,7 +280,7 @@ const App: React.FC = () => {
                  // Duplication Check
                  const safeName = String(s.name || '').replace('#','');
                  const isUnmapped = !existingRefNos.has(safeName);
-                 const isFulfilled = s.fulfillment_status === 'fulfilled' || s.fulfillment_status === 'partial';
+                 const isFulfilled = s.fulfillment_status === 'fulfilled' || s.fulfillment_status === 'partial' || s.fulfillment_status === 'partially_fulfilled';
                  
                  // --- Robust TCS Detection Logic ---
                  // A. Check Tags (Include even if unfulfilled if tagged TCS)

@@ -298,7 +298,7 @@ const App: React.FC = () => {
                  );
                  if (hasExistingTracking) return false;
 
-                 const isFulfilled = s.fulfillment_status === 'fulfilled' || s.fulfillment_status === 'partial';
+                 const isFulfilled = s.fulfillment_status === 'fulfilled' || s.fulfillment_status === 'partial' || s.fulfillment_status === 'partially_fulfilled';
                  const tags = (s.tags || '').toLowerCase();
                  
                  // --- TCS Detection ---

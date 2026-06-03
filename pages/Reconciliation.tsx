@@ -70,7 +70,7 @@ const Reconciliation: React.FC<ReconciliationProps> = ({ shopifyOrders, courierO
         const courierOrder = courierMap.get(orderKey);
 
         const isCancelled = order.cancel_reason !== null;
-        const isFulfilled = order.fulfillment_status === 'fulfilled'; 
+        const isFulfilled = order.fulfillment_status === 'fulfilled' || order.fulfillment_status === 'partial' || order.fulfillment_status === 'partially_fulfilled'; 
         const isPending = !isCancelled && !isFulfilled;
 
         let isDispatched = false;

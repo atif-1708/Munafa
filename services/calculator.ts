@@ -420,7 +420,7 @@ export const calculateProductPerformance = (
         // Take only the first item
         const item = order.line_items[0];
 
-        const isConfirmed = order.fulfillment_status === 'fulfilled' || order.fulfillment_status === 'partial';
+        const isConfirmed = order.fulfillment_status === 'fulfilled' || order.fulfillment_status === 'partial' || order.fulfillment_status === 'partially_fulfilled';
         
         // --- NEW MATCHING LOGIC ---
         // 1. Check Explicit Aliases (Manual Mapping)

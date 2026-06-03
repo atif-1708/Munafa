@@ -78,7 +78,7 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, shopifyOrders = [], adSpe
       orders.forEach(o => {
           const isCancelled = o.cancel_reason !== null;
           // In Shopify: fulfilled = confirmed/processed. null = unfulfilled/pending.
-          const isFulfilled = o.fulfillment_status === 'fulfilled' || o.fulfillment_status === 'partial';
+          const isFulfilled = o.fulfillment_status === 'fulfilled' || o.fulfillment_status === 'partial' || o.fulfillment_status === 'partially_fulfilled';
           
           if (isCancelled) {
               cancelled++;
