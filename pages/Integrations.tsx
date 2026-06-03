@@ -140,18 +140,120 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
     loadConfigs();
   }, []);
 
+  const saveShopifyConfig = async (url: string, token: string, isActive: boolean) => {
+    setErrorMessage(null);
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.user) {
+        const payload = { 
+            user_id: session.user.id, 
+            platform: 'Shopify' as const, 
+            store_url: url, 
+            access_token: token,
+            is_active: isActive 
+        };
+
+        try {
+            const { data: existing, error: fetchError } = await supabase
+                .from('sales_channels')
+                .select('id')
+                .eq('user_id', session.user.id)
+                .eq('platform', 'Shopify')
+                .limit(1);
+
+            if (fetchError) throw fetchError;
+
+            let error = null;
+
+            if (existing && existing.length > 0) {
+                 const res = await supabase
+                    .from('sales_channels')
+                    .update(payload)
+                    .eq('id', existing[0].id);
+                 error = res.error;
+            } else {
+                 const res = await supabase
+                    .from('sales_channels')
+                    .insert(payload);
+                 error = res.error;
+            }
+
+            if (error) {
+                console.error("Supabase Save Shopify Error:", error);
+                throw new Error(error.message);
+            }
+
+            // Update local state
+            setShopifyConfig(prev => ({ 
+                ...prev, 
+                store_url: url, 
+                access_token: token, 
+                is_active: isActive 
+            }));
+
+            if (onConfigUpdate) onConfigUpdate();
+
+        } catch (e: any) {
+            console.error("Shopify save failed:", e);
+            setErrorMessage(`Save Failed: ${e.message}.`);
+        }
+    }
+  };
+
   const handleShopifyConnect = async () => {
       setErrorMessage(null);
       setTestingConnection('Shopify');
-      let url = shopifyConfig.store_url.trim();
-      if (!url) { setErrorMessage("Enter URL"); setTestingConnection(null); return; }
-      url = url.replace(/^https?:\/\//, '').replace(/\/$/, '');
-      if (url.includes('/')) url = url.split('/')[0];
-      const finalShop = url.includes('.') ? url : `${url}.myshopify.com`;
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.user) return;
-      const host = window.location.origin;
-      window.location.href = `${host}/api/shopify/login?shop=${finalShop}&userId=${session.user.id}`;
+      
+      let url = shopifyConfig.store_url || '';
+      const token = shopifyConfig.access_token || '';
+      
+      url = url.trim();
+      const trimmedToken = token.trim();
+      
+      if (!url) { 
+          setErrorMessage("Please enter your Shopify Store URL."); 
+          setTestingConnection(null); 
+          return; 
+      }
+      if (!trimmedToken) { 
+          setErrorMessage("Please enter your Shopify Admin API Access Token."); 
+          setTestingConnection(null); 
+          return; 
+      }
+
+      // Clean the url
+      let cleanedUrl = url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      if (cleanedUrl.includes('/')) cleanedUrl = cleanedUrl.split('/')[0];
+      const finalShop = cleanedUrl.includes('.') ? cleanedUrl : `${cleanedUrl}.myshopify.com`;
+
+      try {
+          // Initialize Shopify adapter
+          const adapter = new ShopifyAdapter();
+          const testConfig: SalesChannel = {
+              id: '',
+              platform: 'Shopify',
+              store_url: finalShop,
+              access_token: trimmedToken,
+              is_active: true
+          };
+
+          const check = await adapter.testConnection(testConfig);
+          if (check.success) {
+              await saveShopifyConfig(finalShop, trimmedToken, true);
+          } else {
+              throw new Error(check.message || "Could not authenticate with Shopify. Check your token and URL.");
+          }
+      } catch (e: any) {
+          const msg = e.message || "Shopify authentication failed.";
+          // Allow saving anyway if user confirms (just in case they have proxy issues that still load properly later)
+          const forceSave = window.confirm(`Shopify Connection Test Failed: ${msg}\n\nDo you want to save these credentials anyway?`);
+          if (forceSave) {
+              await saveShopifyConfig(finalShop, trimmedToken, true);
+          } else {
+              setErrorMessage(msg);
+          }
+      } finally {
+          setTestingConnection(null);
+      }
   };
 
   const handleDisconnectShopify = async () => {
@@ -404,13 +506,37 @@ const Integrations: React.FC<IntegrationsProps> = ({ onConfigUpdate }) => {
                                 <button onClick={handleDisconnectShopify} className="text-sm text-red-600 hover:text-red-700 hover:underline">Disconnect Store</button>
                             </div>
                         ) : (
-                            <div className="space-y-6">
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-2">Enter Store URL</label>
-                                    <input type="text" placeholder="your-store.myshopify.com" className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none text-sm" value={shopifyConfig.store_url || ''} onChange={(e) => setShopifyConfig({...shopifyConfig, store_url: e.target.value})} />
+                            <div className="space-y-4">
+                                <div className="space-y-1">
+                                    <label className="block text-xs font-bold text-slate-700">Store URL</label>
+                                    <input 
+                                        type="text" 
+                                        placeholder="your-store.myshopify.com" 
+                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-1 focus:ring-green-500 outline-none" 
+                                        value={shopifyConfig.store_url || ''} 
+                                        onChange={(e) => setShopifyConfig({...shopifyConfig, store_url: e.target.value})} 
+                                    />
                                 </div>
-                                <button onClick={handleShopifyConnect} disabled={testingConnection === 'Shopify' || !shopifyConfig.store_url} className="w-full bg-[#95BF47] text-white py-3 rounded-xl text-sm font-bold hover:bg-[#86ad3e] transition-all flex items-center justify-center gap-2 disabled:opacity-50">
-                                    {testingConnection === 'Shopify' ? <Loader2 className="animate-spin" size={16} /> : <Zap size={16} />} Connect Store
+                                <div className="space-y-1">
+                                    <label className="block text-xs font-bold text-slate-700">Admin API Access Token</label>
+                                    <input 
+                                        type="password" 
+                                        placeholder="shpat_xxxxxxxxxxxxxxxxxxxxxxxx" 
+                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-1 focus:ring-green-500 outline-none font-mono" 
+                                        value={shopifyConfig.access_token || ''} 
+                                        onChange={(e) => setShopifyConfig({...shopifyConfig, access_token: e.target.value})} 
+                                    />
+                                    <p className="text-[10px] text-slate-400">
+                                        Generated in Shopify Partners/Settings &rarr; Apps and sales channels &rarr; Develop apps. Needs <strong>read_orders</strong> and <strong>read_products</strong> scopes.
+                                    </p>
+                                </div>
+                                <button 
+                                    onClick={handleShopifyConnect} 
+                                    disabled={testingConnection === 'Shopify' || !shopifyConfig.store_url || !shopifyConfig.access_token} 
+                                    className="w-full bg-[#95BF47] text-white py-2.5 rounded-xl text-xs font-bold hover:bg-[#86ad3e] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                >
+                                    {testingConnection === 'Shopify' ? <Loader2 className="animate-spin" size={14} /> : <Zap size={14} />} 
+                                    Connect & Save Store
                                 </button>
                             </div>
                         )}

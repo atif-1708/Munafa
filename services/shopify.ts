@@ -103,7 +103,8 @@ export class ShopifyAdapter {
       // List of proxies to try in order. 
       const proxies = [
           `/api/proxy?url=${encodeURIComponent(targetUrl)}`,
-          `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+          `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`,
+          `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
           `https://thingproxy.freeboard.io/fetch/${targetUrl}`
       ];
 
